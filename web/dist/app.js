@@ -339,6 +339,18 @@ function switchDrawerTab(tabName) {
   document.querySelectorAll(".tab-panel").forEach((panel) => {
     panel.classList.toggle("active", panel.id === `tab-${tabName}`);
   });
+  if (tabName === "debug") {
+    loadDebugTrace();
+  }
+}
+
+async function loadDebugTrace() {
+  if (!state.sid) return;
+  const data = await api(`/api/sessions/${state.sid}/debug/latest`);
+  const trace = data.trace || [];
+  $("#debug-output").textContent = trace.length
+    ? JSON.stringify(trace, null, 2)
+    : "暂无调试数据";
 }
 
 /* ---------- 导演对话 ---------- */
@@ -1118,6 +1130,7 @@ async function init() {
   $("#save-preset").addEventListener("click", savePreset);
   $("#save-settings").addEventListener("click", saveSettings);
   $("#refresh-usage").addEventListener("click", loadUsage);
+  $("#refresh-debug").addEventListener("click", loadDebugTrace);
 
   $("#close-world").addEventListener("click", closeWorldModal);
   document.querySelectorAll(".modal-tabs .tab").forEach((btn) => {

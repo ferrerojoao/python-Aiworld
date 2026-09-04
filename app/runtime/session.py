@@ -16,6 +16,7 @@ class GameSession:
         self.ledger = Ledger(world, save_dir)
         self.candidates = CandidateStore(self.save_dir / "candidates")
         self.director_history: list[dict] = []
+        self.debug_trace: list[dict] = []
 
     @property
     def sid(self) -> str:

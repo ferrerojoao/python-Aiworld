@@ -132,6 +132,16 @@ def test_director_backstage_override(tmp_path):
         assert fact["source"] == "director"
 
 
+def test_debug_trace_available_after_turn(tmp_path):
+    with _make_client(tmp_path) as client:
+        r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
+        sid = r.json()["sid"]
+        client.post(f"/api/sessions/{sid}/turn", json={"input": "问朱明昨天的事"})
+        trace = client.get(f"/api/sessions/{sid}/debug/latest").json()["trace"]
+        assert len(trace) >= 3  # director, storyteller, qc
+        assert trace[0]["messages"]
+
+
 def test_world_save_as_when_has_save(tmp_path):
     with _make_client(tmp_path) as client:
         r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})

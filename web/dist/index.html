@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AIWorld</title>
-  <link rel="stylesheet" href="style.css?v=17" />
+  <link rel="stylesheet" href="style.css?v=18" />
 </head>
 <body>
   <div id="app">
@@ -27,6 +27,7 @@
           <button id="open-world">世界</button>
           <button data-tab="director">导演</button>
           <button data-tab="preset">预设</button>
+          <button data-tab="debug">调试</button>
           <button data-tab="settings">设置</button>
         </div>
       </header>
@@ -52,6 +53,7 @@
       <div class="drawer-tabs">
         <button class="tab active" data-tab="director">导演</button>
         <button class="tab" data-tab="preset">预设</button>
+        <button class="tab" data-tab="debug">调试</button>
         <button class="tab" data-tab="settings">设置</button>
       </div>
 
@@ -71,6 +73,12 @@
         <label>说书人预设</label>
         <textarea id="storyteller-preset-input" rows="8" placeholder="例如：克制写实，白描为主，少用形容词堆砌…"></textarea>
         <button id="save-preset">保存预设</button>
+      </div>
+
+      <div id="tab-debug" class="tab-panel">
+        <h3>调试追踪</h3>
+        <button id="refresh-debug">刷新</button>
+        <pre id="debug-output" class="debug-output">暂无调试数据</pre>
       </div>
 
       <div id="tab-settings" class="tab-panel">
@@ -145,6 +153,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=17"></script>
+  <script src="app.js?v=18"></script>
 </body>
 </html>

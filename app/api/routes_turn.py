@@ -7,7 +7,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.runtime.turn import NeedChooseCandidate
+from app.runtime.trace import TraceRecorder
+from app.runtime.turn import NeedChooseCandidate, TurnRunner
 
 router = APIRouter(prefix="/api/sessions")
 
@@ -36,7 +37,15 @@ def _sse(event: str, data: dict) -> str:
 @router.post("/{sid}/turn")
 async def post_turn(request: Request, sid: str, body: TurnBody):
     session = _get_session(request, sid)
-    runner = request.app.state.turn_runner_factory(session)
+    # Wrap the real LLM with a trace recorder for this turn.
+    trace = TraceRecorder(request.app.state.llm)
+    runner = TurnRunner(
+        session,
+        trace,
+        request.app.state.settings,
+        preset=request.app.state.global_preset,
+    )
+    session.debug_trace = trace.entries
 
     async def event_stream():
         queue: asyncio.Queue = asyncio.Queue()
@@ -97,6 +106,12 @@ async def pending_candidates(request: Request, sid: str):
             for c in session.candidates.list_pending()
         ]
     }
+
+
+@router.get("/{sid}/debug/latest")
+async def debug_latest(request: Request, sid: str):
+    session = _get_session(request, sid)
+    return {"trace": session.debug_trace}
 
 
 @router.post("/{sid}/candidates/{candidate_id}/adopt")
