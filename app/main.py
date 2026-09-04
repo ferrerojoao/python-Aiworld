@@ -11,31 +11,10 @@ from app.api.routes_director import router as director_router
 from app.api.routes_sessions import router as sessions_router
 from app.api.routes_turn import router as turn_router
 from app.config import Settings, get_settings
-from app.core.llm import FakeLLM, LLMGateway
+from app.core.llm import LLMGateway
 from app.core.presets import load_global_preset
 from app.runtime.session import GameSession, open_session
 from app.runtime.turn import TurnRunner
-
-_FAKE_RESPONSE = {
-    "mode": "scene",
-    "beats": [{"kind": "narrate", "text": "朱明从网吧出来，看见你愣了一下。"}],
-    "lore_refs": [],
-    "motivation_note": "",
-    "adopt_player_body": False,
-    "private": False,
-    "location": "main_street",
-    "participants": ["player", "npc_zhuming"],
-    "prose": "朱明从网吧出来，看见你愣了一下，把烟头踩灭，问你吃饭了没。",
-    "time_hint": None,
-    "status": "pass",
-    "issues": [],
-    "decision": "打哈哈",
-    "action_hint": "拉你去吃面",
-    "tone": "随意",
-    "memo": "他不想提昨天打架的事。",
-    "hook_texts": [],
-    "conflicts": [],
-}
 
 
 def create_app(settings: Settings | None = None, llm=None) -> FastAPI:
@@ -65,8 +44,6 @@ def create_app(settings: Settings | None = None, llm=None) -> FastAPI:
 
         if llm is not None:
             app.state.llm = llm
-        elif settings.fake_llm:
-            app.state.llm = FakeLLM({"*": _FAKE_RESPONSE})
         else:
             app.state.llm = LLMGateway(
                 base_url=settings.llm_base_url,

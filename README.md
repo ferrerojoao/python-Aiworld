@@ -25,12 +25,7 @@ python -m app.main
 # 默认 http://127.0.0.1:8765
 # 打开浏览器即可看到简易前端
 
-# 无真实模型时，可用 FakeLLM 演示前端
-# Windows PowerShell: .\scripts\start_fake.ps1
-# bash: ./scripts/start_fake.sh
-# 或手动设置 AIWORLD_FAKE_LLM=true 再 python -m app.main
-
-# 离线演示（不需要真实模型）
+# 离线演示（不需要真实模型，仅命令行）
 python scripts/demo.py
 ```
 
@@ -98,7 +93,7 @@ python -m pytest -q
 - `GET /api/sessions/{sid}/world/export` — 导出资产包 zip
 - `POST /api/sessions/{sid}/world/import` — 导入资产包 zip（base64 JSON）
 - `POST /api/sessions/{sid}/reset` — 重置当前世界存档
-- `GET/PUT /api/settings` — 系统设置（API/模型/FakeLLM）
+- `GET/PUT /api/settings` — 系统设置（API/模型）
 - `GET /api/settings/usage` — Token 统计
 
 ## 目录
