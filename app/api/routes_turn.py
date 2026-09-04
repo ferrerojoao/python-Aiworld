@@ -1,0 +1,104 @@
+from __future__ import annotations
+
+import json
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+from app.runtime.turn import NeedChooseCandidate
+
+router = APIRouter(prefix="/api/sessions")
+
+
+class TurnBody(BaseModel):
+    input: str
+    adopt_candidate_id: str | None = None
+
+
+class RerollBody(BaseModel):
+    mode: str = "rephrase"
+    note: str = ""
+
+
+def _get_session(request: Request, sid: str):
+    session = request.app.state.sessions.get(sid)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"session not found: {sid}")
+    return session
+
+
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@router.post("/{sid}/turn")
+async def post_turn(request: Request, sid: str, body: TurnBody):
+    session = _get_session(request, sid)
+    runner = request.app.state.turn_runner_factory(session)
+
+    async def event_stream():
+        try:
+            if body.adopt_candidate_id:
+                # The frontend sends the currently displayed candidate as the
+                # default to adopt before processing the next input.
+                await runner.adopt(body.adopt_candidate_id)
+            candidate = await runner.run_turn(body.input)
+            yield _sse(
+                "candidate",
+                {
+                    "trace_id": candidate.trace_id,
+                    "turn_id": candidate.turn_id,
+                    "candidate_id": candidate.candidate_id,
+                    "prose": candidate.prose,
+                    "side_effects": candidate.side_effects.model_dump(),
+                    "conflicts": candidate.conflicts,
+                },
+            )
+        except NeedChooseCandidate as exc:
+            yield _sse("error", {"message": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            yield _sse("error", {"message": f"{type(exc).__name__}: {exc}"})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.get("/{sid}/candidates/pending")
+async def pending_candidates(request: Request, sid: str):
+    session = _get_session(request, sid)
+    return {
+        "candidates": [
+            c.model_dump()
+            for c in session.candidates.list_pending()
+        ]
+    }
+
+
+@router.post("/{sid}/candidates/{candidate_id}/adopt")
+async def adopt_candidate(request: Request, sid: str, candidate_id: str):
+    session = _get_session(request, sid)
+    runner = request.app.state.turn_runner_factory(session)
+    try:
+        await runner.adopt(candidate_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@router.post("/{sid}/turns/{turn_id}/reroll")
+async def reroll_turn(request: Request, sid: str, turn_id: str, body: RerollBody):
+    session = _get_session(request, sid)
+    runner = request.app.state.turn_runner_factory(session)
+    try:
+        candidate = await runner.reroll(turn_id, mode=body.mode, note=body.note)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return candidate.model_dump()
+
+
+@router.post("/{sid}/turns/{turn_id}/discard")
+async def discard_turn(request: Request, sid: str, turn_id: str):
+    session = _get_session(request, sid)
+    runner = request.app.state.turn_runner_factory(session)
+    runner.discard(turn_id)
+    return {"ok": True}

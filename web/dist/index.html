@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AIWorld</title>
+  <link rel="stylesheet" href="style.css?v=15" />
+</head>
+<body>
+  <div id="app">
+    <!-- 左侧窄栏：场景导航 + 在场 NPC -->
+    <aside id="left-rail">
+      <h1>AIWorld</h1>
+      <h2>场景导航</h2>
+      <div id="scene-nav"></div>
+      <h2>在场</h2>
+      <div id="present-npcs"></div>
+    </aside>
+
+    <!-- 主区域：顶栏 + 聊天 + 输入 -->
+    <main id="main-area">
+      <header id="topbar">
+        <span id="world-name">-</span>
+        <span id="clock">-</span>
+        <span id="scene">-</span>
+        <div class="topbar-actions">
+          <button id="open-world">世界</button>
+          <button data-tab="director">导演</button>
+          <button data-tab="preset">预设</button>
+          <button data-tab="settings">设置</button>
+        </div>
+      </header>
+
+      <section id="chat">
+        <div id="messages"></div>
+      </section>
+
+      <form id="input-form">
+        <input id="input" type="text" placeholder="输入你的行动 / 对话 / 跳时…" autocomplete="off" />
+        <button type="submit">发送</button>
+      </form>
+    </main>
+
+    <!-- 右侧抽屉：导演 / 预设 / 设置 -->
+    <div id="drawer" class="drawer">
+      <div class="drawer-header">
+        <span>面板</span>
+        <button id="close-drawer">✕</button>
+      </div>
+      <div class="drawer-tabs">
+        <button class="tab active" data-tab="director">导演</button>
+        <button class="tab" data-tab="preset">预设</button>
+        <button class="tab" data-tab="settings">设置</button>
+      </div>
+
+      <div id="tab-director" class="tab-panel active">
+        <h3>导演对话</h3>
+        <div id="director-chat"></div>
+        <form id="director-form">
+          <input id="director-input" type="text" placeholder="和导演讨论剧情…" autocomplete="off" />
+          <button type="submit">发送</button>
+        </form>
+      </div>
+
+      <div id="tab-preset" class="tab-panel">
+        <h3>叙述预设</h3>
+        <label>文风</label>
+        <textarea id="style-input" rows="3" placeholder="文风描述"></textarea>
+        <label>描写方式</label>
+        <textarea id="description-style-input" rows="2" placeholder="描写方式描述"></textarea>
+        <label>节奏</label>
+        <select id="pace-select">
+          <option value="slow">慢节奏</option>
+          <option value="fast">快节奏</option>
+        </select>
+        <label>禁用词（每行一个）</label>
+        <textarea id="banned-words-input" rows="3" placeholder="每行一个禁用词"></textarea>
+        <button id="save-preset">保存预设</button>
+      </div>
+
+      <div id="tab-settings" class="tab-panel">
+        <h3>系统设置</h3>
+        <label>API Base URL</label>
+        <input id="setting-api-url" type="text" placeholder="http://127.0.0.1:11434/v1" />
+        <label>API Key</label>
+        <input id="setting-api-key" type="password" placeholder="sk-..." />
+        <label>主模型</label>
+        <input id="setting-model-main" type="text" placeholder="qwen2.5:7b" />
+        <label>辅助模型</label>
+        <input id="setting-model-cheap" type="text" placeholder="qwen2.5:7b" />
+        <label>
+          <input id="setting-fake-llm" type="checkbox" />
+          使用 FakeLLM 演示模式
+        </label>
+        <label>字体大小</label>
+        <select id="setting-font-size">
+          <option value="13">小</option>
+          <option value="14" selected>中</option>
+          <option value="16">大</option>
+        </select>
+        <label>主题</label>
+        <select id="setting-theme">
+          <option value="dark" selected>暗色</option>
+          <option value="light">亮色</option>
+        </select>
+        <button id="save-settings">保存设置</button>
+
+        <h3>Token 统计</h3>
+        <div id="token-stats" class="token-stats">
+          <p>调用次数：<span id="usage-calls">0</span></p>
+          <p>输入 Token：<span id="usage-prompt">0</span></p>
+          <p>输出 Token：<span id="usage-completion">0</span></p>
+          <p>总计 Token：<span id="usage-total">0</span></p>
+        </div>
+        <button id="refresh-usage">刷新统计</button>
+      </div>
+    </div>
+
+    <!-- 世界浏览器弹窗 -->
+    <div id="world-modal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <span>世界浏览器</span>
+          <button id="close-world">✕</button>
+        </div>
+        <div class="modal-tabs">
+          <button class="tab active" data-tab="list">世界列表</button>
+          <button class="tab" data-tab="overview">概览</button>
+          <button class="tab" data-tab="lore">世界书</button>
+          <button class="tab" data-tab="scenes">场景</button>
+          <button class="tab" data-tab="npcs">人物</button>
+          <button class="tab" data-tab="axes">数值属性</button>
+          <button class="tab" data-tab="events">事件日志</button>
+        </div>
+        <div id="world-tab-list" class="world-tab active"></div>
+        <div id="world-tab-overview" class="world-tab"></div>
+        <div id="world-tab-lore" class="world-tab"></div>
+        <div id="world-tab-scenes" class="world-tab"></div>
+        <div id="world-tab-npcs" class="world-tab"></div>
+        <div id="world-tab-axes" class="world-tab"></div>
+        <div id="world-tab-events" class="world-tab"></div>
+        <div class="modal-actions">
+          <button id="toggle-edit">编辑模式</button>
+          <button id="save-world-edit" style="display:none">保存修改</button>
+          <button id="save-as-world" style="display:none">另存为新世界</button>
+          <button id="export-world">导出资产包</button>
+          <label class="import-label">
+            导入资产包
+            <input id="import-world" type="file" accept=".zip" hidden />
+          </label>
+          <button id="reset-world" class="danger">重置当前世界</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=15"></script>
+</body>
+</html>
