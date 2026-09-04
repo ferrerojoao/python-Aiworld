@@ -25,13 +25,17 @@ class Directive(BaseModel):
 
 
 class StoryOutput(BaseModel):
-    prose: str = Field(validation_alias=AliasChoices("prose", "body", "text"))
-    time_hint: dict | None = None
+    prose: str = Field(
+        validation_alias=AliasChoices(
+            "prose", "body", "text", "title", "content", "output", "result", "story", "narrative"
+        )
+    )
+    time_hint: dict | None = Field(default=None, validation_alias=AliasChoices("time_hint", "time"))
 
 
 class QCOutput(BaseModel):
-    status: str = "pass"  # pass | fixed | conflict
-    prose: str = ""
+    status: str = Field(default="pass", validation_alias=AliasChoices("status", "result", "verdict"))
+    prose: str = Field(default="", validation_alias=AliasChoices("prose", "body", "text", "content", "output", "revised", "fixed_text"))
     issues: list[dict] = Field(default_factory=list)
 
 
