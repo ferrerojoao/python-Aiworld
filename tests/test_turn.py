@@ -24,15 +24,6 @@ def test_query_bypass_creates_read_only_candidate(session, fake_llm, settings):
     assert candidate.side_effects.narrative is None
 
 
-def test_claim_bypass_does_not_call_llm(session, fake_llm, settings):
-    runner = _runner(session, fake_llm, settings)
-    calls_before = len(fake_llm.calls)
-    candidate = asyncio.run(runner.run_turn("朱明在网吧"))
-    assert candidate.mode == "claim"
-    assert len(candidate.side_effects.events) == 1
-    assert len(fake_llm.calls) == calls_before
-
-
 def test_run_turn_creates_pending_candidate_without_writing_ledger(session, fake_llm, settings):
     runner = _runner(session, fake_llm, settings)
     candidate = asyncio.run(runner.run_turn("去网吧找朱明，问他昨天为什么打架"))

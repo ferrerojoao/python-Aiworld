@@ -4,7 +4,6 @@ import datetime as dt
 
 from app.config import Settings
 from app.core.store import new_id
-from app.rules.claims import apply_claim
 from app.rules.movement import resolve_destination, travel_minutes
 from app.rules.route import classify_input
 from app.rules.scenes import scene_description
@@ -62,16 +61,12 @@ class TurnRunner:
         scene = self.session.ledger.save.player_scene
         rule_bundle: dict = {"route": route, "scene": scene}
 
-        # Rule pre-solve for move / claim.
+        # Rule pre-solve for move.
         if route == "move":
             dest = resolve_destination(player_input, self.session.world, self.session.ledger)
             delta = travel_minutes(scene, dest, self.session.world)
             rule_bundle.update({"destination": dest, "delta_minutes": delta, "scene": dest})
             scene = dest
-        elif route == "claim":
-            claim = apply_claim(player_input, self.session.world, self.session.ledger)
-            if claim:
-                rule_bundle["claim"] = claim
         elif route == "jump":
             if "第二天" in player_input or "明天" in player_input:
                 delta = 12 * 60
@@ -97,24 +92,6 @@ class TurnRunner:
                 player_input=player_input,
                 prose=f"现在是 {clock}。{desc}",
                 side_effects=SideEffects(),
-                conflicts=[],
-                created_at=now,
-                updated_at=now,
-            )
-            self.session.candidates.save(candidate)
-            return candidate
-
-        if route == "claim" and rule_bundle.get("claim"):
-            claim = rule_bundle["claim"]
-            now = dt.datetime.now().isoformat(timespec="seconds")
-            candidate = Candidate(
-                candidate_id=new_id("cand"),
-                turn_id=new_id("turn"),
-                trace_id=new_id("tr"),
-                mode="claim",
-                player_input=player_input,
-                prose=claim.get("body") or "（已记录该状态）",
-                side_effects=SideEffects(events=[claim]),
                 conflicts=[],
                 created_at=now,
                 updated_at=now,
@@ -206,7 +183,7 @@ class TurnRunner:
                     "participants": directive.participants or ["player"],
                     "known_by": None if not directive.private else directive.participants,
                 },
-                events=[rule_bundle["claim"]] if rule_bundle.get("claim") else [],
+                events=[],
             ),
             conflicts=qc.issues,
             created_at=now,
