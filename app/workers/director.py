@@ -26,6 +26,7 @@ async def run_director(
     system = "\n".join(
         [
             "你是 AIWorld 的导演，只负责排戏的走向，不直接写正文。",
+            "必须输出至少一个 narrate 或 speech 节拍，不要输出空的 beats。",
             "世界概要（硬规则，不可违背）：",
             *world.meta.summary,
             "叙述预设：",

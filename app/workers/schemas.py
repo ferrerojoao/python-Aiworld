@@ -28,7 +28,8 @@ class StoryOutput(BaseModel):
     prose: str = Field(
         validation_alias=AliasChoices(
             "prose", "body", "text", "title", "content", "output", "result", "story", "narrative",
-            "正文", "内容", "输出", "结果", "回复", "文本", "故事", "叙述", "生成结果",
+            "narrate", "speech", "narration", "scene", "play",
+            "正文", "内容", "输出", "结果", "回复", "文本", "故事", "叙述", "生成结果", "旁白", "描写",
         )
     )
     time_hint: dict | None = Field(default=None, validation_alias=AliasChoices("time_hint", "time", "时间"))

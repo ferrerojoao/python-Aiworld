@@ -30,6 +30,8 @@ async def run_storyteller(
             preset.style,
             preset.description_style,
             "不要写任何导演动机、幕后注。",
+            "不要提到 AIWorld、系统、导演、说书人、剧本指令、玩家输入等元信息。",
+            "不要打破第四面墙，只写玩家在故事里能感知到的内容。",
         ]
     )
     messages = [
