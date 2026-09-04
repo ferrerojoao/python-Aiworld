@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AIWorld</title>
-  <link rel="stylesheet" href="style.css?v=16" />
+  <link rel="stylesheet" href="style.css?v=17" />
 </head>
 <body>
   <div id="app">
@@ -65,18 +65,11 @@
       </div>
 
       <div id="tab-preset" class="tab-panel">
-        <h3>叙述预设</h3>
-        <label>文风</label>
-        <textarea id="style-input" rows="3" placeholder="文风描述"></textarea>
-        <label>描写方式</label>
-        <textarea id="description-style-input" rows="2" placeholder="描写方式描述"></textarea>
-        <label>节奏</label>
-        <select id="pace-select">
-          <option value="slow">慢节奏</option>
-          <option value="fast">快节奏</option>
-        </select>
-        <label>禁用词（每行一个）</label>
-        <textarea id="banned-words-input" rows="3" placeholder="每行一个禁用词"></textarea>
+        <h3>预设</h3>
+        <label>导演准则</label>
+        <textarea id="director-guidelines-input" rows="6" placeholder="例如：不要主动揭穿秘密；优先让 NPC 主动制造冲突…"></textarea>
+        <label>说书人预设</label>
+        <textarea id="storyteller-preset-input" rows="8" placeholder="例如：克制写实，白描为主，少用形容词堆砌…"></textarea>
         <button id="save-preset">保存预设</button>
       </div>
 
@@ -152,6 +145,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=16"></script>
+  <script src="app.js?v=17"></script>
 </body>
 </html>

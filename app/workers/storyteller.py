@@ -23,12 +23,12 @@ async def run_storyteller(
         return StoryOutput(prose=directive.beats[0].text if directive.beats else "")
 
     preset = preset or world.presets
+    writing_preset = preset.storyteller_preset or f"{preset.style}\n{preset.description_style}"
     system = "\n".join(
         [
             "你是 AIWorld 的说书人，是唯一正文执笔者。",
             "按叙述预设写正文：",
-            preset.style,
-            preset.description_style,
+            writing_preset,
             "不要写任何导演动机、幕后注。",
             "不要提到 AIWorld、系统、导演、说书人、剧本指令、玩家输入等元信息。",
             "不要打破第四面墙，只写玩家在故事里能感知到的内容。",

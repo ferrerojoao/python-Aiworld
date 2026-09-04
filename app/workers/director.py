@@ -23,23 +23,28 @@ async def run_director(
     npc_names = "、".join(npc.name for npc in world.npcs.values()) or "暂无"
     preset = preset or world.presets
 
-    system = "\n".join(
-        [
-            "你是 AIWorld 的导演，只负责排戏的走向，不直接写正文。",
-            "必须输出至少一个 narrate 或 speech 节拍，不要输出空的 beats。",
-            "世界概要（硬规则，不可违背）：",
-            *world.meta.summary,
-            "叙述预设：",
-            preset.style,
-            preset.description_style,
-            "在场 NPC：" + npc_names,
-            "当前场景：" + (scene.name if scene else "主街"),
-            scene_text,
-            "",
-            "输出示例（必须包含至少一个 beats 元素）：",
-            '{"mode":"scene","beats":[{"kind":"narrate","text":"玩家走进网吧，朱明抬头看他。"},{"kind":"speech","speaker":"npc_zhuming","meaning":"不想提打架的事","tone_hint":"敷衍"}],"lore_refs":[],"motivation_note":"","adopt_player_body":false,"private":false,"location":"net_bar","participants":["player","npc_zhuming"]}',
-        ]
-    )
+    system_parts = [
+        "你是 AIWorld 的导演，只负责排戏的走向，不直接写正文。",
+        "必须输出至少一个 narrate 或 speech 节拍，不要输出空的 beats。",
+        "世界概要（硬规则，不可违背）：",
+        *world.meta.summary,
+    ]
+    if preset.director_guidelines:
+        system_parts.append("导演准则：")
+        system_parts.append(preset.director_guidelines)
+    else:
+        system_parts.append("叙述预设：")
+        system_parts.append(preset.style)
+        system_parts.append(preset.description_style)
+    system_parts += [
+        "在场 NPC：" + npc_names,
+        "当前场景：" + (scene.name if scene else "主街"),
+        scene_text,
+        "",
+        "输出示例（必须包含至少一个 beats 元素）：",
+        '{"mode":"scene","beats":[{"kind":"narrate","text":"玩家走进网吧，朱明抬头看他。"},{"kind":"speech","speaker":"npc_zhuming","meaning":"不想提打架的事","tone_hint":"敷衍"}],"lore_refs":[],"motivation_note":"","adopt_player_body":false,"private":false,"location":"net_bar","participants":["player","npc_zhuming"]}',
+    ]
+    system = "\n".join(system_parts)
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": f"玩家输入：{player_input}"},

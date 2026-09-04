@@ -182,10 +182,8 @@ async function refreshState() {
   $("#clock").textContent = data.clock || "-";
   $("#scene").textContent = data.scene_name || data.scene || "-";
   if (data.preset) {
-    $("#style-input").value = data.preset.style || "";
-    $("#description-style-input").value = data.preset.description_style || "";
-    $("#pace-select").value = data.preset.pace || "slow";
-    $("#banned-words-input").value = (data.preset.banned_words || []).join("\n");
+    $("#director-guidelines-input").value = data.preset.director_guidelines || "";
+    $("#storyteller-preset-input").value = data.preset.storyteller_preset || "";
   }
   renderLeftRail(data);
 }
@@ -381,10 +379,8 @@ async function savePreset() {
   await api(`/api/presets`, {
     method: "PUT",
     body: JSON.stringify({
-      style: $("#style-input").value,
-      description_style: $("#description-style-input").value,
-      pace: $("#pace-select").value,
-      banned_words: splitLines($("#banned-words-input").value),
+      director_guidelines: $("#director-guidelines-input").value,
+      storyteller_preset: $("#storyteller-preset-input").value,
     }),
   });
   alert("预设已保存");

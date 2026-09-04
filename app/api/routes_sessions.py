@@ -243,6 +243,8 @@ class PresetBody(BaseModel):
     description_style: str | None = None
     pace: str | None = None
     banned_words: list[str] | None = None
+    director_guidelines: str | None = None
+    storyteller_preset: str | None = None
 
 
 @router.put("/sessions/{sid}/presets")
@@ -257,6 +259,10 @@ async def update_presets(request: Request, sid: str, body: PresetBody):
         preset.pace = body.pace
     if body.banned_words is not None:
         preset.banned_words = body.banned_words
+    if body.director_guidelines is not None:
+        preset.director_guidelines = body.director_guidelines
+    if body.storyteller_preset is not None:
+        preset.storyteller_preset = body.storyteller_preset
     save_global_preset(
         Path(request.app.state.settings.data_dir) / "presets.json",
         preset,
@@ -280,6 +286,10 @@ async def update_global_preset(request: Request, body: PresetBody):
         preset.pace = body.pace
     if body.banned_words is not None:
         preset.banned_words = body.banned_words
+    if body.director_guidelines is not None:
+        preset.director_guidelines = body.director_guidelines
+    if body.storyteller_preset is not None:
+        preset.storyteller_preset = body.storyteller_preset
     save_global_preset(
         Path(request.app.state.settings.data_dir) / "presets.json",
         preset,
