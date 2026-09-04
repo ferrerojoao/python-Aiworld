@@ -6,8 +6,30 @@ from functools import lru_cache
 from pathlib import Path
 
 
+_DOTENV_CACHE: dict[str, str] | None = None
+
+
+def _load_dotenv() -> dict[str, str]:
+    global _DOTENV_CACHE
+    if _DOTENV_CACHE is None:
+        data: dict[str, str] = {}
+        path = Path(__file__).resolve().parent.parent / ".env"
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                data[key.strip()] = value.strip().strip('"').strip("'")
+        _DOTENV_CACHE = data
+    return _DOTENV_CACHE
+
+
 def _env(name: str, default: str = "") -> str:
-    return os.getenv(f"AIWORLD_{name}", default)
+    value = os.getenv(f"AIWORLD_{name}")
+    if value is not None:
+        return value
+    return _load_dotenv().get(f"AIWORLD_{name}", default)
 
 
 def _env_int(name: str, default: int) -> int:

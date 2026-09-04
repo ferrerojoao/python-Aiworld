@@ -36,13 +36,15 @@ python scripts/demo.py
 
 ## 真实 LLM 联调
 
-先配置环境变量：
+项目支持直接编辑根目录下的 `.env` 文件，保存后重启服务即可生效，不需要每次手动设置环境变量。
+
+`.env` 示例：
 
 ```bash
-export AIWORLD_LLM_BASE_URL="http://127.0.0.1:11434/v1"
-export AIWORLD_LLM_API_KEY="ollama"
-export AIWORLD_MODEL_MAIN="qwen2.5:7b"
-export AIWORLD_MODEL_CHEAP="qwen2.5:7b"
+AIWORLD_LLM_BASE_URL=http://127.0.0.1:11434/v1
+AIWORLD_LLM_API_KEY=ollama
+AIWORLD_MODEL_MAIN=qwen2.5:7b
+AIWORLD_MODEL_CHEAP=qwen2.5:7b
 ```
 
 然后跑冒烟测试：
