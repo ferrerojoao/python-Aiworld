@@ -188,7 +188,7 @@ class TurnRunner:
                     "participants": directive.participants or ["player"],
                     "known_by": None if not directive.private else directive.participants,
                 },
-                location_facts=[rule_bundle["claim"]] if rule_bundle.get("claim") else [],
+                events=[rule_bundle["claim"]] if rule_bundle.get("claim") else [],
             ),
             conflicts=qc.issues,
             created_at=now,

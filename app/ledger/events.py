@@ -16,16 +16,6 @@ class NarrativeRecord(BaseModel):
     source: str = "turn"
 
 
-class LocationFactRecord(BaseModel):
-    id: str
-    kind: Literal["location_fact"] = "location_fact"
-    at: str
-    subject: str
-    location: str | None = None
-    source: str = "witness"  # witness | event | override | director
-    valid_until: str | None = None
-
-
 class MemoRecord(BaseModel):
     id: str
     kind: Literal["memo"] = "memo"
@@ -34,4 +24,4 @@ class MemoRecord(BaseModel):
     note: str
 
 
-EventRecord = NarrativeRecord | LocationFactRecord | MemoRecord
+EventRecord = NarrativeRecord | MemoRecord

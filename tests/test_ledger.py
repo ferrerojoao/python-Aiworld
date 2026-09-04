@@ -20,16 +20,17 @@ def test_present_at_derives_from_narrative(session):
 
 def test_where_is_and_present(session):
     ledger = session.ledger
-    fact = {
+    ev = {
         "id": ledger.allocate_event_id(),
-        "kind": "location_fact",
+        "kind": "narrative",
         "at": "2026-07-14T10:00:00",
-        "subject": "npc_zhuming",
         "location": "net_bar",
+        "participants": ["player", "npc_zhuming"],
+        "known_by": None,
+        "body": "朱明在网吧。",
         "source": "witness",
-        "valid_until": None,
     }
-    ledger.append(fact)
+    ledger.append(ev)
     assert ledger.where_is("npc_zhuming")["location"] == "net_bar"
     assert "npc_zhuming" in ledger.present_at("net_bar")
 

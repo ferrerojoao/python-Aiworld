@@ -13,7 +13,7 @@ from app.ledger.queries import Ledger
 class SideEffects(BaseModel):
     delta_minutes: int = 0
     narrative: dict | None = None
-    location_facts: list[dict] = Field(default_factory=list)
+    events: list[dict] = Field(default_factory=list)
     axes: dict[str, int] = Field(default_factory=dict)  # 二期预留
     overrides: list[dict] = Field(default_factory=list)
 
@@ -139,12 +139,12 @@ class Transaction:
             if candidate.side_effects.narrative.get("location"):
                 self.ledger.save.player_scene = candidate.side_effects.narrative["location"]
 
-        for fact in candidate.side_effects.location_facts:
-            fact = dict(fact)
-            fact.setdefault("id", self.ledger.allocate_event_id())
-            fact.setdefault("kind", "location_fact")
-            fact.setdefault("at", clock)
-            self.ledger.append(fact)
+        for event in candidate.side_effects.events:
+            event = dict(event)
+            event.setdefault("id", self.ledger.allocate_event_id())
+            event.setdefault("kind", "narrative")
+            event.setdefault("at", clock)
+            self.ledger.append(event)
 
         # v1 relation axes are reserved; just copy values if provided.
         for key, value in candidate.side_effects.axes.items():

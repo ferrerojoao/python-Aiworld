@@ -43,7 +43,6 @@ class Ledger:
     # ------------------------------------------------------------------
     def _rebuild_indexes(self) -> None:
         self.by_id: dict[str, dict[str, Any]] = {}
-        self.by_subject_loc: dict[str, dict[str, Any]] = {}
         self.by_location: dict[str, list[dict[str, Any]]] = {}
         self.narratives: list[dict[str, Any]] = []
 
@@ -54,15 +53,6 @@ class Ledger:
                 loc = event.get("location")
                 if loc:
                     self.by_location.setdefault(loc, []).append(event)
-            elif event["kind"] == "location_fact":
-                subject = event.get("subject", "")
-                current = self.by_subject_loc.get(subject)
-                if current is None or self._is_newer(event, current):
-                    self.by_subject_loc[subject] = event
-
-    @staticmethod
-    def _is_newer(a: dict[str, Any], b: dict[str, Any]) -> bool:
-        return (a.get("at") or "") >= (b.get("at") or "")
 
     # ------------------------------------------------------------------
     # Writes (only called from the transaction commit path)
@@ -81,9 +71,6 @@ class Ledger:
             loc = event.get("location")
             if loc:
                 self.by_location.setdefault(loc, []).append(event)
-        elif event["kind"] == "location_fact":
-            subject = event.get("subject", "")
-            self.by_subject_loc[subject] = event
 
     def persist_save(self) -> None:
         write_json_atomic(self.save_path, self.save.model_dump())
@@ -94,20 +81,12 @@ class Ledger:
     def _latest_location_event(self, entity: str) -> dict[str, Any] | None:
         """Find the latest event that establishes an entity's location.
 
-        Both narrative events (participants + location) and explicit
-        location_fact records count. Expired location_facts are skipped.
+        Only unified narrative events count (participants + location).
         """
         for event in reversed(self.events):
             location = event.get("location")
             if not location:
                 continue
-            if event.get("kind") == "location_fact":
-                if event.get("subject") != entity:
-                    continue
-                valid_until = event.get("valid_until")
-                if valid_until and self.save.clock and valid_until <= self.save.clock:
-                    continue
-                return event
             if entity in event.get("participants", []):
                 return event
         return None
@@ -119,12 +98,8 @@ class Ledger:
         return event
 
     def present_at(self, scene: str) -> list[str]:
-        subjects: set[str] = set(self.world.npcs.keys())
-        for event in self.events:
-            if event.get("kind") == "location_fact" and event.get("subject"):
-                subjects.add(event["subject"])
         result = []
-        for subject in subjects:
+        for subject in self.world.npcs.keys():
             event = self._latest_location_event(subject)
             if event and event.get("location") == scene:
                 result.append(subject)
