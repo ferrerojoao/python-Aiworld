@@ -38,10 +38,20 @@ class Conflict(BaseModel):
     ref: str | None = None
 
 
+class PlayerProfile(BaseModel):
+    id: str = "player"
+    name: str = "你"
+    appearance: str = ""
+    persona: str = ""
+    background: str = ""
+    attributes: dict[str, int] = Field(default_factory=dict)  # 二期预留
+
+
 class SaveData(BaseModel):
     meta: SaveMeta
     clock: str = ""
     player_scene: str = "main_street"
+    player: PlayerProfile = Field(default_factory=PlayerProfile)
     narrative_preset: NarrativePreset = Field(default_factory=NarrativePreset)
     entities: dict[str, EntityRuntime] = Field(default_factory=dict)
     axes: dict[str, int] = Field(default_factory=dict)  # 二期预留

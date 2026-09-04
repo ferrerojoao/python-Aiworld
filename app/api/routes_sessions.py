@@ -246,6 +246,13 @@ class PresetBody(BaseModel):
     storyteller_preset: str | None = None
 
 
+class PlayerBody(BaseModel):
+    name: str | None = None
+    appearance: str | None = None
+    persona: str | None = None
+    background: str | None = None
+
+
 @router.put("/sessions/{sid}/presets")
 async def update_presets(request: Request, sid: str, body: PresetBody):
     _get_session(request, sid)
@@ -293,6 +300,28 @@ async def update_global_preset(request: Request, body: PresetBody):
         Path(request.app.state.settings.data_dir) / "presets.json",
         preset,
     )
+    return {"ok": True}
+
+
+@router.get("/sessions/{sid}/player")
+async def get_player(request: Request, sid: str):
+    session = _get_session(request, sid)
+    return session.ledger.save.player.model_dump()
+
+
+@router.put("/sessions/{sid}/player")
+async def update_player(request: Request, sid: str, body: PlayerBody):
+    session = _get_session(request, sid)
+    player = session.ledger.save.player
+    if body.name is not None:
+        player.name = body.name
+    if body.appearance is not None:
+        player.appearance = body.appearance
+    if body.persona is not None:
+        player.persona = body.persona
+    if body.background is not None:
+        player.background = body.background
+    session.ledger.persist_save()
     return {"ok": True}
 
 

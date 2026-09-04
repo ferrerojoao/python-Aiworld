@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AIWorld</title>
-  <link rel="stylesheet" href="style.css?v=18" />
+  <link rel="stylesheet" href="style.css?v=19" />
 </head>
 <body>
   <div id="app">
@@ -26,6 +26,7 @@
         <div class="topbar-actions">
           <button id="open-world">世界</button>
           <button data-tab="director">导演</button>
+          <button data-tab="player">主角</button>
           <button data-tab="preset">预设</button>
           <button data-tab="debug">调试</button>
           <button data-tab="settings">设置</button>
@@ -52,6 +53,7 @@
       </div>
       <div class="drawer-tabs">
         <button class="tab active" data-tab="director">导演</button>
+        <button class="tab" data-tab="player">主角</button>
         <button class="tab" data-tab="preset">预设</button>
         <button class="tab" data-tab="debug">调试</button>
         <button class="tab" data-tab="settings">设置</button>
@@ -64,6 +66,19 @@
           <input id="director-input" type="text" placeholder="和导演讨论剧情…" autocomplete="off" />
           <button type="submit">发送</button>
         </form>
+      </div>
+
+      <div id="tab-player" class="tab-panel">
+        <h3>主角资料</h3>
+        <label>名字</label>
+        <input id="player-name" type="text" placeholder="你" />
+        <label>外貌</label>
+        <textarea id="player-appearance" rows="3" placeholder="外貌描述"></textarea>
+        <label>人格 / 说话风格</label>
+        <textarea id="player-persona" rows="4" placeholder="性格、说话风格等"></textarea>
+        <label>背景</label>
+        <textarea id="player-background" rows="4" placeholder="背景故事"></textarea>
+        <button id="save-player">保存主角资料</button>
       </div>
 
       <div id="tab-preset" class="tab-panel">
@@ -153,6 +168,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=18"></script>
+  <script src="app.js?v=19"></script>
 </body>
 </html>

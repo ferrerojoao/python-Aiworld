@@ -341,6 +341,8 @@ function switchDrawerTab(tabName) {
   });
   if (tabName === "debug") {
     loadDebugTrace();
+  } else if (tabName === "player") {
+    loadPlayer();
   }
 }
 
@@ -351,6 +353,30 @@ async function loadDebugTrace() {
   $("#debug-output").textContent = trace.length
     ? JSON.stringify(trace, null, 2)
     : "暂无调试数据";
+}
+
+/* ---------- 主角资料 ---------- */
+
+async function loadPlayer() {
+  if (!state.sid) return;
+  const data = await api(`/api/sessions/${state.sid}/player`);
+  $("#player-name").value = data.name || "";
+  $("#player-appearance").value = data.appearance || "";
+  $("#player-persona").value = data.persona || "";
+  $("#player-background").value = data.background || "";
+}
+
+async function savePlayer() {
+  await api(`/api/sessions/${state.sid}/player`, {
+    method: "PUT",
+    body: JSON.stringify({
+      name: $("#player-name").value,
+      appearance: $("#player-appearance").value,
+      persona: $("#player-persona").value,
+      background: $("#player-background").value,
+    }),
+  });
+  alert("主角资料已保存");
 }
 
 /* ---------- 导演对话 ---------- */
@@ -1128,6 +1154,7 @@ async function init() {
     await sendDirectorMessage();
   });
   $("#save-preset").addEventListener("click", savePreset);
+  $("#save-player").addEventListener("click", savePlayer);
   $("#save-settings").addEventListener("click", saveSettings);
   $("#refresh-usage").addEventListener("click", loadUsage);
   $("#refresh-debug").addEventListener("click", loadDebugTrace);
