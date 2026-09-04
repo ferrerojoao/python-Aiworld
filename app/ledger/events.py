@@ -16,12 +16,4 @@ class NarrativeRecord(BaseModel):
     source: str = "turn"
 
 
-class MemoRecord(BaseModel):
-    id: str
-    kind: Literal["memo"] = "memo"
-    at: str
-    ref: str
-    note: str
-
-
-EventRecord = NarrativeRecord | MemoRecord
+EventRecord = NarrativeRecord

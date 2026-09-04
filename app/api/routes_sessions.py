@@ -33,7 +33,6 @@ _FAKE_RESPONSE = {
     "decision": "打哈哈",
     "action_hint": "拉你去吃面",
     "tone": "随意",
-    "memo": "他不想提昨天打架的事。",
     "hook_texts": [],
     "conflicts": [],
 }

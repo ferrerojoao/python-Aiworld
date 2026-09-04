@@ -57,6 +57,5 @@ class ActorDecision(BaseModel):
 
 
 class AuditOutput(BaseModel):
-    memo: str | None = Field(default=None, validation_alias=AliasChoices("memo", "note", "附注", "备注"))
     hook_texts: list[str] = Field(default_factory=list, validation_alias=AliasChoices("hook_texts", "hooks", "钩子"))
     conflicts: list[dict] = Field(default_factory=list, validation_alias=AliasChoices("conflicts", "矛盾"))

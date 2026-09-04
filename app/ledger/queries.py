@@ -105,7 +105,7 @@ class Ledger:
                 result.append(subject)
         return sorted(result)
 
-    def visible_to(self, viewer: str, *, include_memo: bool = False) -> list[dict[str, Any]]:
+    def visible_to(self, viewer: str) -> list[dict[str, Any]]:
         """Narrative events visible to a viewer.
 
         Public events are visible to everyone; private events require the

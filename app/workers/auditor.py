@@ -16,8 +16,8 @@ async def run_audit(
 ) -> AuditOutput:
     """Audit worker: post-commit settlement.
 
-    In v1 this runs synchronously inside the adopt request. It can create a
-    memo, scan hooks, and detect simple contradictions.
+    In v1 this runs synchronously inside the adopt request. It can scan
+    hooks and detect simple lifecycle changes.
     """
     messages = [
         {"role": "system", "content": "你是 AIWorld 的世界审计，负责从事件中提取定性附注和矛盾。只返回 JSON。"},

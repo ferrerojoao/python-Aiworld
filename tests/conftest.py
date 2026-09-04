@@ -26,7 +26,6 @@ GENERIC_LLM_RESPONSE = {
     "decision": "含糊带过",
     "action_hint": "拉你去打街机",
     "tone": "敷衍",
-    "memo": "他明显不想接话。",
     "hook_texts": [],
     "conflicts": [],
 }
