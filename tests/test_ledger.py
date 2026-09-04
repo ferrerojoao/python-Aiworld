@@ -1,6 +1,23 @@
 from app.ledger.access import apply_access_override, rejudge_private
 
 
+def test_present_at_derives_from_narrative(session):
+    ledger = session.ledger
+    ev = {
+        "id": ledger.allocate_event_id(),
+        "kind": "narrative",
+        "at": "2026-07-14T10:00:00",
+        "location": "net_bar",
+        "participants": ["player", "npc_zhuming"],
+        "known_by": None,
+        "body": "朱明在网吧。",
+        "source": "turn",
+    }
+    ledger.append(ev)
+    assert "npc_zhuming" in ledger.present_at("net_bar")
+    assert ledger.where_is("npc_zhuming")["location"] == "net_bar"
+
+
 def test_where_is_and_present(session):
     ledger = session.ledger
     fact = {

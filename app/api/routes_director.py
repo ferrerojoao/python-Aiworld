@@ -52,6 +52,10 @@ async def _director_chat(request, session, message: str):
     settings = request.app.state.settings
     world = session.world
 
+    presences = [
+        world.npcs[pid].name if pid in world.npcs else pid
+        for pid in session.ledger.present_at(session.ledger.save.player_scene)
+    ]
     system = "\n".join(
         [
             "你是 AIWorld 的导演，玩家正在戏外和你讨论剧情走向。",
@@ -60,7 +64,7 @@ async def _director_chat(request, session, message: str):
             *world.meta.summary,
             "当前时间：" + session.ledger.save.clock,
             "当前场景：" + session.ledger.save.player_scene,
-            "在场 NPC：" + "、".join(npc.name for npc in world.npcs.values()),
+            "在场 NPC：" + ("、".join(presences) if presences else "无"),
         ]
     )
 
@@ -104,18 +108,23 @@ def _handle_backstage(session, action: str, payload: dict):
         location = payload.get("location", "")
         if not subject or not location:
             raise HTTPException(status_code=400, detail="subject and location are required")
-        fact = {
+        npc = session.world.npcs.get(subject)
+        scene = next((s for s in session.world.scenes if s.id == location), None)
+        subject_name = npc.name if npc else subject
+        location_name = scene.name if scene else location
+        event = {
             "id": ledger.allocate_event_id(),
-            "kind": "location_fact",
+            "kind": "narrative",
             "at": ledger.save.clock,
-            "subject": subject,
             "location": location,
+            "participants": [subject],
+            "known_by": None,
+            "body": f"{subject_name}在{location_name}。",
             "source": "director",
-            "valid_until": payload.get("valid_until"),
         }
-        ledger.append(fact)
+        ledger.append(event)
         ledger.persist_save()
-        return {"ok": True, "fact": fact}
+        return {"ok": True, "event": event}
 
     if action == "amend_card":
         npc_id = payload.get("npc_id", "")

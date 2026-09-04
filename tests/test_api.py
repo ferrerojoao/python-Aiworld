@@ -128,8 +128,8 @@ def test_director_backstage_override(tmp_path):
             },
         )
         assert r.status_code == 200
-        fact = r.json()["fact"]
-        assert fact["source"] == "director"
+        event = r.json()["event"]
+        assert event["source"] == "director"
 
 
 def test_debug_trace_available_after_turn(tmp_path):

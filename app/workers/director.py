@@ -18,9 +18,14 @@ async def run_director(
     temperature: float = 0.7,
 ) -> Directive:
     """Director worker: decides the shape of a turn."""
-    scene = next((s for s in world.scenes if s.id == (scene_id or "main_street")), None)
+    scene_id = scene_id or ledger.save.player_scene or "main_street"
+    scene = next((s for s in world.scenes if s.id == scene_id), None)
     scene_text = scene.perceivable if scene else "未知场景"
-    npc_names = "、".join(npc.name for npc in world.npcs.values()) or "暂无"
+    present_ids = ledger.present_at(scene_id)
+    present_names = [
+        world.npcs[pid].name if pid in world.npcs else pid for pid in present_ids
+    ]
+    npc_names = "、".join(present_names) or "暂无"
     preset = preset or world.presets
 
     system_parts = [

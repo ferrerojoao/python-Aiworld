@@ -91,22 +91,42 @@ class Ledger:
     # ------------------------------------------------------------------
     # Queries
     # ------------------------------------------------------------------
-    def where_is(self, entity: str) -> dict[str, Any] | None:
-        fact = self.by_subject_loc.get(entity)
-        if fact is None:
-            return None
-        valid_until = fact.get("valid_until")
-        if valid_until and self.save.clock and valid_until <= self.save.clock:
-            return None
-        return fact
+    def _latest_location_event(self, entity: str) -> dict[str, Any] | None:
+        """Find the latest event that establishes an entity's location.
 
-    def present_at(self, scene: str) -> list[str]:
-        result = []
-        for subject, fact in self.by_subject_loc.items():
-            if fact.get("location") == scene:
-                valid_until = fact.get("valid_until")
+        Both narrative events (participants + location) and explicit
+        location_fact records count. Expired location_facts are skipped.
+        """
+        for event in reversed(self.events):
+            location = event.get("location")
+            if not location:
+                continue
+            if event.get("kind") == "location_fact":
+                if event.get("subject") != entity:
+                    continue
+                valid_until = event.get("valid_until")
                 if valid_until and self.save.clock and valid_until <= self.save.clock:
                     continue
+                return event
+            if entity in event.get("participants", []):
+                return event
+        return None
+
+    def where_is(self, entity: str) -> dict[str, Any] | None:
+        event = self._latest_location_event(entity)
+        if event is None:
+            return None
+        return event
+
+    def present_at(self, scene: str) -> list[str]:
+        subjects: set[str] = set(self.world.npcs.keys())
+        for event in self.events:
+            if event.get("kind") == "location_fact" and event.get("subject"):
+                subjects.add(event["subject"])
+        result = []
+        for subject in subjects:
+            event = self._latest_location_event(subject)
+            if event and event.get("location") == scene:
                 result.append(subject)
         return sorted(result)
 
