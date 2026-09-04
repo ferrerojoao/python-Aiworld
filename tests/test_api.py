@@ -238,6 +238,13 @@ def test_settings_and_director_chat(tmp_path):
         r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
         sid = r.json()["sid"]
 
+        chat = client.post(
+            f"/api/sessions/{sid}/director",
+            json={"topic": "chat", "message": "下一步怎么发展？"},
+        )
+        assert chat.status_code == 200
+        assert chat.json()["reply"]
+
         settings = client.get("/api/settings").json()
         assert "llm_base_url" in settings
 
@@ -248,19 +255,11 @@ def test_settings_and_director_chat(tmp_path):
                 "llm_api_key": "test-key",
                 "model_main": "test-model",
                 "model_cheap": "test-model",
-                "fake_llm": True,
             },
         )
         assert put.status_code == 200
         settings = client.get("/api/settings").json()
         assert settings["llm_base_url"] == "http://example.test/v1"
-
-        chat = client.post(
-            f"/api/sessions/{sid}/director",
-            json={"topic": "chat", "message": "下一步怎么发展？"},
-        )
-        assert chat.status_code == 200
-        assert chat.json()["reply"]
 
 
 def _candidate_id_from_sse(text: str) -> str:

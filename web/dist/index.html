@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AIWorld</title>
-  <link rel="stylesheet" href="style.css?v=15" />
+  <link rel="stylesheet" href="style.css?v=16" />
 </head>
 <body>
   <div id="app">
@@ -34,6 +34,8 @@
       <section id="chat">
         <div id="messages"></div>
       </section>
+
+      <div id="pipeline-status" class="pipeline-status"></div>
 
       <form id="input-form">
         <input id="input" type="text" placeholder="输入你的行动 / 对话 / 跳时…" autocomplete="off" />
@@ -88,10 +90,6 @@
         <input id="setting-model-main" type="text" placeholder="qwen2.5:7b" />
         <label>辅助模型</label>
         <input id="setting-model-cheap" type="text" placeholder="qwen2.5:7b" />
-        <label>
-          <input id="setting-fake-llm" type="checkbox" />
-          使用 FakeLLM 演示模式
-        </label>
         <label>字体大小</label>
         <select id="setting-font-size">
           <option value="13">小</option>
@@ -154,6 +152,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=15"></script>
+  <script src="app.js?v=16"></script>
 </body>
 </html>

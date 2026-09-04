@@ -398,7 +398,6 @@ class SettingsBody(BaseModel):
     llm_api_key: str | None = None
     model_main: str | None = None
     model_cheap: str | None = None
-    fake_llm: bool | None = None
 
 
 @router.get("/settings")
@@ -409,7 +408,6 @@ async def get_system_settings(request: Request):
         "llm_api_key": s.llm_api_key,
         "model_main": s.model_main,
         "model_cheap": s.model_cheap,
-        "fake_llm": s.fake_llm,
     }
 
 
@@ -432,19 +430,12 @@ async def update_system_settings(request: Request, body: SettingsBody):
         s.model_main = body.model_main
     if body.model_cheap is not None:
         s.model_cheap = body.model_cheap
-    if body.fake_llm is not None:
-        s.fake_llm = body.fake_llm
 
     from app.core.llm import LLMGateway
 
-    if s.fake_llm:
-        from app.core.llm import FakeLLM
-
-        request.app.state.llm = FakeLLM({"*": _FAKE_RESPONSE})
-    else:
-        request.app.state.llm = LLMGateway(
-            base_url=s.llm_base_url,
-            api_key=s.llm_api_key,
-            max_concurrency=4,
-        )
+    request.app.state.llm = LLMGateway(
+        base_url=s.llm_base_url,
+        api_key=s.llm_api_key,
+        max_concurrency=4,
+    )
     return {"ok": True}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 from fastapi import APIRouter, HTTPException, Request
@@ -38,27 +39,51 @@ async def post_turn(request: Request, sid: str, body: TurnBody):
     runner = request.app.state.turn_runner_factory(session)
 
     async def event_stream():
-        try:
-            if body.adopt_candidate_id:
-                # The frontend sends the currently displayed candidate as the
-                # default to adopt before processing the next input.
-                await runner.adopt(body.adopt_candidate_id)
-            candidate = await runner.run_turn(body.input)
-            yield _sse(
-                "candidate",
-                {
-                    "trace_id": candidate.trace_id,
-                    "turn_id": candidate.turn_id,
-                    "candidate_id": candidate.candidate_id,
-                    "prose": candidate.prose,
-                    "side_effects": candidate.side_effects.model_dump(),
-                    "conflicts": candidate.conflicts,
-                },
-            )
-        except NeedChooseCandidate as exc:
-            yield _sse("error", {"message": str(exc)})
-        except Exception as exc:  # noqa: BLE001
-            yield _sse("error", {"message": f"{type(exc).__name__}: {exc}"})
+        queue: asyncio.Queue = asyncio.Queue()
+        runner.set_progress_queue(queue)
+
+        async def run():
+            try:
+                if body.adopt_candidate_id:
+                    # The frontend sends the currently displayed candidate as the
+                    # default to adopt before processing the next input.
+                    await runner.adopt(body.adopt_candidate_id)
+                candidate = await runner.run_turn(body.input)
+                await queue.put(
+                    {
+                        "type": "candidate",
+                        "data": {
+                            "trace_id": candidate.trace_id,
+                            "turn_id": candidate.turn_id,
+                            "candidate_id": candidate.candidate_id,
+                            "prose": candidate.prose,
+                            "side_effects": candidate.side_effects.model_dump(),
+                            "conflicts": candidate.conflicts,
+                        },
+                    }
+                )
+            except NeedChooseCandidate as exc:
+                await queue.put({"type": "error", "data": {"message": str(exc)}})
+            except Exception as exc:  # noqa: BLE001
+                await queue.put(
+                    {"type": "error", "data": {"message": f"{type(exc).__name__}: {exc}"}}
+                )
+
+        task = asyncio.create_task(run())
+        while True:
+            item = await queue.get()
+            if item["type"] == "stage":
+                yield _sse(
+                    "stage",
+                    {"stage": item.get("stage"), "label": item.get("label")},
+                )
+            elif item["type"] == "candidate":
+                yield _sse("candidate", item["data"])
+                break
+            elif item["type"] == "error":
+                yield _sse("error", item["data"])
+                break
+        task.cancel()
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

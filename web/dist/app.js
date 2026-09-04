@@ -272,7 +272,18 @@ function parseSSE(text) {
   return events;
 }
 
+function setPipelineStatus(text, active = true) {
+  const el = $("#pipeline-status");
+  el.innerHTML = active ? `<span class="spinner"></span>${text}` : text;
+  el.classList.toggle("active", active);
+}
+
+function clearPipelineStatus() {
+  setPipelineStatus("", false);
+}
+
 async function sendInput(text) {
+  setPipelineStatus("正在连接…");
   const body = { input: text };
   if (state.currentCandidateId) {
     body.adopt_candidate_id = state.currentCandidateId;
@@ -287,15 +298,22 @@ async function sendInput(text) {
   const raw = await res.text();
   const events = parseSSE(raw);
   for (const ev of events) {
-    if (ev.event === "candidate") {
+    if (ev.event === "stage") {
+      setPipelineStatus(ev.data.label || ev.data.stage || "处理中");
+    } else if (ev.event === "candidate") {
+      clearPipelineStatus();
       state.candidates = [ev.data];
       state.currentCandidateId = ev.data.candidate_id;
       state.currentTurnId = ev.data.turn_id;
       state.currentMessageEl = null;
       renderCandidateMessage();
     } else if (ev.event === "error") {
+      clearPipelineStatus();
       addMessage("npc", `⚠ ${ev.data.message || "错误"}`);
     }
+  }
+  if (!events.some((ev) => ev.event === "candidate" || ev.event === "error")) {
+    clearPipelineStatus();
   }
   await refreshState();
 }
@@ -380,7 +398,6 @@ async function loadSettings() {
   $("#setting-api-key").value = data.llm_api_key || "";
   $("#setting-model-main").value = data.model_main || "";
   $("#setting-model-cheap").value = data.model_cheap || "";
-  $("#setting-fake-llm").checked = !!data.fake_llm;
 
   const fontSize = localStorage.getItem("aiworld_font_size") || "14";
   const theme = localStorage.getItem("aiworld_theme") || "dark";
@@ -407,7 +424,6 @@ async function saveSettings() {
       llm_api_key: $("#setting-api-key").value,
       model_main: $("#setting-model-main").value,
       model_cheap: $("#setting-model-cheap").value,
-      fake_llm: $("#setting-fake-llm").checked,
     }),
   });
 
