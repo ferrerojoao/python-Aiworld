@@ -87,8 +87,9 @@ content/<world>/
 ├── lorebook.json     # 世界书条目 [{id, tags, summary, body}]，可空
 ├── scenes.json       # M17 场景注册表（预置节点）
 ├── npcs/*.json       # 每 NPC 一卡（〇①）
-├── axes.json         # ③ 抽象属性轴声明（题材级，可空数组；二期启用，v1 预留）
-└── presets.json      # 元配置·叙述预设默认（四成员）
+└── axes.json         # ③ 抽象属性轴声明（题材级，可空数组；二期启用，v1 预留）
+
+# 叙述预设不在世界包内；是全局配置 data/presets.json（导演准则 + 说书人预设）
 ```
 
 ```jsonc
@@ -97,8 +98,7 @@ content/<world>/
   "id": "qinghsi", "name": "青石镇",
   "summary": ["青石镇靠打渔为生，镇上人家大半识得彼此。",
               "硬规则：与现实世界无异，没有超自然力量、没有异能。"],
-  "default_durations": { "move_per_edge_min": 10, "repair_pc_min": 20 },
-  "author_banned_words": []
+  "default_durations": { "move_per_edge_min": 10, "action_default_min": 30 }
 }
 
 // lorebook.json —— 世界书：详细设定，默认缺席任何切片，导演点名才展开
@@ -129,10 +129,14 @@ content/<world>/
 [ { "id": "favor", "label": "好感", "tags": ["relation"], "target": "npc_zhuming",
     "range": [-100, 100], "init": 0, "visible": true, "track_cause": true } ]
 
-// presets.json —— 叙述预设默认（作者）
-{ "style": "克制写实，白描为主，少用形容词堆砌。",
+// data/presets.json —— 全局叙述预设（不在世界包内）
+{
+  "director_guidelines": "不要主动揭穿秘密；优先让 NPC 主动制造冲突…",
+  "storyteller_preset": "克制写实，白描为主，少用形容词堆砌…",
+  "style": "克制写实，白描为主，少用形容词堆砌。",
   "description_style": "以玩家五官可感知为限写景，心理描写只写玩家自己的。",
-  "banned_words": [], "pace": "slow" }
+  "banned_words": [], "pace": "slow"
+}
 ```
 
 ### 2.2 存档 = 账本（`content/<world>/saves/<name>/`）
@@ -149,27 +153,18 @@ saves/<name>/
 **事件流记录**（每行一条 JSON，`events.jsonl`）：
 
 ```jsonc
-// kind=narrative —— 玩家采纳后的正文成史实（叙述即公开的默认落点）
+// 唯一事件类型：narrative —— 玩家采纳后的正文成史实（叙述即公开的默认落点）
+// 同时也是位置/在场查询的数据源：位置由 narrative.location 推导，谁在场由 participants 推导。
 { "id": "ev_00042", "kind": "narrative", "at": "2026-07-14T14:32",
   "location": "school_gate",
-  "participants": ["player", "npc_zhuming"],      // 戏中在场者 = 私密名单的名单原料
+  "participants": ["player", "npc_zhuming"],      // 戏中在场者 = 私密名单的名单原料，也是位置推导依据
   "known_by": null,                                // null=公开（人人可引）；数组=私密切名单
   "body": "校门口围了一小圈人……",                 // 史实正文：一经落库永不修改
   "source": "turn" }
-
-// kind=location_fact —— 位置 · 结算时刻 · 来源（M18/M2 覆写/M17 结算）
-{ "id": "ev_00041", "kind": "location_fact", "at": "2026-07-14T14:30",
-  "subject": "npc_zhuming", "location": "net_bar",
-  "source": "witness | event | override | director",
-  "valid_until": null }                            // 覆写带有效期（M18/M2）：非空则到期自动失效
-
-// kind=memo —— 审计附注（记忆条目定性附注，ref 采纳事件；追加不改原文）
-{ "id": "ev_00043", "kind": "memo", "at": "2026-07-14T14:32",
-  "ref": "ev_00042", "note": "她说到一半声音低了下去。" }
 ```
 
 - **known_by 是访问控制状态**：正文（body）不可变；`known_by` 是每记录一个可改字段，改判只重设它、不触碰正文（§7）。
-- **位置事实的"位置"真相即在此层**；叙述事件也带 `location`（事发地），因此"谁在哪"的查询横跨两类记录的索引。
+- **位置/在场没有独立记录**：`where_is` / `present_at` 直接从统一事件流的 `location + participants` 推导，不维护额外位置表。
 
 **save.json**（引擎运行态 + 元配置 + 实体运行层）：
 
@@ -177,9 +172,11 @@ saves/<name>/
 {
   "meta": { "world_id": "qinghsi", "save_name": "main", "created_at": "…", "next_event_id": 44 },
   "clock": "2026-07-14T14:32",                    // 世界钟：只执行不逐笔记账
-  "narrative_preset": {                           // 元配置玩家覆盖（默认在内容包 presets.json）
+  "narrative_preset": {                           // 全局预设镜像（实际读写 data/presets.json）
+    "director_guidelines": "…",
+    "storyteller_preset": "…",
     "style": "…", "description_style": "…", "pace": "fast",
-    "banned_words_display_only": [] },            // 禁用词只读展示，随内容包更换
+    "banned_words_display_only": [] },            // 禁用词只读展示
   "entities": {
     "npc_zhuming": {
       "lifecycle": "active",                      // active | retired（〇章生命周期）
@@ -197,7 +194,7 @@ saves/<name>/
 }
 ```
 
-**② 经历 = 装配时现拼，不落盘**：记忆条目 = 引擎把 viewer 可引用的结构化事件按固定模板拼装（时间+地点+谁干了什么+在场者），叠加该事件的 memo 附注。LLM 不参与跨轮存储，只由审计事后补一句定性附注（memo）。**改判私密后各 NPC 切片自动跟随**——因为切片是装配时按 known_by 现过滤的，无缓存失同步问题（§7 强调的技术收益）。
+**② 经历 = 装配时现拼，不落盘**：记忆条目 = 引擎把 viewer 可引用的结构化事件按固定模板拼装（时间+地点+谁干了什么+在场者）。LLM 不参与跨轮存储。**改判私密后各 NPC 切片自动跟随**——因为切片是装配时按 known_by 现过滤的，无缓存失同步问题（§7 强调的技术收益）。
 
 ---
 
@@ -206,12 +203,11 @@ saves/<name>/
 - **追加写**：`events.jsonl` 只 append；`store.append_event(rec)` 负责 id 分配（`next_event_id`）与落盘。
 - **原子写**：`save.json` 写 `*.tmp` + `Path.replace`；读损坏自动回退 `.bak`。
 - **启动加载**：全量读入 events.jsonl 建内存索引（几万条 <10ms，无需数据库）：
-  - `by_id`；`by_entity_latest_loc`（每实体最近未过期位置事实，覆写带 valid_until 优先）；
-  - `by_location`（该地点全部在场记录）；`by_participant`；`by_kind`。
+  - `by_id`；`by_location`（该地点全部事件）；`by_participant`；`by_kind`。
   - 增量维护：回合采纳 append 后同步更新索引。
 - **读接口（查询即真相）**：
-  - `where_is(entity)` → 最近未过期位置事实（M18）；
-  - `present_at(scene)` → 最近位置 = 该场景的实体集合（在场者 = 查询不是存储）；
+  - `where_is(entity)` → 该实体最近一条带 `location + participants` 的统一事件（M18）；
+  - `present_at(scene)` → 最近事件中地点为该场景的实体集合（在场者 = 查询不是存储）；
   - `visible_to(viewer)` → 可引用事件集 = 世界概要 ∪ 公开条目 ∪ {私密 \| known_by ∋ viewer} ∪ {本场点名展开的世界书条目}（世界书候选行与展开规则见 §6）；
   - `experiences(entity, viewer)` → ② 记忆条目（规则化拼接，§2.2）。
 
@@ -224,7 +220,7 @@ saves/<name>/
 ```
 PendingTurn（内存事务上下文）
 ├── 候选正文（说书人成品或导演采纳的玩家原文）
-├── 副作用暂存：Δt（世界钟推进）· 待落 narrative/location_fact 记录
+├── 副作用暂存：Δt（世界钟推进）· 待落 narrative/events 记录
 │               · axes 轴变更（二期预留）· 覆写与有效期 · known_by 初值
 └── 关联信息：质检冲突标注（大矛盾 → 待澄清队列，只挂起不阻塞）
 ```
@@ -256,7 +252,7 @@ PendingTurn（内存事务上下文）
   "side_effects": {
     "delta_minutes": 20,
     "narrative": {"location": "school_gate", "participants": ["player", "npc_zhuming"], "known_by": null},
-    "location_facts": [],
+    "events": [],
     "axes": {},                       // 二期预留
     "overrides": []
   },
@@ -321,11 +317,11 @@ PendingTurn（内存事务上下文）
 | 导演 | 主模型 | 0.7 | 每回合 1 | 工作单（§6） | 分层剧本指令 directive |
 | NPC Actor | 主模型/次档 | 0.8 | 深抉择 +1 | 本人隔离工作单 | 决策块 |
 | 说书人 | 主模型 | 0.9 | 需成文 0~1 | directive（无导演区） | {prose, time_hint?} |
-| 质检员 | 便宜快模型 | 0.2 | 每回合 1 | 初稿 + 受限参照区（§5.6） | {status, prose, issues} |
-| 世界审计 | 便宜快模型 | 0.2 | 采纳时提交后结算 | 本回合落账事件 + 相关历史 | 结构性结果 |
-| 意图分类 L1 | 最便宜模型 | 0 | 规则不短路时 1 | 玩家输入 + 场景 + 在场 | {route, mention, claim?} |
+| 质检员 | 辅助模型 | 0.2 | 每回合 1 | 初稿 + 受限参照区（§5.6） | {status, prose, issues} |
+| 世界审计 | 辅助模型 | 0.2 | 采纳时提交后结算 | 本回合落账事件 + 相关历史 | 结构性结果 |
+| 意图分类 L1 | 最辅助模型 | 0 | 规则不短路时 1 | 玩家输入 + 场景 + 在场 | {route, mention, claim?} |
 
-> **模型数量**：上表是可配置档位，不是必须六套模型。v1 默认只需要 **1~2 个模型**：导演 / Actor / 说书人可共用“主模型”，质检 / 审计 / L1 分类可共用“便宜模型”；甚至可以全部指向同一个本地模型。配置里未指定的档位自动回退到默认主模型或默认便宜模型。
+> **模型数量**：上表是可配置档位，不是必须六套模型。v1 默认只需要 **1~2 个模型**：导演 / Actor / 说书人可共用“主模型”，质检 / 审计 / L1 分类可共用“辅助模型”；甚至可以全部指向同一个本地模型。配置里未指定的档位自动回退到默认主模型或默认辅助模型。
 
 ### 5.3 导演（workers/director.py）
 
@@ -387,13 +383,12 @@ PendingTurn（内存事务上下文）
 ### 5.7 世界审计（workers/auditor.py）——采纳时提交后结算
 
 v1 的审计/记账在玩家“采纳”（含下一次输入自动采纳）时，于同一请求内完成，产物进账本影响后续轮。所有账本写入都收敛到采纳这一个串行点，避免后台协程与下一回合并发写 `events.jsonl` / `save.json`。
-1. **记忆定性附注**：对本回合 narrative 事件补一句 memo 附注（便宜快模型；纯规则拼接不在此处——拼接是装配时的引擎活）。
-2. **钩子更新（M14）**：从本回合事件识别承诺/待闭合项挂账；到期闭合；更新台账（识别用 LLM 语义，挂闭后供导演排戏与"求建议"）。
-3. **关系结算复核**：M5 关系系统暂缓设计，v1 不执行关系轴结算；此处只保留接口位，待二期实现。
-4. **矛盾发现**：本回合言行对照历史（新增事件 vs 相关旧事件/人物卡补丁）→ 矛盾挂 pending_conflicts。
-5. **生命周期扫描（〇章）**：终态事件（死亡/永久离开）→ 实体置 `retired`（数据全保留；钩子留导演定夺）。
+1. **钩子更新（M14）**：从本回合事件识别承诺/待闭合项挂账；到期闭合；更新台账（识别用 LLM 语义，挂闭后供导演排戏与"求建议"）。
+2. **关系结算复核**：M5 关系系统暂缓设计，v1 不执行关系轴结算；此处只保留接口位，待二期实现。
+3. **矛盾发现**：本回合言行对照历史（新增事件 vs 相关旧事件/人物卡补丁）→ 矛盾挂 pending_conflicts。
+4. **生命周期扫描（〇章）**：终态事件（死亡/永久离开）→ 实体置 `retired`（数据全保留；钩子留导演定夺）。
 
-**失败/恢复**：审计任务带 `run_id`；若中途失败，正文已落账不回滚，但该 run 标记为 `failed`，并在下次采纳/启动时幂等补跑。所有审计写入必须可重入：memo 按 `ref+note` 去重，hooks/conflicts 按 `id` 覆盖。未来若改成真正后台异步，必须引入写锁/单写者队列并保留本恢复机制。
+**失败/恢复**：审计任务带 `run_id`；若中途失败，正文已落账不回滚，但该 run 标记为 `failed`，并在下次采纳/启动时幂等补跑。所有审计写入必须可重入：hooks/conflicts 按 `id` 覆盖。未来若改成真正后台异步，必须引入写锁/单写者队列并保留本恢复机制。
 
 ### 5.8 导演窗口（OOC 旁路，routes_director.py）
 
@@ -406,7 +401,7 @@ v1 的审计/记账在玩家“采纳”（含下一次输入自动采纳）时�
 | 剧情讨论 | 多轮磋商 → 产出简略输入建议 → 玩家复制进正文框 | 只读 |
 | 幕后事务 | 静默覆写 / 矛盾补救 / 点名强制派活 / 事件访问改判（§7）/ 补卡事务 | **玩家确认后落账** |
 
-- 幕后事务与候选区同闸门：玩家提出 → 确认 → 落账。静默覆写 = 落一条带有效期的 location_fact（source=director）+ 给该时段排戏，正文以"已发生"为基演。
+- 幕后事务与候选区同闸门：玩家提出 → 确认 → 落账。静默覆写 = 写一条统一 narrative 事件（如“朱明在网吧。”，source=director）+ 给该时段排戏，正文以"已发生"为基演。
 - **补卡事务**：玩家口述 → 导演拟稿 + 与事件流一致性核对 → 玩家确认 → 写入 `entities[npc].persona_patch`（只增补 ①，不开放裸编辑）。
 - 观察/打量等描写请求在**正文窗**输入，走正常正文流水线，不进窗口。
 
@@ -435,7 +430,7 @@ scope  = 当前场景可感知 ∪ 在场实体 ∪ 对话对象 ∪ 关键历�
 
 - **世界书候选机制**（零 LLM 标签匹配）：装配器取 scope 上下文标签（当前场景 tags ∪ 在场 NPC id ∪ 活跃钩子标签）线性扫 `lorebook.json`，命中即产候选行 `{id, summary}`，上限内（默认 12 行）随导演工作单附上。导演点名 = directive 带 `lore_refs: ["fish_market"]`；引擎展开正文随下游切片注入说书人 / Actor / 质检参照区。世界书无 known_by、天然公开；候选与展开都不进记忆流（世界书只读静态，不落账）。
 - **Token 预算**（分片可配）：system 块（常驻：世界概要全量 + 角色纪律 + 数值/输出纪律）→ 场景块 → 角色块（在场 persona 精简）→ 记忆块（现拼条目按 viewer 过滤 + budget 截断，超出丢最旧）→ 玩家最近窗。裁剪顺序固定：先砍记忆低相关 → 再压玩家窗——**世界概要永不参与裁剪**（硬规则常驻，失守即世界观崩坏）。
-- **记忆条目拼接模板**（零 LLM）：`{时间} {地点}，{谁} {干了什么}，在场：{…}。{memo 附注若有}`。
+- **记忆条目拼接模板**（零 LLM）：`{时间} {地点}，{谁} {干了什么}，在场：{…}`。
 - **规则化拼接的意义**：原料只取已记账字段——每轮概貌稳定、成本确定、不产生正文二次概括的幻觉漂移。
 
 ---
@@ -445,7 +440,7 @@ scope  = 当前场景可感知 ∪ 在场实体 ∪ 对话对象 ∪ 关键历�
 ### 7.1 known_by 落库
 
 - 事件记录落库时，导演在剧本指令中声明私密性（`beat.private` 或 narrative 记录级 `known_by` 初值）：公开情境 → `known_by: null`（默认态，人人可引）；私下情境 → `known_by = 当场在场者`（取该场戏 participants）。不为保密增设字段或场景属性。
-- 注入记忆（M16 涉密补全）= 落私密记录 `known_by = [被注入者]`；导演静默覆写是位置记录、不载知情语义。
+- 注入记忆（M16 涉密补全）= 落私密记录 `known_by = [被注入者]`；导演静默覆写写统一 narrative 事件，不额外承载知情语义。
 - 装配时的可引用集 = `visible_to(viewer)`——私密名单外的实体查不到这条（§3/§6）。
 
 ### 7.2 改判私密 · 玩家纠错（公开 → 私密）——检索式收权
@@ -487,9 +482,9 @@ scope  = 当前场景可感知 ∪ 在场实体 ∪ 对话对象 ∪ 关键历�
 
 ### 8.3 M18 位置与在场者（ledger/queries.py）
 
-- "X 此刻在哪" = `where_is(X)`：该实体最近未过期 location_fact（覆写带有效期优先，过期即失效回退到次新/推断）。事实只在结算当场写入，随钟自然过期。
+- "X 此刻在哪" = `where_is(X)`：该实体最近一条带 `location + participants` 的统一事件。
 - "谁在当前场景" = `present_at(scene)`：在场 = 查询不是存储。
-- **空档位置查询三件套**：过期前最后事实 + 正常日程先验 + 时间差 → 引擎合成候选域 → 导演做叙事落点 → 玩家进门时在场结算对导演落点执行（导演落点本身落一条新位置事实）。
+- **空档位置查询三件套**：过期前最后事件 + 正常日程先验 + 时间差 → 引擎合成候选域 → 导演做叙事落点 → 玩家进门时在场结算对导演落点执行（导演落点本身落一条新事件）。
 
 ### 8.4 M1 NPC 位置推断（rules/movement.py）
 
@@ -528,7 +523,7 @@ class LLMGateway:
 - **结构化输出容错（必做）**：当模型不支持 JSON schema、连续失败或返回非法 JSON 时，降级为“提示词要求 JSON + 正则/起止标记抽取”，再交 Pydantic 校验；仍失败则返回用户可见错误，并记录原始响应供排查。禁止把非法 JSON 静默当作空结果。
 - `enable_thinking=False` 作为配置项（推理模型默认关思维链省 token）。
 - 每调用记结构化日志：`trace_id / turn_id / candidate_id / worker / model / prompt_tokens / completion_tokens / ts`，供成本核查与回合排错。
-- 模型档位表（config.py + .env 覆盖）：导演 / Actor / 说书人 / 质检 / 审计 / L1 分类六档，各自 model + temperature（§5.2）；未配置档位回退到默认主模型 / 默认便宜模型，通常 1~2 个模型即可。
+- 模型档位表（config.py + .env 覆盖）：导演 / Actor / 说书人 / 质检 / 审计 / L1 分类六档，各自 model + temperature（§5.2）；未配置档位回退到默认主模型 / 默认辅助模型，通常 1~2 个模型即可。
 - **v1 无向量检索**：召回/切片/检索式收权全部结构化查询 + 线性扫（几万条内 <10ms）。二期升级 = 事件流叠语义索引（embedding 落盘、启动重建），对内容包与存档结构零侵入；中文预留 bge 系接口。
 
 ---
@@ -543,7 +538,7 @@ POST   /api/sessions                        # 新建存档 {world_id, save_name}
 GET    /api/sessions/{sid}                  # 会话详情（时钟/场景/在场/预设/角标）
 GET    /api/sessions/{sid}/state            # 右栏面板：时钟/场景/在场/可见轴（二期）/钩子角标
 GET    /api/sessions/{sid}/ledger/events?cursor=   # 事件日志（玩家视角全量叙述 + 访问状态标注，只读）
-PUT    /api/sessions/{sid}/presets          # 玩家覆盖叙述预设 {style?, description_style?, pace?}
+GET/PUT /api/presets                 # 全局预设（导演准则 + 说书人预设）
 ```
 
 ### 10.2 SSE（回合交付流）
@@ -592,7 +587,7 @@ Vite + TS + 原生 DOM 轻量组件：
 | `SceneCard` | 当前场景 + 在场 NPC（模板底稿直出；首达/剧情舞台时展示说书人成品） |
 | `StatePanel` | 时钟 / 在场 / 可见轴（二期）/ 钩子与待澄清角标；candidate 采纳后刷新 |
 | `LedgerView` | 事件日志时间线（只读 + 公开/私密/正文分层展示，玩家可点名某条发起改判） |
-| `SettingsPanel` | 叙述预设覆盖（文风 / 描写方式 / 节奏档；禁用词只读展示） |
+| `SettingsPanel` | 全局预设（导演准则 + 说书人预设）+ 系统设置（API/模型/字体/主题） |
 
 ---
 
@@ -605,7 +600,7 @@ AUTH_TOKEN=                     # 空 = 仅本机；非空 = 要求 X-Auth-Token
 REQUIRE_AUTH_FOR_NON_LOCAL=true # host 非 127.0.0.1/::1 且 AUTH_TOKEN 为空时拒绝启动
 LLM_BASE_URL=…  LLM_API_KEY=…   # OpenAI 兼容任意网关
 MODEL_MAIN=…   # 主模型：导演 / Actor / 说书人默认；未配单项时回退到这里
-MODEL_CHEAP=…  # 便宜模型：质检 / 审计 / L1 分类默认；未配单项时回退到这里
+MODEL_CHEAP=…  # 辅助模型：质检 / 审计 / L1 分类默认；未配单项时回退到这里
 # 可选单项覆盖：MODEL_DIRECTOR=… MODEL_ACTOR=… MODEL_STORY=… MODEL_QC=… MODEL_AUDIT=… MODEL_CLASSIFY=…
 TEMP_QC=0.2   # …（各档温度）
 CTX_MEMORY_BUDGET=…   CTX_WINDOW_TURNS=…
@@ -653,8 +648,8 @@ AUDIT_ENABLED=true      # v1 为采纳时同步结算；未来改异步需另加
 | S1 | 内容包 loader + 校验；store（JSONL 追加 + 原子写）；账本加载索引；`where_is / present_at / visible_to` | 查询测试过 |
 | S2 | **回合主链闭环**：路由 → 导演 → 说书人 → 质检 → SSE 候选区 → 采纳指定候选/重掷/放弃；PendingTurn 事务 | FakeLLM 集成：采纳提交/放弃清理无痕 |
 | S3 | 工作单装配与切片（viewer 过滤）；known_by 落库；改判私密（检索式收权）+ 改判公开；叙述预设管线 | 信息边界测试过（Actor 无他人私密） |
-| S4 | 时空机制：M17 双轨转正 / M18 位置事实与过期 / M1 推断三件套 / M19 裁决链 + 场景模板底稿 + 混合句 | 移动裁决与模板底稿测试过 |
+| S4 | 时空机制：M17 双轨转正 / M18 位置推导与过期 / M1 推断三件套 / M19 裁决链 + 场景模板底稿 + 混合句 | 移动裁决与模板底稿测试过 |
 | S5 | Actor 深抉择派发（隔离回流）；升格通道；导演窗口四功能（含幕后事务/补卡/点名派活） | 窗口全操作走查过 |
-| S6 | 提交后结算：记忆附注 / 钩子台账 / 矛盾发现 / 生命周期 retired；M12 主动登门素材；审计失败补跑幂等 | 钩子挂闭 + retired 流程测试过 |
+| S6 | 提交后结算：钩子台账 / 矛盾发现 / 生命周期 retired；M12 主动登门素材；审计失败补跑幂等 | 钩子挂闭 + retired 流程测试过 |
 | S7 | 前端体验：候选区多版本比较与操作（重掷保留旧版、选择采纳、唯一候选自动采纳）、导演窗口、事件日志查看器、叙述预设设置、状态面板 | 全 UI 人工走查 |
 | S8+ | 内容包《青石镇》完整示例 + loader --check 发布流程；二期预留（关系系统 / 语义索引 / 真流式） | 完整包冒烟 |
