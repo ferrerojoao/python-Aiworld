@@ -34,6 +34,41 @@ python -m app.main
 python scripts/demo.py
 ```
 
+## 真实 LLM 联调
+
+先配置环境变量：
+
+```bash
+export AIWORLD_LLM_BASE_URL="http://127.0.0.1:11434/v1"
+export AIWORLD_LLM_API_KEY="ollama"
+export AIWORLD_MODEL_MAIN="qwen2.5:7b"
+export AIWORLD_MODEL_CHEAP="qwen2.5:7b"
+```
+
+然后跑冒烟测试：
+
+```bash
+python scripts/smoke_llm.py
+```
+
+脚本会分别测试：
+
+- `complete_json`（结构化输出）
+- `complete_text`（普通文本）
+- Token 统计是否会累积
+
+如果本地模型不支持 `response_format=json_object`，网关会自动去掉后重试，并用 JSON 提取兜底。
+
+Windows PowerShell 示例：
+
+```powershell
+$env:AIWORLD_LLM_BASE_URL="http://127.0.0.1:11434/v1"
+$env:AIWORLD_LLM_API_KEY="ollama"
+$env:AIWORLD_MODEL_MAIN="qwen2.5:7b"
+$env:AIWORLD_MODEL_CHEAP="qwen2.5:7b"
+python scripts/smoke_llm.py
+```
+
 ## 测试
 
 ```bash
