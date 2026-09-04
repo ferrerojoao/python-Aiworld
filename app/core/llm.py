@@ -38,8 +38,14 @@ def extract_json(text: str) -> dict[str, Any]:
 class LLMGateway:
     """OpenAI-compatible chat completions gateway with JSON fallback."""
 
-    def __init__(self, base_url: str, api_key: str, max_concurrency: int = 4):
-        self._client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        max_concurrency: int = 4,
+        timeout: float = 120,
+    ):
+        self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
         self._sem = asyncio.Semaphore(max_concurrency)
         self.usage = {
             "prompt_tokens": 0,

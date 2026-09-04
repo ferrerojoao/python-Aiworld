@@ -104,6 +104,24 @@ class TurnRunner:
             self.session.candidates.save(candidate)
             return candidate
 
+        if route == "claim" and rule_bundle.get("claim"):
+            claim = rule_bundle["claim"]
+            now = dt.datetime.now().isoformat(timespec="seconds")
+            candidate = Candidate(
+                candidate_id=new_id("cand"),
+                turn_id=new_id("turn"),
+                trace_id=new_id("tr"),
+                mode="claim",
+                player_input=player_input,
+                prose=claim.get("body") or "（已记录该状态）",
+                side_effects=SideEffects(events=[claim]),
+                conflicts=[],
+                created_at=now,
+                updated_at=now,
+            )
+            self.session.candidates.save(candidate)
+            return candidate
+
         await self._progress("director", "导演安排中")
         directive = await run_director(
             self.llm,

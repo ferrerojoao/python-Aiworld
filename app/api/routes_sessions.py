@@ -475,5 +475,6 @@ async def update_system_settings(request: Request, body: SettingsBody):
         base_url=s.llm_base_url,
         api_key=s.llm_api_key,
         max_concurrency=4,
+        timeout=s.llm_timeout_seconds,
     )
     return {"ok": True}

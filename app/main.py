@@ -49,6 +49,7 @@ def create_app(settings: Settings | None = None, llm=None) -> FastAPI:
                 base_url=settings.llm_base_url,
                 api_key=settings.llm_api_key,
                 max_concurrency=4,
+                timeout=settings.llm_timeout_seconds,
             )
 
         def factory(session: GameSession) -> TurnRunner:
