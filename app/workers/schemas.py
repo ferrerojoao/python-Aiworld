@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class Beat(BaseModel):
@@ -25,7 +25,7 @@ class Directive(BaseModel):
 
 
 class StoryOutput(BaseModel):
-    prose: str
+    prose: str = Field(validation_alias=AliasChoices("prose", "body", "text"))
     time_hint: dict | None = None
 
 
