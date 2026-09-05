@@ -422,6 +422,35 @@ button:hover {
   align-self: flex-start;
 }
 
+.director-hint {
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--input-bg);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  line-height: 1.7;
+}
+
+.pending-action {
+  background: var(--warn-bg, #3a2e16);
+  color: var(--text);
+  align-self: flex-start;
+}
+
+.pending-action-buttons {
+  margin-top: 6px;
+  display: flex;
+  gap: 6px;
+}
+
+.pending-action-buttons button {
+  border: 0;
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
 #director-form {
   display: flex;
   gap: 6px;

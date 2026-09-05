@@ -10,7 +10,7 @@ from app.main import create_app
 from tests.conftest import WORLD_ROOT, GENERIC_LLM_RESPONSE
 
 
-def _make_client(tmp_path):
+def _make_client(tmp_path, llm=None):
     world_root = tmp_path / "qinghsi"
     shutil.copytree(WORLD_ROOT, world_root, ignore=shutil.ignore_patterns("saves"))
     # data_dir must also be sandboxed: preset PUT would otherwise overwrite
@@ -20,7 +20,8 @@ def _make_client(tmp_path):
         data_dir=tmp_path / "data",
         candidate_ttl_days=7,
     )
-    llm = FakeLLM({"*": GENERIC_LLM_RESPONSE})
+    if llm is None:
+        llm = FakeLLM({"*": GENERIC_LLM_RESPONSE})
     app = create_app(settings=settings, llm=llm)
     return TestClient(app)
 
@@ -121,21 +122,52 @@ def test_turn_body_can_adopt_current_candidate(tmp_path):
         assert len(pending) == 1  # new turn's candidate
 
 
-def test_director_backstage_override(tmp_path):
-    with _make_client(tmp_path) as client:
+def test_director_confirm_override(tmp_path):
+    """Silent override executes only after the player confirms the action."""
+    from app.core.llm import FakeLLM
+
+    class PrefixKeyLLM(FakeLLM):
+        def _key(self, messages):
+            for msg in reversed(messages):
+                if msg.get("role") in {"user", "system"}:
+                    content = msg.get("content", "")
+                    for prefix in self.responses:
+                        if content.startswith(prefix):
+                            return prefix
+            return "*"
+
+    llm = PrefixKeyLLM(
+        {
+            "朱明在网吧": {
+                "reply": "好的，我将记录朱明此刻在网吧。",
+                "action": {"type": "override", "payload": {"subject": "npc_zhuming", "location": "net_bar"}},
+            }
+        }
+    )
+    with _make_client(tmp_path, llm=llm) as client:
         r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
         sid = r.json()["sid"]
-        r = client.post(
+
+        chat = client.post(
             f"/api/sessions/{sid}/director",
-            json={
-                "topic": "backstage",
-                "action": "override",
-                "payload": {"subject": "npc_zhuming", "location": "school_gate"},
-            },
+            json={"topic": "chat", "message": "朱明在网吧"},
         )
-        assert r.status_code == 200
-        event = r.json()["event"]
+        assert chat.status_code == 200
+        pending = chat.json()["pending_action"]
+        assert pending["type"] == "override"
+
+        # Before confirm: no director event in the ledger.
+        events = client.get(f"/api/sessions/{sid}/ledger/events").json()["events"]
+        assert all(e["source"] != "director" for e in events)
+
+        confirm = client.post(
+            f"/api/sessions/{sid}/director",
+            json={"topic": "confirm", "action": pending},
+        )
+        assert confirm.status_code == 200
+        event = confirm.json()["event"]
         assert event["source"] == "director"
+        assert event["location"] == "net_bar"
 
 
 def test_player_profile_update(tmp_path):
@@ -269,6 +301,62 @@ def test_world_browser_and_reset(tmp_path):
         # After a reset only the world's opening event remains.
         assert len(events) == 1
         assert events[0]["source"] == "opening"
+
+
+def test_director_chat_pending_action_confirm(tmp_path):
+    """Director chat may return a pending backstage action; it must NOT take
+    effect until the player confirms (two-stage gate)."""
+    from app.core.llm import FakeLLM
+
+    class PrefixKeyLLM(FakeLLM):
+        def _key(self, messages):
+            for msg in reversed(messages):
+                if msg.get("role") in {"user", "system"}:
+                    content = msg.get("content", "")
+                    for prefix in self.responses:
+                        if content.startswith(prefix):
+                            return prefix
+            return "*"
+
+    llm = PrefixKeyLLM(
+        {
+            "让朱明必须用 Agent": {
+                "reply": "好的，我将把朱明设为强制使用 Actor。",
+                "action": {"type": "force_actor", "payload": {"npc_id": "npc_zhuming", "forced": True}},
+            }
+        }
+    )
+    with _make_client(tmp_path, llm=llm) as client:
+        r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
+        sid = r.json()["sid"]
+
+        # The chat proposes the action but does not apply it yet.
+        chat = client.post(
+            f"/api/sessions/{sid}/director",
+            json={"topic": "chat", "message": "让朱明必须用 Agent"},
+        ).json()
+        assert chat["pending_action"]["type"] == "force_actor"
+
+        # Nothing applied before confirmation.
+        import json
+
+        save = json.loads(
+            (tmp_path / "qinghsi" / "saves" / "main" / "save.json").read_text(encoding="utf-8")
+        )
+        assert "npc_zhuming" not in save.get("entities", {})
+
+        # Confirm executes it.
+        confirm = client.post(
+            f"/api/sessions/{sid}/director",
+            json={"topic": "confirm", "action": chat["pending_action"]},
+        )
+        assert confirm.status_code == 200
+        assert confirm.json()["forced_actor"] is True
+
+        save = json.loads(
+            (tmp_path / "qinghsi" / "saves" / "main" / "save.json").read_text(encoding="utf-8")
+        )
+        assert save["entities"]["npc_zhuming"]["forced_actor"] is True
 
 
 def test_settings_and_director_chat(tmp_path):

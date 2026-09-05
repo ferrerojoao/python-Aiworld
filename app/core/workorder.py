@@ -29,8 +29,8 @@ def world_summary_block(world: WorldContent) -> list[str]:
     ]
 
 
-def character_block(world: WorldContent, ledger: Ledger, present_ids: list[str]) -> list[str]:
-    """主角 + 在场 NPC 名片（含 Actor 档位标注）。"""
+def character_block(world: WorldContent, ledger: Ledger, present_ids: list[str], include_ids: bool = False) -> list[str]:
+    """主角 + 在场 NPC 名片（含 Actor 档位标注，可选附带 id）。"""
     player = ledger.save.player
     lines = ["角色资料："]
     lines.append(
@@ -47,15 +47,16 @@ def character_block(world: WorldContent, ledger: Ledger, present_ids: list[str])
                 ticket = "（配 Actor）"
             else:
                 ticket = "（导演代笔）"
+            id_tag = f"（id: {npc.id}）" if include_ids else ""
             lines.append(
-                f"[{npc.name}]{ticket} 名字：{npc.name}；外貌：{npc.appearance or '未设定'}；人格：{npc.persona or '未设定'}"
+                f"[{npc.name}]{id_tag}{ticket} 名字：{npc.name}；外貌：{npc.appearance or '未设定'}；人格：{npc.persona or '未设定'}"
             )
         else:
             lines.append(f"[{pid}] 名字：{pid}")
     return lines
 
 
-def event_log_block(ledger: Ledger, limit: int = 10, summary_len: int = 60, input_len: int = 30) -> list[str]:
+def event_log_block(ledger: Ledger, limit: int = 10, summary_len: int = 60, input_len: int = 30, include_ids: bool = False) -> list[str]:
     recent = ledger.narratives[-limit:]
     if not recent:
         return []
@@ -63,6 +64,8 @@ def event_log_block(ledger: Ledger, limit: int = 10, summary_len: int = 60, inpu
     for ev in recent:
         summary = (ev.get("summary") or (ev.get("body") or ""))[:summary_len]
         line = f"- {ev.get('at', '')} {summary}"
+        if include_ids and ev.get("id"):
+            line = f"- [{ev['id']}] {line[2:]}"
         if ev.get("player_input"):
             line += f"（玩家当时说：{ev['player_input'][:input_len]}）"
         lines.append(line)
@@ -217,6 +220,56 @@ def build_actor_work_order(
     mem = ledger.experiences(npc_id, npc_id)[-memory_limit:]
     if mem:
         parts += ["你记得的事：", *mem]
+    return "\n".join(parts)
+
+
+def build_director_chat_system(
+    world: WorldContent,
+    ledger: Ledger,
+    scene_id: str,
+) -> str:
+    """Work order for the director-window chat (OOC).
+
+    Reads the same objective ledger blocks as the writer, plus the list of
+    backstage actions the player may request and the requirement to end a
+    discussion with a copyable input suggestion.
+    """
+    scene_id = scene_id or ledger.save.player_scene or "main_street"
+    present_ids = ledger.present_at(scene_id)
+    scene = next((s for s in world.scenes if s.id == scene_id), None)
+    names = [world.npcs[pid].name if pid in world.npcs else pid for pid in present_ids]
+
+    parts: list[str] = [
+        "你是 AIWorld 的导演，玩家正在戏外（OOC）和你讨论。你不是正文执笔者，一切建议都要玩家采纳后才生效。",
+        "世界概要（不可违背）：",
+        *world.meta.summary,
+        "当前时间：" + (ledger.save.clock or "-"),
+        "当前场景：" + (scene.name if scene else scene_id),
+        "在场：" + ("、".join(names) or "暂无"),
+    ]
+    parts += event_log_block(ledger, include_ids=True)
+    parts += hooks_block(ledger)
+    parts += npc_history_block(ledger, present_ids)
+    parts += lore_candidates_block(ledger, scene_id, present_ids)
+    parts += private_notes_block(world, present_ids)
+    parts += character_block(world, ledger, present_ids, include_ids=True)
+
+    parts += [
+        "可执行的幕后操作（只有玩家明确要求时才填 action，普通闲聊绝不填）：",
+        "- 静默覆写 override：玩家声明某人/某物在哪或去做某事 → payload {subject, location}",
+        "- 强制派活 force_actor：玩家要求某 NPC 必须/不必用 Agent → payload {npc_id, forced: true|false}",
+        "- 事件访问改判 access_rejudge：玩家要求某事件公开或私密 → payload {event_id, known_by: [知情者...] 或 null}",
+        "- 补卡事务 amend_card：玩家要求增补某 NPC 人物卡 → payload {npc_id, persona_patch}",
+        "纪律：不得替玩家决定是否执行；一旦要执行必须返回 action 供玩家确认。",
+        "讨论剧情时，若结论明确，最后给一句简短的输入建议（玩家可直接复制进正文框）。",
+        "",
+        "输出必须是 JSON 对象，字段：",
+        '{"reply": "你的回复文本（直接回答玩家，必填）", "action": null | {"type": "override|force_actor|access_rejudge|amend_card", "payload": {"字段": "值"}}}',
+        "reply：给玩家的戏外回复。",
+        "action：只有当玩家明确要求执行幕后操作时才填；否则为 null。",
+        "注意：payload 里的 npc_id / subject 必须使用角色 id（如 npc_zhuming，见角色资料行的 id 标注），不要用中文名字。",
+        "禁止输出其他字段。",
+    ]
     return "\n".join(parts)
 
 

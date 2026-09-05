@@ -3,18 +3,19 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from app.core.workorder import build_director_chat_system
 from app.ledger.access import apply_access_override
 from app.ledger.save import EntityRuntime
+from app.workers.schemas import DirectorAction, DirectorReply
 
 router = APIRouter(prefix="/api/sessions")
 
 
 class DirectorBody(BaseModel):
-    topic: str  # advice | qa | chat | discuss | backstage
+    topic: str  # chat | confirm | advice | qa | discuss (legacy)
     question: str = ""
     message: str = ""
-    action: str = ""
-    payload: dict = {}
+    action: dict = {}
 
 
 def _get_session(request: Request, sid: str):
@@ -27,15 +28,24 @@ def _get_session(request: Request, sid: str):
 @router.post("/{sid}/director")
 async def director(request: Request, sid: str, body: DirectorBody):
     session = _get_session(request, sid)
+    if body.topic == "confirm":
+        if not body.action:
+            raise HTTPException(status_code=400, detail="action is required")
+        try:
+            action = DirectorAction.model_validate(body.action)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=f"bad action: {exc}") from exc
+        return _execute_action(session, action.type, action.payload)
+    if body.topic == "chat":
+        return await _director_chat(request, session, body.message)
+    # legacy topics kept for API compatibility (frontend uses chat only)
     if body.topic == "advice":
         hooks = [h.model_dump() for h in session.ledger.save.hooks if h.status == "open"]
         return {"suggestions": [{"text": h["text"], "kind": "closing"} for h in hooks[:3]]}
     if body.topic == "qa":
         return {"answer": f"当前时间：{session.ledger.save.clock}"}
-    if body.topic in {"chat", "discuss"}:
+    if body.topic in {"discuss"}:
         return await _director_chat(request, session, body.message)
-    if body.topic == "backstage":
-        return _handle_backstage(session, body.action, body.payload)
     raise HTTPException(status_code=400, detail="unknown topic")
 
 
@@ -50,63 +60,66 @@ async def _director_chat(request, session, message: str):
         raise HTTPException(status_code=400, detail="message is empty")
     llm = request.app.state.llm
     settings = request.app.state.settings
-    world = session.world
 
-    presences = [
-        world.npcs[pid].name if pid in world.npcs else pid
-        for pid in session.ledger.present_at(session.ledger.save.player_scene)
-    ]
-    system = "\n".join(
-        [
-            "你是 AIWorld 的导演，玩家正在戏外和你讨论剧情走向。",
-            "你不是正文执笔者，只负责建议、答疑、讨论剧情、幕后事务建议。",
-            "世界概要（不可违背）：",
-            *world.meta.summary,
-            "当前时间：" + session.ledger.save.clock,
-            "当前场景：" + session.ledger.save.player_scene,
-            "在场 NPC：" + ("、".join(presences) if presences else "无"),
-        ]
+    system = build_director_chat_system(
+        session.world, session.ledger, session.ledger.save.player_scene
     )
-
     history = session.director_history[-20:]
     messages = [{"role": "system", "content": system}]
     messages.extend(history)
     messages.append({"role": "user", "content": message})
 
-    reply = await llm.complete_text(
+    data = await llm.complete_json(
         messages,
+        DirectorReply,
         model=settings.resolved_model("director"),
         temperature=0.7,
     )
+    out = DirectorReply.model_validate(data)
     session.director_history.append({"role": "user", "content": message})
-    session.director_history.append({"role": "assistant", "content": reply})
-    return {"reply": reply}
+    session.director_history.append({"role": "assistant", "content": out.reply or ""})
+    result: dict = {"reply": out.reply or ""}
+    if out.action is not None:
+        result["pending_action"] = out.action.model_dump()
+    return result
 
 
-def _handle_backstage(session, action: str, payload: dict):
+def _resolve_npc_ref(session, ref: str) -> str | None:
+    """Resolve 'npc_zhuming' or '朱明' to the NPC's id (model-friendly)."""
+    ref = (ref or "").strip()
+    if ref in session.world.npcs:
+        return ref
+    for pid, card in session.world.npcs.items():
+        if card.name == ref:
+            return pid
+    return None
+
+
+def _execute_action(session, action_type: str, payload: dict) -> dict:
+    """Execute a confirmed backstage action (player already confirmed it)."""
     ledger = session.ledger
-    if action == "access_rejudge":
+    if action_type == "access_rejudge":
         event_id = payload.get("event_id")
         known_by = payload.get("known_by")
         if event_id not in ledger.by_id:
             raise HTTPException(status_code=404, detail=f"event not found: {event_id}")
         apply_access_override(ledger, event_id, known_by)
-        return {"ok": True}
+        return {"ok": True, "action": action_type}
 
-    if action == "force_actor":
-        npc_id = payload.get("npc_id", "")
+    if action_type == "force_actor":
+        npc_id = _resolve_npc_ref(session, payload.get("npc_id", ""))
         forced = bool(payload.get("forced", True))
-        if npc_id not in session.world.npcs:
-            raise HTTPException(status_code=404, detail=f"npc not found: {npc_id}")
+        if npc_id is None:
+            raise HTTPException(status_code=404, detail=f"npc not found: {payload.get('npc_id')}")
         entity = ledger.save.entities.setdefault(npc_id, EntityRuntime())
         entity.forced_actor = forced
         ledger.persist_save()
-        return {"ok": True, "npc_id": npc_id, "forced_actor": forced}
+        return {"ok": True, "action": action_type, "npc_id": npc_id, "forced_actor": forced}
 
-    if action == "override":
-        subject = payload.get("subject", "")
+    if action_type == "override":
+        subject = _resolve_npc_ref(session, payload.get("subject", ""))
         location = payload.get("location", "")
-        if not subject or not location:
+        if subject is None or not location:
             raise HTTPException(status_code=400, detail="subject and location are required")
         npc = session.world.npcs.get(subject)
         scene = next((s for s in session.world.scenes if s.id == location), None)
@@ -124,16 +137,16 @@ def _handle_backstage(session, action: str, payload: dict):
         }
         ledger.append(event)
         ledger.persist_save()
-        return {"ok": True, "event": event}
+        return {"ok": True, "action": action_type, "event": event}
 
-    if action == "amend_card":
-        npc_id = payload.get("npc_id", "")
+    if action_type == "amend_card":
+        npc_id = _resolve_npc_ref(session, payload.get("npc_id", ""))
         persona_patch = payload.get("persona_patch")
-        if npc_id not in session.world.npcs:
-            raise HTTPException(status_code=404, detail=f"npc not found: {npc_id}")
+        if npc_id is None:
+            raise HTTPException(status_code=404, detail=f"npc not found: {payload.get('npc_id')}")
         entity = ledger.save.entities.setdefault(npc_id, EntityRuntime())
         entity.persona_patch = persona_patch
         ledger.persist_save()
-        return {"ok": True}
+        return {"ok": True, "action": action_type}
 
-    raise HTTPException(status_code=400, detail=f"unknown backstage action: {action}")
+    raise HTTPException(status_code=400, detail=f"unknown action: {action_type}")

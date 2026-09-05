@@ -26,6 +26,7 @@ GENERIC_LLM_RESPONSE = {
     "tone": "随意",
     "hook_texts": [],
     "conflicts": [],
+    "reply": "好的，我会帮你安排。",
 }
 
 

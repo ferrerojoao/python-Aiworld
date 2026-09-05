@@ -41,6 +41,21 @@ class WriterOutput(BaseModel):
     )
 
 
+class DirectorAction(BaseModel):
+    """A backstage write the director LLM proposes; the player must confirm
+    before the engine executes it (two-stage gate, REQ §三章 幕后事务)."""
+
+    type: str = Field(validation_alias=AliasChoices("type", "action", "操作"))
+    payload: dict = Field(default_factory=dict, validation_alias=AliasChoices("payload", "参数"))
+
+
+class DirectorReply(BaseModel):
+    """Structured director-window reply: plain text + optional pending action."""
+
+    reply: str = Field(default="", validation_alias=AliasChoices("reply", "answer", "回复", "回答"))
+    action: DirectorAction | None = Field(default=None, validation_alias=AliasChoices("action", "操作", "待确认"))
+
+
 class QCOutput(BaseModel):
     status: str = Field(
         default="pass",

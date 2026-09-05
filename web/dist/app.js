@@ -465,6 +465,63 @@ async function sendDirectorMessage() {
     body: JSON.stringify({ topic: "chat", message: text }),
   });
   addDirectorMsg("assistant", data.reply || "（导演没有回复）");
+  if (data.pending_action) {
+    renderPendingAction(data.pending_action);
+  }
+}
+
+async function renderPendingAction(action) {
+  const box = document.createElement("div");
+  box.className = "director-msg pending-action";
+  const desc = describeAction(action);
+  const label = document.createElement("div");
+  label.textContent = `待确认操作：${desc}`;
+  box.appendChild(label);
+  const actions = document.createElement("div");
+  actions.className = "pending-action-buttons";
+  const confirm = document.createElement("button");
+  confirm.textContent = "确认执行";
+  confirm.className = "danger";
+  confirm.onclick = async () => {
+    box.remove();
+    try {
+      await api(`/api/sessions/${state.sid}/director`, {
+        method: "POST",
+        body: JSON.stringify({ topic: "confirm", action }),
+      });
+      addDirectorMsg("assistant", `✓ 已执行：${describeAction(action)}`);
+      await refreshState();
+    } catch (e) {
+      addDirectorMsg("assistant", `⚠ 执行失败：${e.message}`);
+    }
+  };
+  const cancel = document.createElement("button");
+  cancel.textContent = "取消";
+  cancel.onclick = () => {
+    box.remove();
+    addDirectorMsg("assistant", "已取消该操作");
+  };
+  actions.appendChild(confirm);
+  actions.appendChild(cancel);
+  box.appendChild(actions);
+  $("#director-chat").appendChild(box);
+  $("#director-chat").scrollTop = $("#director-chat").scrollHeight;
+}
+
+function describeAction(action) {
+  const p = action.payload || {};
+  switch (action.type) {
+    case "override":
+      return `静默覆写：${p.subject || "?"} 在 ${p.location || "?"}`;
+    case "force_actor":
+      return `强制派活：${p.npc_id || "?"} ${p.forced === false ? "取消" : "必须"}用 Agent`;
+    case "access_rejudge":
+      return `事件改判：${p.event_id || "?"} → ${p.known_by ? "私密" : "公开"}`;
+    case "amend_card":
+      return `补卡事务：${p.npc_id || "?"} 增补人物卡`;
+    default:
+      return `${action.type || "?"} ${JSON.stringify(p)}`;
+  }
 }
 
 /* ---------- 预设 ---------- */
