@@ -210,9 +210,7 @@ async function refreshState() {
   $("#clock").textContent = data.clock || "-";
   $("#scene").textContent = data.scene_name || data.scene || "-";
   if (data.preset) {
-    const p = data.preset;
-    const legacy = [p.director_guidelines, p.storyteller_preset].filter(Boolean).join("\n\n");
-    $("#writer-guidelines-input").value = p.writer_guidelines || legacy || "";
+    $("#writer-guidelines-input").value = data.preset.writer_guidelines || "";
   }
   renderLeftRail(data);
 }

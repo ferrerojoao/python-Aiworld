@@ -6,8 +6,7 @@ from app.core.store import read_json, write_json_atomic
 from app.world.models import NarrativePreset
 
 DEFAULT_PRESET = NarrativePreset(
-    style="克制写实，白描为主，少用形容词堆砌。",
-    description_style="以玩家五官可感知为限写景，心理描写只写玩家自己的。",
+    writer_guidelines="克制写实，白描为主，少用形容词堆砌；优先让 NPC 主动制造冲突。",
     banned_words=[],
 )
 

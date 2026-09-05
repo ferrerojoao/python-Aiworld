@@ -109,13 +109,9 @@ def build_writer_system(
         for c in open_conflicts:
             parts.append(f"- {c.desc[:60]}")
 
-    if preset.effective_writer_guidelines:
+    if preset.writer_guidelines:
         parts.append("编剧准则（创作与写作要求，必须遵循）：")
-        parts.append(preset.effective_writer_guidelines)
-    elif preset.style or preset.description_style:
-        parts.append("叙述预设：")
-        parts.append(preset.style)
-        parts.append(preset.description_style)
+        parts.append(preset.writer_guidelines)
 
     parts += [
         "在场：" + npc_names,

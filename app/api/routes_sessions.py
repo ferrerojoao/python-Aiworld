@@ -218,31 +218,15 @@ async def list_events(request: Request, sid: str):
 
 
 class PresetBody(BaseModel):
-    style: str | None = None
-    description_style: str | None = None
-    banned_words: list[str] | None = None
     writer_guidelines: str | None = None
-    director_guidelines: str | None = None  # legacy
-    storyteller_preset: str | None = None  # legacy
+    banned_words: list[str] | None = None
 
 
 def _apply_preset_update(preset, body: PresetBody) -> None:
-    if body.style is not None:
-        preset.style = body.style
-    if body.description_style is not None:
-        preset.description_style = body.description_style
-    if body.banned_words is not None:
-        preset.banned_words = body.banned_words
     if body.writer_guidelines is not None:
         preset.writer_guidelines = body.writer_guidelines
-        # The merged writer reads one unified box; clear the legacy boxes so
-        # the fallback concatenation never shadows the new content.
-        preset.director_guidelines = ""
-        preset.storyteller_preset = ""
-    if body.director_guidelines is not None:
-        preset.director_guidelines = body.director_guidelines
-    if body.storyteller_preset is not None:
-        preset.storyteller_preset = body.storyteller_preset
+    if body.banned_words is not None:
+        preset.banned_words = body.banned_words
 
 
 class PlayerBody(BaseModel):
