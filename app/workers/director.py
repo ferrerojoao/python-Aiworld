@@ -44,12 +44,27 @@ async def run_director(
     for pid in present_ids:
         npc = world.npcs.get(pid)
         if npc:
+            entity = ledger.save.entities.get(pid)
+            ticket = ""
+            if entity and entity.forced_actor:
+                ticket = "（玩家点名强制使用 Actor）"
+            elif npc.has_actor:
+                ticket = "（配 Actor）"
+            else:
+                ticket = "（导演代笔）"
             character_lines.append(
-                f"[{npc.name}] 名字：{npc.name}；外貌：{npc.appearance or '未设定'}；人格：{npc.persona or '未设定'}"
+                f"[{npc.name}]{ticket} 名字：{npc.name}；外貌：{npc.appearance or '未设定'}；人格：{npc.persona or '未设定'}"
             )
         else:
             character_lines.append(f"[{pid}] 名字：{pid}")
     system_parts += character_lines
+    system_parts += [
+        "档位纪律：",
+        "标（配 Actor）或（玩家点名强制使用 Actor）的 NPC 撞上深抉择（内心判断 / 涉密反应 / 是否信任）时，"
+        "必须输出 kind=actor 节点（actor_npc_id=该 NPC 的 id，text=抉择问题）。",
+        "标（导演代笔）的 NPC 一律由你直接排戏，不要输出 actor 节点。",
+        "actor 节点的 meaning 只写该 NPC 本人会知道的情境，禁止写只有导演/作者知道的动机与秘密。",
+    ]
 
     if preset.director_guidelines:
         system_parts.append("导演准则：")

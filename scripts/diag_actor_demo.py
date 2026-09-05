@@ -65,7 +65,7 @@ async def main() -> None:
     llm = PrefixKeyLLM(
         {
             "玩家输入：": DIRECTOR_OUT,
-            "深抉择：": ACTOR_OUT,
+            "剧情情境": ACTOR_OUT,
             "剧本指令：": STORY_OUT,
             "正文：": QC_OUT,
             "事件：": AUDIT_OUT,
@@ -81,21 +81,22 @@ async def main() -> None:
     print("=" * 72)
     for call in llm.calls:
         who = "?"
-        for line in call["messages"][-1]["content"].splitlines():
-            if line.startswith("玩家输入"): who = "导演"
-            elif line.startswith("深抉择"): who = "Actor"
-            elif line.startswith("剧本指令"): who = "说书人"
-            elif line.startswith("正文"): who = "质检"
-            elif line.startswith("事件"): who = "审计"
-        print(f"\n[{who}] model={call['model']} output={json.dumps(call.get('output') or call.get('error'), ensure_ascii=False)}")
+        content = call["messages"][-1]["content"]
+        system = call["messages"][0]["content"]
+        if content.startswith("玩家输入"): who = "导演"
+        elif "剧情情境" in content: who = "Actor"
+        elif content.startswith("剧本指令"): who = "说书人"
+        elif content.startswith("正文"): who = "质检"
+        elif content.startswith("事件"): who = "审计"
+        print(f"\n[{who}] model={call['model']} output=None (FakeLLM 不落 output，见 responses)")
 
     print()
     print("=" * 72)
-    actor_call = next(c for c in llm.calls if "深抉择" in c["messages"][-1]["content"])
+    actor_call = next(c for c in llm.calls if "剧情情境" in c["messages"][-1]["content"])
     print("◆ Actor 的输入（messages）：")
     for msg in actor_call["messages"]:
         print(f"  [{msg['role']}]\n{msg['content']}\n")
-    print("◆ Actor 的输出：", json.dumps(llm.responses["深抉择："], ensure_ascii=False))
+    print("◆ Actor 的输出：", json.dumps(llm.responses["剧情情境"], ensure_ascii=False))
     print()
     print("◆ 说书人实际收到的剧本指令（beats_text，不含 actor 决策）：")
     story_call = next(c for c in llm.calls if "剧本指令" in c["messages"][-1]["content"])

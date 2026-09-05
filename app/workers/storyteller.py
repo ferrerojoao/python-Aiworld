@@ -4,6 +4,27 @@ from app.world.models import NarrativePreset, WorldContent
 from app.workers.schemas import Directive, StoryOutput
 
 
+def _beat_line(beat, world: WorldContent) -> str:
+    """Render one beat for the storyteller, including any actor decision.
+
+    Actor nodes carry the NPC's isolated decision in ``resolved``; the
+    storyteller must see the outcome (what the NPC decided to do), not the
+    raw question again, or the prose would ignore the deep choice.
+    """
+    parts = [f"- [{beat.kind}] {beat.text}"]
+    if beat.speaker:
+        npc = world.npcs.get(beat.speaker or "")
+        name = npc.name if npc else beat.speaker
+        parts.append(f"（{name}：{beat.meaning or ''}）")
+    if beat.resolved:
+        parts.append(
+            f"（{beat.resolved.get('decision', '')}；"
+            f"行为：{beat.resolved.get('action_hint', '')}；"
+            f"语气：{beat.resolved.get('tone', '')}）"
+        )
+    return "".join(parts)
+
+
 async def run_storyteller(
     llm,
     world: WorldContent,
@@ -20,7 +41,7 @@ async def run_storyteller(
 ) -> StoryOutput:
     """Storyteller worker: the only prose writer."""
     beats_text = "\n".join(
-        f"- [{b.kind}] {b.text}" + (f"（{b.speaker}：{b.meaning}）" if b.speaker else "")
+        _beat_line(b, world)
         for b in directive.beats
     )
     if directive.adopt_player_body:
