@@ -20,7 +20,14 @@ async def run_audit(
     hooks and detect simple lifecycle changes.
     """
     messages = [
-        {"role": "system", "content": "你是 AIWorld 的世界审计，负责从事件中提取定性附注和矛盾。只返回 JSON。"},
+        {
+            "role": "system",
+            "content": (
+                "你是 AIWorld 的世界审计，负责从事件中提取定性附注和矛盾。只返回 JSON，格式如下：\n"
+                '{"hook_texts": ["值得挂账的承诺/未了事"], "conflicts": [{"level": "major", "desc": "矛盾描述"}]}\n'
+                "hook_texts：没有则为空数组；conflicts：没有则为空数组。"
+            ),
+        },
         {"role": "user", "content": f"事件：{narrative_event}"},
     ]
     data = await llm.complete_json(

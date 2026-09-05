@@ -59,6 +59,12 @@ async def run_storyteller(
         "不要写任何导演动机、幕后注。",
         "不要提到 AIWorld、系统、导演、说书人、剧本指令、玩家输入等元信息。",
         "不要打破第四面墙，只写玩家在故事里能感知到的内容。",
+        "",
+        "输出必须是 JSON 对象，只允许以下字段：",
+        '{"prose": "正文全文", "time_hint": null}',
+        "prose：本场戏的正文（必填，直接成稿，不要任何解释或说明）。",
+        "time_hint：仅当正文明确推进了时间时才填对象（例如 {\"desc\": \"天黑了\", \"advance_to\": \"night\"}），否则为 null。",
+        "禁止输出 directives、beats、节拍、剧本指令、列表等任何其他字段；不要复述或引用剧本指令内容，直接写正文。",
     ]
     system = "\n".join(system_parts)
     messages = [

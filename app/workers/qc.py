@@ -30,7 +30,10 @@ async def run_qc(
     system = "\n".join(
         [
             "你是 AIWorld 的质检员，负责文风、泄漏和禁用词检查。",
-            "只返回 JSON。",
+            "只返回 JSON，格式如下：",
+            '{"status": "pass|fixed|conflict", "prose": "质检后的正文（可修改，不得为空）", "issues": [{"level": "minor|major", "desc": "问题描述"}]}',
+            "status：pass=无需修改；fixed=已修改正文或替换禁用词；conflict=发现大矛盾（正文照常给出，矛盾只挂起不阻塞）。",
+            "issues：发现的问题列表，没有则为空数组。",
         ]
     )
     messages = [

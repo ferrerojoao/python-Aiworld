@@ -74,15 +74,34 @@ class LLMGateway:
         temperature: float = 0.2,
     ) -> dict[str, Any]:
         last_error: Exception | None = None
+        last_raw: str | None = None
+        use_response_format = True
         for attempt in range(3):
+            msgs = list(messages)
+            if attempt > 0 and last_raw:
+                # Feedback loop: show the model its previous bad output and
+                # the validation error so it can correct the shape.
+                msgs.append({"role": "assistant", "content": last_raw})
+                msgs.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "你上次的输出未通过校验，请修正后重新输出。"
+                            f"必须只返回能通过校验的 JSON。上次输出：{last_raw[:500]}"
+                        ),
+                    }
+                )
+            kwargs: dict[str, Any] = {
+                "model": model,
+                "messages": msgs,
+                "temperature": temperature,
+            }
+            if use_response_format:
+                kwargs["response_format"] = {"type": "json_object"}
+            text: str | None = None
             try:
                 async with self._sem:
-                    response = await self._client.chat.completions.create(
-                        model=model,
-                        messages=messages,
-                        temperature=temperature,
-                        response_format={"type": "json_object"},
-                    )
+                    response = await self._client.chat.completions.create(**kwargs)
                 text = response.choices[0].message.content or "{}"
                 data = extract_json(text)
                 obj = schema.model_validate(data)
@@ -90,24 +109,17 @@ class LLMGateway:
                 return obj.model_dump()
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
+                if text:
+                    last_raw = text
                 if "json_object" in str(exc).lower():
-                    # Some local servers do not accept response_format; retry without it.
-                    try:
-                        async with self._sem:
-                            response = await self._client.chat.completions.create(
-                                model=model,
-                                messages=messages,
-                                temperature=temperature,
-                            )
-                        text = response.choices[0].message.content or "{}"
-                        data = extract_json(text)
-                        obj = schema.model_validate(data)
-                        self._add_usage(response)
-                        return obj.model_dump()
-                    except Exception as retry_exc:  # noqa: BLE001
-                        last_error = retry_exc
-                continue
-        raise RuntimeError(f"LLM JSON completion failed after retries: {last_error}")
+                    # Some local servers do not accept response_format; retry
+                    # the same attempt shape without it.
+                    use_response_format = False
+                    continue
+        raise RuntimeError(
+            f"LLM JSON completion failed after retries: {last_error}"
+            + (f" | raw: {last_raw[:200]}" if last_raw else "")
+        )
 
     async def complete_text(
         self,

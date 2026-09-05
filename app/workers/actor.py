@@ -20,7 +20,9 @@ async def run_actor(
     """
     system = (
         f"你正在扮演 {npc.name}。只根据你自己知道的信息做决定。\n"
-        f"人格：{npc.persona}"
+        f"人格：{npc.persona}\n"
+        '只返回 JSON，格式如下：\n'
+        '{"decision": "你的决定", "action_hint": "你会做的动作/行为", "tone": "语气"}'
     )
     messages = [
         {"role": "system", "content": system},
