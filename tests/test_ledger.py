@@ -68,6 +68,30 @@ def test_visible_to_respects_known_by(session):
     assert private_ev["id"] in visible_to_player
 
 
+def test_retired_npc_absent_from_present_at(session):
+    ledger = session.ledger
+    ev = {
+        "id": ledger.allocate_event_id(),
+        "kind": "narrative",
+        "at": "2026-07-14T10:00:00",
+        "location": "net_bar",
+        "participants": ["player", "npc_zhuming"],
+        "known_by": None,
+        "body": "朱明在网吧。",
+        "source": "turn",
+    }
+    ledger.append(ev)
+    assert "npc_zhuming" in ledger.present_at("net_bar")
+
+    # 退场后：位置推导保留（where_is 仍可回溯终点），但不再出现在场名单。
+    from app.ledger.save import EntityRuntime
+
+    entity = ledger.save.entities.setdefault("npc_zhuming", EntityRuntime())
+    entity.lifecycle = "retired"
+    assert ledger.where_is("npc_zhuming")["location"] == "net_bar"
+    assert "npc_zhuming" not in ledger.present_at("net_bar")
+
+
 def test_access_rejudge(session):
     ledger = session.ledger
     ev = {

@@ -100,6 +100,9 @@ class Ledger:
     def present_at(self, scene: str) -> list[str]:
         result = []
         for subject in self.world.npcs.keys():
+            entity = self.save.entities.get(subject)
+            if entity and entity.lifecycle == "retired":
+                continue  # 退场者停止参与在场推导与主动调度（REQ 〇章）
             event = self._latest_location_event(subject)
             if event and event.get("location") == scene:
                 result.append(subject)
