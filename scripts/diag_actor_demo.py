@@ -71,7 +71,7 @@ async def main() -> None:
     llm = PrefixKeyLLM(
         {
             "玩家输入：": WRITER_FIRST,
-            "剧情情境": ACTOR_OUT,
+            "深抉择问题": ACTOR_OUT,
             "以下深抉择已由对应 NPC 亲自决定": WRITER_SECOND,
             "正文：": QC_OUT,
             "事件：": AUDIT_OUT,
@@ -88,7 +88,7 @@ async def main() -> None:
         content = call["messages"][-1]["content"]
         system = call["messages"][0]["content"]
         if content.startswith("玩家输入"): who = "writer#1（编排+成文）"
-        elif "剧情情境" in content: who = "Actor（朱明深抉择）"
+        elif "深抉择问题" in content: who = "Actor（朱明深抉择）"
         elif "深抉择已由" in content: who = "writer#2（按决策成文）"
         elif content.startswith("正文"): who = "质检"
         elif content.startswith("事件"): who = "审计"
@@ -99,10 +99,10 @@ async def main() -> None:
         print("  user:", content.replace("\n", " ")[:120])
     print("=" * 72)
 
-    actor_call = next(c for c in llm.calls if "剧情情境" in c["messages"][-1]["content"])
+    actor_call = next(c for c in llm.calls if "深抉择问题" in c["messages"][-1]["content"])
     print("◆ Actor 输入 [system]:")
     print(actor_call["messages"][0]["content"])
-    print("◆ Actor 输出:", json.dumps(llm.responses["剧情情境"], ensure_ascii=False))
+    print("◆ Actor 输出:", json.dumps(llm.responses["深抉择问题"], ensure_ascii=False))
 
     second = next(c for c in llm.calls if "深抉择已由" in c["messages"][-1]["content"])
     print("\n◆ writer#2 收到的决策块:")

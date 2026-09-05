@@ -173,6 +173,53 @@ def writer_output_format() -> list[str]:
     ]
 
 
+def actor_contract(npc_name: str) -> list[str]:
+    """NPC Actor 的身份、隔离纪律与输出格式（物理隔离工作单）。"""
+    return [
+        f"你正在扮演：{npc_name}。你只根据下面「你知道的事」做决定，绝不使用你不知道的信息。",
+        "金科玉律（绝对不可违背）：",
+        f"- 你自己 = {npc_name}；下面用「他/她/名字」这类第三人称提及你时，指的就是你本人。",
+        "- 「玩家」= 你的对话对象（人类玩家）；情境中的第三人称不指你时，以「玩家」为你的对话对象。",
+        "- 你只能说自己知道的事；你不知道的事不能猜着说，更不能替别人说。",
+        "- 只输出你的决定，不要输出旁白、不要替玩家做决定。",
+        '只返回 JSON，格式如下：',
+        '{"decision": "你的决定", "action_hint": "你会做的动作/行为", "tone": "语气"}',
+    ]
+
+
+def build_actor_work_order(
+    world: WorldContent,
+    ledger: Ledger,
+    npc_id: str,
+    scene_id: str,
+    memory_limit: int = 5,
+) -> str:
+    """Physically isolated work order for one NPC's deep choice.
+
+    Cut per TDD §6: the actor gets world hard rules, the scene's perceptible
+    area, its own card (incl. persona patch) and its own memory slice only.
+    No private notes, no other NPCs' secrets, no lore candidates, no hooks,
+    no conflicts, no writer motivation.
+    """
+    npc = world.npcs.get(npc_id)
+    if npc is None:
+        raise ValueError(f"unknown npc: {npc_id}")
+    parts = [
+        *actor_contract(npc.name),
+        *world_summary_block(world),
+        "你的档案（人物卡）：",
+        f"姓名：{npc.name}；外貌：{npc.appearance or '未设定'}；人格：{npc.persona or '未设定'}",
+    ]
+    entity = ledger.save.entities.get(npc_id)
+    if entity and entity.persona_patch:
+        parts.append(f"档案增补：{entity.persona_patch}")
+    parts += scene_snapshot_block(world, ledger, scene_id)
+    mem = ledger.experiences(npc_id, npc_id)[-memory_limit:]
+    if mem:
+        parts += ["你记得的事：", *mem]
+    return "\n".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # 装配
 # ---------------------------------------------------------------------------
@@ -186,41 +233,47 @@ def build_work_order(
 ) -> str:
     """Final work order for one agent.
 
-    Today only viewer="writer" exists (merged director+storyteller). The
-    viewer parameter is the seam for future actor_<npc_id> (isolated view)
-    and qc (reference subset) consumers.
+    viewer="writer": merged director+storyteller (omniscient).
+    viewer="actor_<npc_id>": physically isolated NPC deep-choice view.
     """
-    if viewer != "writer":
-        raise ValueError(f"unknown viewer: {viewer}")
-    scene_id = scene_id or ledger.save.player_scene or "main_street"
-    preset = preset or world.presets
-    present_ids = ledger.present_at(scene_id)
+    if viewer == "writer":
+        scene_id = scene_id or ledger.save.player_scene or "main_street"
+        preset = preset or world.presets
+        present_ids = ledger.present_at(scene_id)
 
-    parts: list[str] = []
-    # A 身份与任务
-    parts += writer_identity()
-    # B 世界硬规则（常驻，永不裁剪）
-    parts += world_summary_block(world)
-    # C 金科玉律（禁忌前置，高注意力区）
-    parts += writer_golden_rules()
-    # D 角色资料（含档位标注）
-    parts += character_block(world, ledger, present_ids)
-    # E 事件日志（理解本句输入的钥匙）
-    parts += event_log_block(ledger)
-    # F 场景快照（此刻环境）
-    parts += scene_snapshot_block(world, ledger, scene_id)
-    # G 在场 NPC 近况
-    parts += npc_history_block(ledger, present_ids)
-    # H 幕后注（机密，自带警示，与 C 呼应双保险）
-    parts += private_notes_block(world, present_ids)
-    # I 可选素材（候选/钩子/矛盾，未来 token 超支时最先可裁）
-    parts += lore_candidates_block(ledger, scene_id, present_ids)
-    parts += hooks_block(ledger)
-    parts += conflicts_block(ledger)
-    # J 编剧准则（创作与写作要求，贴近动笔位置）
-    if preset.writer_guidelines:
-        parts.append("编剧准则（创作与写作要求，必须遵循）：")
-        parts.append(preset.writer_guidelines)
-    # K 输出格式（近因区，紧贴玩家输入消息）
-    parts += writer_output_format()
-    return "\n".join(parts)
+        parts: list[str] = []
+        # A 身份与任务
+        parts += writer_identity()
+        # B 世界硬规则（常驻，永不裁剪）
+        parts += world_summary_block(world)
+        # C 金科玉律（禁忌前置，高注意力区）
+        parts += writer_golden_rules()
+        # D 角色资料（含档位标注）
+        parts += character_block(world, ledger, present_ids)
+        # E 事件日志（理解本句输入的钥匙）
+        parts += event_log_block(ledger)
+        # F 场景快照（此刻环境）
+        parts += scene_snapshot_block(world, ledger, scene_id)
+        # G 在场 NPC 近况
+        parts += npc_history_block(ledger, present_ids)
+        # H 幕后注（机密，自带警示，与 C 呼应双保险）
+        parts += private_notes_block(world, present_ids)
+        # I 可选素材（候选/钩子/矛盾，未来 token 超支时最先可裁）
+        parts += lore_candidates_block(ledger, scene_id, present_ids)
+        parts += hooks_block(ledger)
+        parts += conflicts_block(ledger)
+        # J 编剧准则（创作与写作要求，贴近动笔位置）
+        if preset.writer_guidelines:
+            parts.append("编剧准则（创作与写作要求，必须遵循）：")
+            parts.append(preset.writer_guidelines)
+        # K 输出格式（近因区，紧贴玩家输入消息）
+        parts += writer_output_format()
+        return "\n".join(parts)
+
+    if viewer.startswith("actor_"):
+        npc_id = viewer[len("actor_"):]
+        return build_actor_work_order(
+            world, ledger, npc_id, scene_id or ledger.save.player_scene or "main_street"
+        )
+
+    raise ValueError(f"unknown viewer: {viewer}")

@@ -349,7 +349,7 @@ PendingTurn（内存事务上下文）
 ### 5.4 NPC Actor（workers/actor.py）
 
 - 触发：WriterOutput 携带 `actor_questions` 且该 NPC 有 actor 票（has_actor 或玩家点名强制）。
-- **输入 = 物理隔离工作单**：只含 persona（含补丁）、`experiences(self)`、`visible_to(self)`、当前场景可感知 + 本场问题情境。**不含**编剧区的幕后注、其它 NPC 私密、世界书全文。人称已归一（"你/您"→"玩家"，第三人称姓名=自己）。
+- **输入 = 物理隔离工作单**：`build_work_order(viewer="actor_<npc_id>")`（§6 装配器实现）只含世界硬规则、场景可感知区、本人人物卡（含补丁）、`experiences(self)`（known_by 已过滤）。**不含**幕后注、其它 NPC 私密、世界书候选、钩子/矛盾、编剧动机。人称已归一（"你/您"→"玩家"，第三人称姓名=自己）。
 - 输出决策块（回流给编剧二次调用）：
 
 ```jsonc

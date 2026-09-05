@@ -86,13 +86,14 @@ class TurnRunner:
             decisions = []
             for q in questions:
                 npc = self.session.world.npcs[q.npc_id]
-                memories = "\n".join(self.session.ledger.experiences(npc.id, npc.id)[-5:])
                 decision = await run_actor(
                     self.llm,
+                    self.session.world,
+                    self.session.ledger,
                     npc,
                     q.question,
                     context=q.context,
-                    memories=memories,
+                    scene_id=scene,
                     model=self.settings.resolved_model("actor"),
                     temperature=0.8,
                 )
