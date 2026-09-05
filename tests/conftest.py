@@ -14,7 +14,6 @@ GENERIC_LLM_RESPONSE = {
     "mode": "scene",
     "beats": [{"kind": "narrate", "text": "朱明从网吧出来，看见你愣了一下。"}],
     "lore_refs": [],
-    "motivation_note": "",
     "adopt_player_body": False,
     "private": False,
     "location": "main_street",

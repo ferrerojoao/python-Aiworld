@@ -35,7 +35,6 @@ DIRECTOR_OUT = {
         },
     ],
     "lore_refs": [],
-    "motivation_note": "他怕你知道他爸欠债的事。",
     "adopt_player_body": False,
     "private": False,
     "location": "net_bar",

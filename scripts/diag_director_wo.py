@@ -53,7 +53,6 @@ async def main() -> None:
                 "mode": "scene",
                 "beats": [{"kind": "narrate", "text": "朱明抬头看你。"}],
                 "lore_refs": [],
-                "motivation_note": "",
                 "adopt_player_body": False,
                 "private": False,
                 "location": "net_bar",

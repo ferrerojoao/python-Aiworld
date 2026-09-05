@@ -17,7 +17,6 @@ class Directive(BaseModel):
     mode: str = Field(default="scene", validation_alias=AliasChoices("mode", "模式", "方式"))
     beats: list[Beat] = Field(default_factory=list, validation_alias=AliasChoices("beats", "节拍", "指令", "段落", "场次"))
     lore_refs: list[str] = Field(default_factory=list, validation_alias=AliasChoices("lore_refs", "world_refs", "世界书引用", "引用"))
-    motivation_note: str = Field(default="", validation_alias=AliasChoices("motivation_note", "动机", "幕后注"))
     adopt_player_body: bool = Field(default=False, validation_alias=AliasChoices("adopt_player_body", "采用玩家正文"))
     private: bool = Field(default=False, validation_alias=AliasChoices("private", "私密"))
     location: str | None = Field(default=None, validation_alias=AliasChoices("location", "地点", "场景"))

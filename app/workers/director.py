@@ -122,7 +122,7 @@ async def run_director(
         scene_text,
         "",
         "输出示例（必须包含至少一个 beats 元素）：",
-        '{"mode":"scene","beats":[{"kind":"narrate","text":"玩家走进网吧，朱明抬头看他。"},{"kind":"speech","speaker":"npc_zhuming","meaning":"不想提打架的事","tone_hint":"敷衍"}],"lore_refs":[],"motivation_note":"","adopt_player_body":false,"private":false,"location":"net_bar","participants":["player","npc_zhuming"]}',
+        '{"mode":"scene","beats":[{"kind":"narrate","text":"玩家走进网吧，朱明抬头看他。"},{"kind":"speech","speaker":"npc_zhuming","meaning":"不想提打架的事","tone_hint":"敷衍"}],"lore_refs":[],"adopt_player_body":false,"private":false,"location":"net_bar","participants":["player","npc_zhuming"]}',
     ]
     system = "\n".join(system_parts)
     messages = [

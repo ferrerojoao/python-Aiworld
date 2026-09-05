@@ -1,0 +1,27 @@
+{
+  "candidate_id": "cand_dd3822fe4be5",
+  "turn_id": "turn_3dd41b44dfd3",
+  "trace_id": "tr_57910c3c0598",
+  "mode": "initial",
+  "status": "pending",
+  "player_input": "然后呢",
+  "prose": "朱明从网吧出来，看见你愣了一下，把烟头踩灭，问你吃饭了没。",
+  "side_effects": {
+    "delta_minutes": 0,
+    "narrative": {
+      "location": "net_bar",
+      "participants": [
+        "player",
+        "npc_zhuming"
+      ],
+      "known_by": null,
+      "summary": "朱明从网吧出来，看见你愣了一下。"
+    },
+    "events": [],
+    "axes": {},
+    "overrides": []
+  },
+  "conflicts": [],
+  "created_at": "2026-09-05T18:11:08",
+  "updated_at": "2026-09-05T18:11:08"
+}
