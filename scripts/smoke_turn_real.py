@@ -43,6 +43,13 @@ async def main() -> None:
         print()
         print("副作用：", candidate.side_effects.model_dump())
         print("Usage:", llm.get_usage())
+
+        # Adopt so the audit runs, then inspect what it settled.
+        await runner.adopt(candidate.candidate_id)
+        hooks = session.ledger.save.hooks
+        print()
+        print("审计后事件数:", len(session.ledger.narratives))
+        print("钩子台账:", [(h.text[:30], h.status) for h in hooks] or "（空）")
         print("TURN SMOKE PASSED")
 
 

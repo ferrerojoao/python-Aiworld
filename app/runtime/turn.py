@@ -310,6 +310,7 @@ class TurnRunner:
             self.llm,
             self.session.ledger,
             narrative_event,
+            hook_limit=self.settings.hook_limit,
             model=self.settings.resolved_model("audit"),
             temperature=0.2,
         )

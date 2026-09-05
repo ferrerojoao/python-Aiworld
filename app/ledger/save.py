@@ -22,10 +22,11 @@ class EntityRuntime(BaseModel):
 class Hook(BaseModel):
     id: str
     text: str
-    level: str = "npc"
-    status: str = "open"
+    level: str = "npc"  # 主线钩子（world 级）预留：导演窗口阶段启用
+    status: str = "open"  # open | closed（兑现）| expired（上限淘汰）
     opened_at: str = ""
-    due: str | None = None
+    closed_at: str | None = None
+    due: str | None = None  # 不解析到期（2026-09-05 拍板：避免时间解析的不可控问题）
     related: list[str] = Field(default_factory=list)
 
 

@@ -64,6 +64,10 @@ class ActorDecision(BaseModel):
 
 class AuditOutput(BaseModel):
     hook_texts: list[str] = Field(default_factory=list, validation_alias=AliasChoices("hook_texts", "hooks", "钩子"))
+    closed_hook_ids: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("closed_hook_ids", "closed_hooks", "兑现钩子", "闭合钩子"),
+    )
     lifecycle: list[dict] = Field(
         default_factory=list,
         validation_alias=AliasChoices("lifecycle", "lifecycle_changes", "生命周期"),

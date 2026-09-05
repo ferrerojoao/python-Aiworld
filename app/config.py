@@ -79,6 +79,7 @@ class Settings:
     )
     candidate_ttl_days: int = field(default_factory=lambda: _env_int("CANDIDATE_TTL_DAYS", 7))
     audit_enabled: bool = field(default_factory=lambda: _env_bool("AUDIT_ENABLED", True))
+    hook_limit: int = field(default_factory=lambda: _env_int("HOOK_LIMIT", 20))
 
     content_root: Path = field(default_factory=lambda: Path(_env("CONTENT_ROOT", "content")))
     data_dir: Path = field(default_factory=lambda: Path(_env("DATA_DIR", "data")))
