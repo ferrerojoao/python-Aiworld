@@ -1094,6 +1094,19 @@ async function saveAsWorld() {
   }
 }
 
+async function refreshWorldModal() {
+  if (state.editMode) {
+    if (!confirm("刷新会丢失未保存的编辑，确定吗？")) return;
+    setEditModeUI(false);
+  }
+  const activeTab = document.querySelector(".modal-tabs .tab.active")?.dataset.tab || "list";
+  if (activeTab === "list") {
+    await loadWorldList();
+  } else {
+    await loadWorldBrowser();
+  }
+}
+
 async function exportWorld() {
   const url = `/api/sessions/${state.sid}/world/export`;
   const a = document.createElement("a");
@@ -1193,6 +1206,7 @@ async function init() {
     btn.addEventListener("click", () => switchWorldTab(btn.dataset.tab));
   });
   $("#export-world").addEventListener("click", exportWorld);
+  $("#refresh-world").addEventListener("click", refreshWorldModal);
   $("#toggle-edit").addEventListener("click", toggleEditMode);
   $("#save-world-edit").addEventListener("click", saveWorldEdit);
   $("#save-as-world").addEventListener("click", saveAsWorld);
