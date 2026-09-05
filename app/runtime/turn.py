@@ -12,10 +12,8 @@ from app.runtime.transaction import Candidate, CandidateStore, SideEffects, Tran
 from app.world.models import NarrativePreset
 from app.workers.actor import run_actor
 from app.workers.auditor import run_audit
-from app.workers.director import run_director
-from app.workers.qc import run_qc
-from app.workers.schemas import Beat
-from app.workers.storyteller import run_storyteller
+from app.workers.qc import build_qc_reference, run_qc
+from app.workers.writer import run_writer
 
 
 class NeedChooseCandidate(Exception):
@@ -44,58 +42,80 @@ class TurnRunner:
         if self._progress_queue is not None:
             await self._progress_queue.put({"type": "stage", "stage": stage, "label": label})
 
-    def _storyteller_context(self, directive, fallback_scene: str) -> dict:
-        scene_id = directive.location or fallback_scene
-        scene_obj = next((s for s in self.session.world.scenes if s.id == scene_id), None)
-        present_ids = self.session.ledger.present_at(scene_id)
-        present_npcs = []
-        for pid in present_ids:
-            npc = self.session.world.npcs.get(pid)
-            if npc:
-                present_npcs.append(
-                    {"name": npc.name, "appearance": npc.appearance, "persona": npc.persona}
+    def _actor_ticket(self, npc_id: str) -> bool:
+        npc = self.session.world.npcs.get(npc_id)
+        if npc is None:
+            return False
+        entity = self.session.ledger.save.entities.get(npc_id)
+        forced = bool(entity and entity.forced_actor)
+        return bool(npc.has_actor or forced)
+
+    async def _write_turn(
+        self,
+        player_input: str,
+        *,
+        scene: str,
+        rule_bundle: dict | None = None,
+        rewrite_note: str = "",
+    ):
+        """Single-agent write pass, with the deep-choice two-stage loop.
+
+        First call: the writer emits the prose, or emits actor_questions for
+        NPCs facing deep choices. If questions exist and the NPC holds an
+        actor ticket, run the isolated Actor and re-invoke the writer once
+        with the decisions; otherwise act as ghostwriter and keep the output.
+        """
+        await self._progress("writer", "编排成文中")
+        out = await run_writer(
+            self.llm,
+            self.session.world,
+            self.session.ledger,
+            player_input,
+            rule_bundle=rule_bundle,
+            scene_id=scene,
+            preset=self.preset,
+            rewrite_note=rewrite_note,
+            model=self.settings.resolved_model("story"),
+            temperature=0.8,
+        )
+
+        # Deep choices are delegated to the NPCs' isolated Actors.
+        questions = [q for q in out.actor_questions if self._actor_ticket(q.npc_id)]
+        if questions:
+            await self._progress("actor", "NPC Agent 思考中")
+            decisions = []
+            for q in questions:
+                npc = self.session.world.npcs[q.npc_id]
+                memories = "\n".join(self.session.ledger.experiences(npc.id, npc.id)[-5:])
+                decision = await run_actor(
+                    self.llm,
+                    npc,
+                    q.question,
+                    context=q.context,
+                    memories=memories,
+                    model=self.settings.resolved_model("actor"),
+                    temperature=0.8,
                 )
-        lore_bodies = []
-        for ref in directive.lore_refs:
-            entry = next((e for e in self.session.world.lorebook if e.id == ref), None)
-            if entry:
-                lore_bodies.append(entry.body)
-        return {
-            "present_npcs": present_npcs,
-            "scene_name": scene_obj.name if scene_obj else "",
-            "scene_desc": scene_obj.perceivable if scene_obj else "",
-            "lore_bodies": lore_bodies,
-        }
-
-    def _deterministic_summary(self, directive) -> str:
-        parts = []
-        for beat in directive.beats:
-            if beat.kind == "speech":
-                npc = self.session.world.npcs.get(beat.speaker or "")
-                name = npc.name if npc else beat.speaker or ""
-                text = beat.meaning or beat.text
-                if text:
-                    parts.append(f"{name}{text}" if name else text)
-            elif beat.kind == "narrate" and beat.text:
-                parts.append(beat.text[:30])
-        return "；".join(parts).strip()
-
-    async def _build_summary(self, directive, player_input: str) -> str:
-        deterministic = self._deterministic_summary(directive)
-        if len(deterministic) >= 8:
-            return deterministic
-        try:
-            text = await self.llm.complete_text(
-                [
-                    {"role": "system", "content": "用一句话概括这段剧情发生了什么，不超过30字，不要解释。"},
-                    {"role": "user", "content": f"剧情指令：{directive.model_dump()}\n玩家输入：{player_input}"},
-                ],
-                model=self.settings.resolved_model("qc"),
-                temperature=0.2,
+                decisions.append(
+                    f"- {npc.name}（{npc.id}）：{decision.decision}；行为：{decision.action_hint}；语气：{decision.tone}"
+                )
+            await self._progress("writer", "按NPC决策成文中")
+            out = await run_writer(
+                self.llm,
+                self.session.world,
+                self.session.ledger,
+                player_input,
+                rule_bundle=rule_bundle,
+                scene_id=scene,
+                preset=self.preset,
+                actor_decisions="\n".join(decisions),
+                model=self.settings.resolved_model("story"),
+                temperature=0.8,
             )
-            return text.strip()
-        except Exception:
-            return deterministic
+
+        if out.adopt_player_body:
+            out.prose = player_input
+        return out
 
     # ------------------------------------------------------------------
     # Main entry
@@ -152,85 +172,29 @@ class TurnRunner:
             self.session.candidates.save(candidate)
             return candidate
 
-        await self._progress("director", "导演安排中")
-        directive = await run_director(
-            self.llm,
-            self.session.world,
-            self.session.ledger,
-            player_input,
-            rule_bundle=rule_bundle,
-            scene_id=scene,
-            preset=self.preset,
-            model=self.settings.resolved_model("director"),
-            temperature=0.7,
+        out = await self._write_turn(
+            player_input, scene=scene, rule_bundle=rule_bundle
         )
-
-        # If the director returned no beats, give the storyteller at least
-        # the player's input so it does not improvise meta/system text.
-        if not directive.beats and not directive.adopt_player_body:
-            directive.beats.append(Beat(kind="narrate", text=f"玩家想：{player_input}"))
-
-        # Resolve any actor nodes generated by the director. Only NPCs with
-        # an actor ticket (content-pack has_actor, or player-forced) get a
-        # real isolated call; everyone else stays ghostwritten by the director.
-        for beat in directive.beats:
-            if beat.kind != "actor" or not beat.actor_npc_id:
-                continue
-            npc = self.session.world.npcs.get(beat.actor_npc_id)
-            if npc is None:
-                continue
-            entity = self.session.ledger.save.entities.get(beat.actor_npc_id)
-            forced = bool(entity and entity.forced_actor)
-            if not (npc.has_actor or forced):
-                continue  # director ghostwrite: actor node stays unresolved
-            await self._progress("actor", f"{npc.name}思考中")
-            memories = "\n".join(
-                self.session.ledger.experiences(npc.id, npc.id)[-5:]
-            )
-            context = f"{beat.meaning or ''} {beat.tone_hint or ''}".strip()
-            decision = await run_actor(
-                self.llm,
-                npc,
-                beat.text or beat.meaning or "深抉择",
-                context=context,
-                memories=memories,
-                model=self.settings.resolved_model("actor"),
-                temperature=0.8,
-            )
-            beat.resolved = decision.model_dump()
-
-        await self._progress("storyteller", "说书人写作中")
-        if directive.adopt_player_body and directive.beats:
-            story = type("Story", (), {"prose": directive.beats[0].text, "time_hint": None})()
-        else:
-            story = await run_storyteller(
-                self.llm,
-                self.session.world,
-                directive,
-                preset=self.preset,
-                player=self.session.ledger.save.player.model_dump(),
-                **self._storyteller_context(directive, scene),
-                model=self.settings.resolved_model("story"),
-                temperature=0.9,
-            )
 
         await self._progress("qc", "质检员审校中")
         qc = await run_qc(
             self.llm,
             self.session.world,
             self.session.ledger,
-            story.prose,
-            participants=directive.participants,
+            out.prose,
+            participants=out.participants,
             preset=self.preset,
+            reference=build_qc_reference(self.session.world, self.session.ledger, out.participants or []),
             model=self.settings.resolved_model("qc"),
             temperature=self.settings.temp_qc,
         )
 
         # Build one candidate version.
-        summary = await self._build_summary(directive, player_input)
+        summary = out.summary or (out.prose or "")[:40]
         turn_id = new_id("turn")
         candidate_id = new_id("cand")
         now = dt.datetime.now().isoformat(timespec="seconds")
+        participants = out.participants or (["player"] + [q.npc_id for q in out.actor_questions])
         candidate = Candidate(
             candidate_id=candidate_id,
             turn_id=turn_id,
@@ -241,9 +205,9 @@ class TurnRunner:
             side_effects=SideEffects(
                 delta_minutes=rule_bundle.get("delta_minutes", 0),
                 narrative={
-                    "location": directive.location or scene,
-                    "participants": directive.participants or ["player"],
-                    "known_by": None if not directive.private else directive.participants,
+                    "location": out.location or scene,
+                    "participants": participants or ["player"],
+                    "known_by": None if not out.private else (participants or ["player"]),
                     "summary": summary,
                 },
                 events=[],
@@ -266,71 +230,37 @@ class TurnRunner:
             if latest.side_effects.narrative
             else self.session.ledger.save.player_scene
         )
-        side_effects = latest.side_effects
-        if mode == "redirect":
-            await self._progress("director", "导演重排中")
-            directive = await run_director(
-                self.llm,
-                self.session.world,
-                self.session.ledger,
-                latest.player_input,
-                rule_bundle={"mode": mode, "note": note, "scene": scene},
-                scene_id=scene,
-                preset=self.preset,
-                model=self.settings.resolved_model("director"),
-                temperature=0.7,
-            )
-            await self._progress("storyteller", "说书人写作中")
-            story = await run_storyteller(
-                self.llm,
-                self.session.world,
-                directive,
-                preset=self.preset,
-                player=self.session.ledger.save.player.model_dump(),
-                **self._storyteller_context(directive, scene),
-                model=self.settings.resolved_model("story"),
-                temperature=0.9,
-            )
-            summary = await self._build_summary(directive, latest.player_input)
-            side_effects = latest.side_effects.model_copy(deep=True)
-            if side_effects.narrative is not None:
-                side_effects.narrative["summary"] = summary
-        else:
-            # rephrase / retarget reuse the existing directive's visible shape
-            # by re-running storyteller with an extra instruction.
-            from app.workers.schemas import Directive
+        rewrite_note = ""
+        if mode in {"rephrase", "retarget"}:
+            parts = ["围绕上一稿，保持同一剧情走向重写正文"]
+            if note:
+                parts.append(f"（玩家要求：{note}）")
+            rewrite_note = "；".join(parts)
 
-            extra = f"（玩家要求：{note}）" if note else ""
-            beats = [{"kind": "narrate", "text": extra}] if extra else [
-                {"kind": "narrate", "text": f"围绕上一稿重写：{latest.prose[:100]}"}
-            ]
-            dummy = Directive(
-                mode="scene",
-                beats=beats,
-                location=latest.side_effects.narrative.get("location") if latest.side_effects.narrative else scene,
-                participants=latest.side_effects.narrative.get("participants") if latest.side_effects.narrative else ["player"],
-            )
-            await self._progress("storyteller", "说书人写作中")
-            story = await run_storyteller(
-                self.llm,
-                self.session.world,
-                dummy,
-                player=self.session.ledger.save.player.model_dump(),
-                **self._storyteller_context(dummy, scene),
-                model=self.settings.resolved_model("story"),
-                temperature=0.9,
-            )
+        out = await self._write_turn(
+            latest.player_input,
+            scene=scene,
+            rewrite_note=rewrite_note,
+        )
 
         await self._progress("qc", "质检员审校中")
         qc = await run_qc(
             self.llm,
             self.session.world,
             self.session.ledger,
-            story.prose,
+            out.prose,
             preset=self.preset,
+            reference=build_qc_reference(self.session.world, self.session.ledger, out.participants or []),
             model=self.settings.resolved_model("qc"),
             temperature=self.settings.temp_qc,
         )
+
+        side_effects = latest.side_effects.model_copy(deep=True)
+        if side_effects.narrative is not None:
+            side_effects.narrative["summary"] = out.summary or (out.prose or "")[:40]
+            side_effects.narrative["location"] = out.location or scene
+            if out.participants:
+                side_effects.narrative["participants"] = out.participants
 
         now = dt.datetime.now().isoformat(timespec="seconds")
         candidate = Candidate(

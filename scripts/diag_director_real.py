@@ -1,4 +1,4 @@
-"""Debug what the real director agent actually returns."""
+"""Debug what the real writer agent (director+storyteller merged) returns."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from app.config import get_settings
 from app.core.llm import LLMGateway
 from app.core.presets import load_global_preset
 from app.runtime.session import create_session
-from app.workers.director import run_director
+from app.workers.writer import run_writer
 
 WORLD = Path(__file__).resolve().parent.parent / "content" / "qinghsi"
 
@@ -28,7 +28,7 @@ async def main() -> None:
             api_key=settings.llm_api_key,
             max_concurrency=2,
         )
-        directive = await run_director(
+        out = await run_writer(
             llm,
             session.world,
             session.ledger,
@@ -36,13 +36,14 @@ async def main() -> None:
             rule_bundle={"route": "move", "scene": "main_street", "destination": "net_bar", "delta_minutes": 10},
             scene_id="main_street",
             preset=preset,
-            model=settings.resolved_model("director"),
-            temperature=0.7,
+            model=settings.resolved_model("story"),
+            temperature=0.8,
         )
-        print("=== Director raw parsed directive ===")
-        print(directive.model_dump())
+        print("=== Writer raw parsed output ===")
+        print(out.model_dump())
         print()
-        print("beats count:", len(directive.beats))
+        print("prose head:", out.prose[:80])
+        print("actor_questions:", out.actor_questions)
 
 
 if __name__ == "__main__":

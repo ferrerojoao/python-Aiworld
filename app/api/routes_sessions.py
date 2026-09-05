@@ -17,25 +17,6 @@ from app.world.loader import save_world_assets
 
 router = APIRouter(prefix="/api")
 
-_FAKE_RESPONSE = {
-    "mode": "scene",
-    "beats": [{"kind": "narrate", "text": "朱明从网吧出来，看见你愣了一下。"}],
-    "lore_refs": [],
-    "adopt_player_body": False,
-    "private": False,
-    "location": "main_street",
-    "participants": ["player", "npc_zhuming"],
-    "prose": "朱明从网吧出来，看见你愣了一下，把烟头踩灭，问你吃饭了没。",
-    "time_hint": None,
-    "status": "pass",
-    "issues": [],
-    "decision": "打哈哈",
-    "action_hint": "拉你去吃面",
-    "tone": "随意",
-    "hook_texts": [],
-    "conflicts": [],
-}
-
 
 class CreateSessionBody(BaseModel):
     world_id: str

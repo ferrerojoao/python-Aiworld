@@ -56,10 +56,9 @@ aiworld/
 │   │   ├── scenes.py            # M17 场景注册表 + 模板底稿渲染
 │   │   ├── claims.py            # M2 玩家声明覆写 + 冲突判定
 │   │   └── axes.py              # ③ 抽象属性轴结算（M5，二期预留）+ 记因留痕
-│   ├── workers/                 # 五名无状态 Agent（每个 = 一个协议函数）
-│   │   ├── director.py          # 导演
-│   │   ├── actor.py             # NPC Actor
-│   │   ├── storyteller.py       # 说书人
+│   ├── workers/                 # 无状态 Agent（每个 = 一个协议函数）
+│   │   ├── writer.py            # 编剧（导演+说书人合一：判定+成文）
+│   │   ├── actor.py             # NPC Actor（深抉择隔离回流）
 │   │   ├── qc.py                # 质检员
 │   │   └── auditor.py           # 世界审计（采纳时提交后结算）
 │   ├── runtime/
@@ -285,14 +284,13 @@ PendingTurn（内存事务上下文）
   0. 路由 route（§5.1 附表）：query/导演窗口 → 旁路直答（零/低 LLM）；其余进主链
   1. 规则段预结算 rules_presolve（尽量零 LLM，只对 move/jump/claim/mixed）：
      目的地解析 → 可达/耗时Δt候选 → 位置推断候选域 → 在场者查询 → 覆写冲突提示
-     → 产出 rule_bundle 作为导演输入；副作用写入 PendingTurn
-  2. 装配导演工作单（§6：玩家可见 + 导演独享区 + rule_bundle）
-  3. 导演判定 → 分层剧本指令 directive（§5.3）
-  4. 若 directive 含 actor 节点（深抉择）→ 逐 NPC 装配其隔离工作单（viewer=npc）
-     → Actor 决策块填入 directive 对应节点（回流，导演不二次判定）
-  5. 说书人成文（需成文时）：directive → 正文（JSON 信封 {prose, time_hint?}）；time_hint 计入 Δt
-     导演直接采纳玩家原稿时跳过（说书人 0 次）
-  6. 质检（必经）：文风/泄漏/矛盾/禁用词 → 成品正文 + 冲突标注
+     → 产出 rule_bundle 作为编剧输入；副作用写入 PendingTurn
+  2. 装配编剧工作单（§6：玩家可见 + 账本数据 + rule_bundle）
+  3. 编剧一次调用：脑中排节拍 → 直接成文（WriterOutput，§5.3）
+  4. 若输出带 actor_questions（深抉择）→ 逐 NPC 装配其隔离工作单（viewer=npc）
+     → Actor 决策块回流 → 编剧二次调用按决策成文（正常回合仅此 1 次，深抉择 2 次）
+  5. （合并后无独立说书人调用；adopt_player_body 时正文=玩家原文）
+  6. 质检（必经）：文风/泄漏/矛盾/禁用词，参照区比对 → 成品正文 + 冲突标注
   7. SSE 交付候选区 → 玩家选择采纳某一候选 / 唯一候选自动采纳（commit，§4）→ 提交后结算（§5.7）
 
 全流程生成并携带 `trace_id`（以及 `turn_id` / `candidate_id`）：所有 worker 调用、LLM usage 日志、SSE 事件、审计 run 都记录同一 `trace_id`，便于回放和排错。
@@ -314,59 +312,50 @@ PendingTurn（内存事务上下文）
 
 | Worker | 模型档位 | 温度 | 调用 | 输入 | 输出 |
 |---|---|---|---|---|---|
-| 导演 | 主模型 | 0.7 | 每回合 1 | 工作单（§6） | 分层剧本指令 directive |
+| 编剧（导演+说书人合一） | 主模型 | 0.8 | 每回合 1（深抉择时 2） | 工作单（§6，全知） | WriterOutput（正文+副作用+actor_questions） |
 | NPC Actor | 主模型/次档 | 0.8 | 深抉择 +1 | 本人隔离工作单 | 决策块 |
-| 说书人 | 主模型 | 0.9 | 需成文 0~1 | directive（无导演区） | {prose, time_hint?} |
 | 质检员 | 辅助模型 | 0.2 | 每回合 1 | 初稿 + 受限参照区（§5.6） | {status, prose, issues} |
 | 世界审计 | 辅助模型 | 0.2 | 采纳时提交后结算 | 本回合落账事件 + 相关历史 | 结构性结果 |
 | 意图分类 L1 | 最辅助模型 | 0 | 规则不短路时 1 | 玩家输入 + 场景 + 在场 | {route, mention, claim?} |
 
-> **模型数量**：上表是可配置档位，不是必须六套模型。v1 默认只需要 **1~2 个模型**：导演 / Actor / 说书人可共用“主模型”，质检 / 审计 / L1 分类可共用“辅助模型”；甚至可以全部指向同一个本地模型。配置里未指定的档位自动回退到默认主模型或默认辅助模型。
+> **合并决策（2026-09-05 拍板）**：导演与说书人合并为单一"编剧" agent——决策和文字一次调用完成，成本与延迟约减半。全知信息直接接触文字笔，泄漏防线转移到质检参照区（§5.6），Actor 深抉择仍走物理隔离（两段式）。原"动机层纪律"随之简化：编剧的幕后判断是瞬时中间产物，不设独立字段承载。
+>
+> **模型数量**：v1 默认只需要 **1~2 个模型**：编剧 / Actor 可共用“主模型”，质检 / 审计 / L1 分类可共用“辅助模型”；甚至可以全部指向同一个本地模型。配置里未指定的档位自动回退到默认主模型或默认辅助模型。
 
-### 5.3 导演（workers/director.py）
+### 5.3 编剧（workers/writer.py）
 
-输入 = 玩家原话 + rule_bundle + 工作单。产出**分层剧本指令**（JSON 强制，禁正文段）：
+输入 = 玩家原话 + rule_bundle + 工作单。一次调用完成**判定 + 成文**（JSON 强制，先脑中排节拍、再直接写正文）：
 
 ```jsonc
-{ "mode": "scene | adopt_player_body",
-  "beats": [
-    { "kind": "narrate", "text": "可见层要点：朱明从网吧出来，看见你愣了一下。" },
-    { "kind": "speech", "speaker": "npc_zhuming",
-      "meaning": "不想提昨晚的事，打岔问你怎么来了。", "tone_hint": "敷衍" },
-    { "kind": "actor", "npc_id": "npc_zhuming",
+{ "prose": "正文全文（必填，按叙述预设直接成稿）",
+  "time_hint": null | { "desc": "天黑了", "advance_to": "night" },
+  "summary": "一句话剧情摘要（事件日志用）",
+  "location": "net_bar", "participants": ["player", "npc_zhuming"],
+  "private": false,
+  "adopt_player_body": false,
+  "actor_questions": [
+    { "npc_id": "npc_zhuming",
       "question": "被追问打架的事，朱明是含糊带过还是翻脸？",
-      "context": "他在网吧通宵刚出来，知道你是为他好但好面子。", "resolved": null }
-  ],
-  "lore_refs": [],   // 本场点名展开的世界书条目 id（导演从候选行勾选，见 §6）
-  "adopt_player_body": false }
+      "context": "玩家问朱明昨天为什么打架，朱明想起他爸欠债的由头，好面子、心虚" } ]
+}
 ```
 
-- `mode=adopt_player_body`：玩家输入本身已是完整成文叙述 → 导演核对节奏/矛盾后直接采纳为候选正文，跳过说书人。
-- **动机层纪律**：导演的动机思考是瞬时中间产物（早期设计曾设 motivation_note 字段承载，因无下游消费方已删除）——导演未落账的幕后判断不直接传达给下游；需要正文呈现的情绪由导演在 visible beats 里译成**可写表象**（"脸红了/移开视线"）。闸口在分层交付。
-- 导演读幕后注是安全的：产出物只到指令层，正文一律说书人成文。
+- `adopt_player_body=true`：玩家输入本身已是完整成文叙述 → 正文 = 玩家原文，编剧不扩写。
+- **深抉择不替 NPC 决定**：在场"配 Actor / 玩家点名强制"的 NPC 撞深抉择（内心判断 / 涉密反应 / 是否信任）时，编剧**不得猜其心思**，必须在 `actor_questions` 里上缴问题；引擎派该 NPC 的隔离 Actor 决定后，编剧二次调用按决策成文（§5.4）。
+- `actor_questions[].context` 只写该 NPC 本人会知道的情境——禁止写幕后注等只有编剧知道的秘密（防止经 Actor 回流泄漏）。
+- `time_hint` = M20 ③"AI 正文写了时间流逝 → 该次输出顺带推钟"的落点；计入回合 Δt（与规则段 Δt 汇总，正文描述与总 Δt 明显冲突时质检挂矛盾）。
+- **机密纪律**：编剧读幕后注是安全的（全知），但幕后注绝不允许出现在正文里——这是质检参照区比对的反向检查项（§5.6）。
 
 ### 5.4 NPC Actor（workers/actor.py）
 
-- 触发：directive 里 `kind=actor` 的节点（有 has_actor 的 NPC 撞深抉择）。
-- **输入 = 物理隔离工作单**：`build_work_order(viewer=npc_id, scope=深抉择情境)`——只含 persona（含补丁）、`experiences(self)`、`visible_to(self)`、当前场景可感知、本场 `directive.lore_refs` 点名展开的世界书正文。**不含**导演区、其它 NPC 私密、幕后注、世界书候选行（候选行仅供导演点名）。
-- 输出决策块（回流填进 directive 节点）：
+- 触发：WriterOutput 携带 `actor_questions` 且该 NPC 有 actor 票（has_actor 或玩家点名强制）。
+- **输入 = 物理隔离工作单**：只含 persona（含补丁）、`experiences(self)`、`visible_to(self)`、当前场景可感知 + 本场问题情境。**不含**编剧区的幕后注、其它 NPC 私密、世界书全文。人称已归一（"你/您"→"玩家"，第三人称姓名=自己）。
+- 输出决策块（回流给编剧二次调用）：
 
 ```jsonc
 { "decision": "含糊带过", "action_hint": "不接话，拉你去打街机",
   "tone": "不耐烦里带点心虚" }
 ```
-
-### 5.5 说书人（workers/storyteller.py）
-
-- 输入：directive 的 beats（含 Actor 回流块）+ 叙述预设（文风/描写方式）+ 当前场景可感知 + 相关人物 persona（非私区）。**无导演区 / 无幕后注**。
-- 输出 JSON 信封（v1 整段返回，前端打字机播放；真逐 token 流式留二期）：
-
-```jsonc
-{ "prose": "正文……（按叙述预设直接成稿）",
-  "time_hint": null | { "desc": "天黑了", "advance_to": "sunset" } }
-```
-
-- `time_hint` = M20 ③"AI 正文写了时间流逝 → 该次输出顺带推钟"的落点；计入回合 Δt（与规则段 Δt 汇总，正文描述与总 Δt 明显冲突时质检挂矛盾）。
 
 ### 5.6 质检员（workers/qc.py）——必经前置文字关
 
@@ -411,18 +400,18 @@ v1 的审计/记账在玩家“采纳”（含下一次输入自动采纳）时�
 核心函数 `build_work_order(viewer, scope)`——按 viewer 身份现配"本轮工作单"，小且固定：
 
 ```
-viewer ∈ { director, npc_<id> }        # 说书人/质检不走此函数，走各自的定向输入
+viewer ∈ { writer, npc_<id> }        # 编剧=决策+成文合一（全知）；Actor 走隔离工作单
 scope  = 当前场景可感知 ∪ 在场实体 ∪ 对话对象 ∪ 关键历史状态（M8 上下文收敛）
 ```
 
-| 块 | director | npc_<id>（Actor） |
+| 块 | writer（编剧） | npc_<id>（Actor） |
 |---|---|---|
 | 世界概要（常驻 system 块） | ✅ | ✅ |
-| 世界书 · 候选行（id+摘要，供点名） | ✅ | ❌ |
-| 世界书 · 点名展开条目正文（本场 lore_refs） | ✅ | ✅ |
-| 公开事件条目（现拼记忆条目） | ✅ | ✅ |
+| 世界书 · 候选行（id+摘要） | ✅（按此设定写） | ❌ |
+| 世界书 · 点名展开条目正文 | ✅ | ❌ |
+| 公开事件条目（现拼记忆条目，含玩家输入） | ✅ | ✅ |
 | 私密条目 known_by∋viewer | ✅ | ✅（仅含自己的） |
-| 幕后注 / 注入记忆（导演可读） | ✅ | ❌ |
+| 幕后注 / 注入记忆（仅决策者可读） | ✅ | ❌ |
 | 钩子台账 / 待澄清队列 / 节奏档 | ✅ | ❌ |
 | 本人 persona / 经历切片 | ✅ | ✅ |
 | 场景模板底稿 / 可感知 | ✅ | ✅（可感知原则） |
@@ -522,7 +511,7 @@ class LLMGateway:
 - **结构化输出容错（必做）**：当模型不支持 JSON schema、连续失败或返回非法 JSON 时，降级为“提示词要求 JSON + 正则/起止标记抽取”，再交 Pydantic 校验；仍失败则返回用户可见错误，并记录原始响应供排查。禁止把非法 JSON 静默当作空结果。
 - `enable_thinking=False` 作为配置项（推理模型默认关思维链省 token）。
 - 每调用记结构化日志：`trace_id / turn_id / candidate_id / worker / model / prompt_tokens / completion_tokens / ts`，供成本核查与回合排错。
-- 模型档位表（config.py + .env 覆盖）：导演 / Actor / 说书人 / 质检 / 审计 / L1 分类六档，各自 model + temperature（§5.2）；未配置档位回退到默认主模型 / 默认辅助模型，通常 1~2 个模型即可。
+- 模型档位表（config.py + .env 覆盖）：编剧 / Actor / 质检 / 审计 / L1 分类五档，各自 model + temperature（§5.2）；未配置档位回退到默认主模型 / 默认辅助模型，通常 1~2 个模型即可。
 - **v1 无向量检索**：召回/切片/检索式收权全部结构化查询 + 线性扫（几万条内 <10ms）。二期升级 = 事件流叠语义索引（embedding 落盘、启动重建），对内容包与存档结构零侵入；中文预留 bge 系接口。
 
 ---
@@ -645,7 +634,7 @@ AUDIT_ENABLED=true      # v1 为采纳时同步结算；未来改异步需另加
 |---|---|---|
 | S0 | uv init + FastAPI hello + Vite 空页 + LLM 网关直连聊天 | 直连对话可跑 |
 | S1 | 内容包 loader + 校验；store（JSONL 追加 + 原子写）；账本加载索引；`where_is / present_at / visible_to` | 查询测试过 |
-| S2 | **回合主链闭环**：路由 → 导演 → 说书人 → 质检 → SSE 候选区 → 采纳指定候选/重掷/放弃；PendingTurn 事务 | FakeLLM 集成：采纳提交/放弃清理无痕 |
+| S2 | **回合主链闭环**：路由 → 编剧（判定+成文合一）→ 质检 → SSE 候选区 → 采纳指定候选/重掷/放弃；PendingTurn 事务 | FakeLLM 集成：采纳提交/放弃清理无痕 |
 | S3 | 工作单装配与切片（viewer 过滤）；known_by 落库；改判私密（检索式收权）+ 改判公开；叙述预设管线 | 信息边界测试过（Actor 无他人私密） |
 | S4 | 时空机制：M17 双轨转正 / M18 位置推导与过期 / M1 推断三件套 / M19 裁决链 + 场景模板底稿 + 混合句 | 移动裁决与模板底稿测试过 |
 | S5 | Actor 深抉择派发（隔离回流）；升格通道；导演窗口四功能（含幕后事务/补卡/点名派活） | 窗口全操作走查过 |

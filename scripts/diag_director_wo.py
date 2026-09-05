@@ -9,8 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.config import Settings
 from app.core.llm import FakeLLM
 from app.runtime.session import create_session, write_opening_event
-from app.runtime.turn import TurnRunner
-from app.workers.director import run_director
+from app.workers.writer import run_writer
 
 WORLD = Path(__file__).resolve().parent.parent / "content" / "qinghsi"
 SAVES = Path(__file__).resolve().parent.parent / "scratch_saves"
@@ -50,17 +49,18 @@ async def main() -> None:
     fake = FakeLLM(
         {
             "*": {
-                "mode": "scene",
-                "beats": [{"kind": "narrate", "text": "朱明抬头看你。"}],
-                "lore_refs": [],
-                "adopt_player_body": False,
-                "private": False,
+                "prose": "朱明抬头看你。",
+                "time_hint": None,
+                "summary": "朱明抬头看见刘星。",
                 "location": "net_bar",
                 "participants": ["player", "npc_zhuming"],
+                "private": False,
+                "adopt_player_body": False,
+                "actor_questions": [],
             }
         }
     )
-    directive = await run_director(
+    out = await run_writer(
         fake,
         session.world,
         session.ledger,
@@ -68,7 +68,7 @@ async def main() -> None:
         scene_id="net_bar",
         preset=session.world.presets,
     )
-    assert directive.beats
+    assert out.prose
 
     system = fake.calls[0]["messages"][0]["content"]
     sections = ["事件日志", "在场 NPC 近况", "幕后注", "世界书候选", "开放钩子", "待澄清矛盾"]

@@ -1,17 +1,20 @@
-"""Reproduce the StoryOutput validation failure the user hit with a real LLM:
+"""Reproduce the WriterOutput validation failure the user hit with a real LLM:
 the model answered {"directives": []} instead of {"prose": "..."}."""
 import asyncio
+import shutil
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.llm import FakeLLM
-from app.workers.storyteller import run_storyteller
-from app.workers.schemas import Directive, Beat
-from app.world.loader import load_world
+from app.runtime.session import create_session
+from app.workers.writer import run_writer
 
 WORLD = Path(__file__).resolve().parent.parent / "content" / "qinghsi"
+SAVES = Path(__file__).resolve().parent.parent / "scratch_saves"
+if SAVES.exists():
+    shutil.rmtree(SAVES, ignore_errors=True)
 
 
 class BadShapeLLM(FakeLLM):
@@ -22,21 +25,13 @@ class BadShapeLLM(FakeLLM):
 
 
 async def main() -> None:
-    world = load_world(WORLD)
-    directive = Directive(
-        mode="scene",
-        beats=[
-            Beat(kind="narrate", text="朱明从网吧出来，看见你愣了一下。"),
-            Beat(kind="speech", speaker="npc_zhuming", meaning="不想提打架的事", tone_hint="敷衍"),
-        ],
-        location="net_bar",
-        participants=["player", "npc_zhuming"],
-    )
+    session = create_session(WORLD, SAVES, "shape")
     try:
-        await run_storyteller(BadShapeLLM(), world, directive, model="fake")
-        print("UNEXPECTED: storyteller did not fail")
+        await run_writer(BadShapeLLM(), session.world, session.ledger, "去网吧找朱明", scene_id="net_bar")
+        print("UNEXPECTED: writer did not fail")
     except Exception as exc:  # noqa: BLE001
         print(f"REPRODUCED: {type(exc).__name__}: {exc}")
+    shutil.rmtree(SAVES, ignore_errors=True)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
+from .actor import run_actor
 from .auditor import run_audit
-from .director import run_director
 from .qc import run_qc
-from .storyteller import run_storyteller
+from .writer import run_writer
 
-__all__ = ["run_audit", "run_director", "run_qc", "run_storyteller"]
+__all__ = ["run_actor", "run_audit", "run_qc", "run_writer"]

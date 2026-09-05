@@ -21,15 +21,14 @@ if SAVES.exists():
     shutil.rmtree(SAVES, ignore_errors=True)
 
 RESP = {
-    "mode": "scene",
-    "beats": [{"kind": "narrate", "text": "朱明从网吧出来，看见你愣了一下。"}],
-    "lore_refs": [],
-    "adopt_player_body": False,
-    "private": False,
-    "location": "net_bar",
-    "participants": ["player", "npc_zhuming"],
     "prose": "朱明从网吧出来，看见你愣了一下，把烟头踩灭，问你吃饭了没。",
     "time_hint": None,
+    "summary": "朱明在网吧门口看见刘星。",
+    "location": "net_bar",
+    "participants": ["player", "npc_zhuming"],
+    "private": False,
+    "adopt_player_body": False,
+    "actor_questions": [],
     "status": "pass",
     "issues": [],
     "decision": "打哈哈",

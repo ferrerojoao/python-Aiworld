@@ -1,8 +1,8 @@
-"""Demonstrate how an NPC Actor call looks end to end.
+"""Demonstrate the merged writer + deep-choice actor loop.
 
-The director (scripted here as FakeLLM) emits an `actor` beat for 朱明's
-deep choice; run_turn then invokes run_actor; we print the exact input
-messages and output, plus what the storyteller actually receives.
+The writer (single agent) first emits actor_questions for 朱明's deep
+choice; turn.py runs the isolated Actor and re-invokes the writer with the
+decision. We print the exact calls and the final candidate.
 """
 import asyncio
 import json
@@ -22,27 +22,34 @@ SAVES = Path(__file__).resolve().parent.parent / "scratch_saves"
 if SAVES.exists():
     shutil.rmtree(SAVES, ignore_errors=True)
 
-DIRECTOR_OUT = {
-    "mode": "scene",
-    "beats": [
-        {"kind": "narrate", "text": "朱明听完你的问题，表情僵了一下。"},
-        {
-            "kind": "actor",
-            "actor_npc_id": "npc_zhuming",
-            "text": "被追问打架的旧事，朱明是含糊带过还是翻脸？",
-            "meaning": "你问他昨天为什么打架，他想起他爸欠赌债的由头",
-            "tone_hint": "好面子、心虚",
-        },
-    ],
-    "lore_refs": [],
-    "adopt_player_body": False,
-    "private": False,
+WRITER_FIRST = {
+    "prose": "朱明听完你的问题，表情僵了一下，没接话。",
+    "time_hint": None,
+    "summary": "刘星追问打架的事，朱明回避。",
     "location": "net_bar",
     "participants": ["player", "npc_zhuming"],
+    "private": False,
+    "adopt_player_body": False,
+    "actor_questions": [
+        {
+            "npc_id": "npc_zhuming",
+            "question": "被追问打架的旧事，朱明是含糊带过还是翻脸？",
+            "context": "玩家问朱明昨天为什么打架，朱明想起他爸欠赌债的由头，好面子、心虚",
+        }
+    ],
 }
-ACTOR_OUT = {"decision": "含糊带过", "action_hint": "不接话，拉你去打街机", "tone": "不耐烦里带点心虚"}
-STORY_OUT = {"prose": "朱明把头一偏，岔开话头……", "time_hint": None}
-QC_OUT = {"status": "pass", "prose": "朱明把头一偏，岔开话头……", "issues": []}
+WRITER_SECOND = {
+    "prose": "朱明把脸别过去，含糊地说了句「哥，那事别提了」，起身去买了两瓶可乐。",
+    "time_hint": None,
+    "summary": "朱明含糊带过，岔开话题请刘星喝可乐。",
+    "location": "net_bar",
+    "participants": ["player", "npc_zhuming"],
+    "private": False,
+    "adopt_player_body": False,
+    "actor_questions": [],
+}
+ACTOR_OUT = {"decision": "含糊带过", "action_hint": "岔开话题，去买两瓶可乐", "tone": "不耐烦里带点心虚"}
+QC_OUT = {"status": "pass", "prose": "朱明把脸别过去，含糊地说了句「哥，那事别提了」，起身去买了两瓶可乐。", "issues": []}
 AUDIT_OUT = {"hook_texts": [], "conflicts": [], "lifecycle": []}
 
 
@@ -63,9 +70,9 @@ async def main() -> None:
     settings = Settings(content_root=Path("content"))
     llm = PrefixKeyLLM(
         {
-            "玩家输入：": DIRECTOR_OUT,
+            "玩家输入：": WRITER_FIRST,
             "剧情情境": ACTOR_OUT,
-            "剧本指令：": STORY_OUT,
+            "以下深抉择已由对应 NPC 亲自决定": WRITER_SECOND,
             "正文：": QC_OUT,
             "事件：": AUDIT_OUT,
         }
@@ -77,29 +84,34 @@ async def main() -> None:
 
     print("=" * 72)
     print("回合流水线共调用 LLM:", len(llm.calls), "次")
-    print("=" * 72)
     for call in llm.calls:
-        who = "?"
         content = call["messages"][-1]["content"]
         system = call["messages"][0]["content"]
-        if content.startswith("玩家输入"): who = "导演"
-        elif "剧情情境" in content: who = "Actor"
-        elif content.startswith("剧本指令"): who = "说书人"
+        if content.startswith("玩家输入"): who = "writer#1（编排+成文）"
+        elif "剧情情境" in content: who = "Actor（朱明深抉择）"
+        elif "深抉择已由" in content: who = "writer#2（按决策成文）"
         elif content.startswith("正文"): who = "质检"
         elif content.startswith("事件"): who = "审计"
-        print(f"\n[{who}] model={call['model']} output=None (FakeLLM 不落 output，见 responses)")
-
-    print()
+        elif "改写要求" in content: who = "writer（重掷）"
+        else: who = "?"
+        print(f"[{who}]")
+        print("  system 头部:", system.splitlines()[0][:60])
+        print("  user:", content.replace("\n", " ")[:120])
     print("=" * 72)
+
     actor_call = next(c for c in llm.calls if "剧情情境" in c["messages"][-1]["content"])
-    print("◆ Actor 的输入（messages）：")
-    for msg in actor_call["messages"]:
-        print(f"  [{msg['role']}]\n{msg['content']}\n")
-    print("◆ Actor 的输出：", json.dumps(llm.responses["剧情情境"], ensure_ascii=False))
-    print()
-    print("◆ 说书人实际收到的剧本指令（beats_text，不含 actor 决策）：")
-    story_call = next(c for c in llm.calls if "剧本指令" in c["messages"][-1]["content"])
-    print(story_call["messages"][-1]["content"])
+    print("◆ Actor 输入 [system]:")
+    print(actor_call["messages"][0]["content"])
+    print("◆ Actor 输出:", json.dumps(llm.responses["剧情情境"], ensure_ascii=False))
+
+    second = next(c for c in llm.calls if "深抉择已由" in c["messages"][-1]["content"])
+    print("\n◆ writer#2 收到的决策块:")
+    print(second["messages"][-1]["content"][:200])
+
+    print("\n◆ 最终候选正文:")
+    print(candidate.prose)
+    assert candidate.prose and candidate.side_effects.narrative["participants"] == ["player", "npc_zhuming"]
+    print("\nALL ACTOR DEMO CHECKS PASSED")
 
     shutil.rmtree(SAVES, ignore_errors=True)
 

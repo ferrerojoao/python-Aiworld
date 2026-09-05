@@ -32,15 +32,14 @@ async def main() -> None:
     llm = FakeLLM(
         {
             "*": {
-                "mode": "scene",
-                "beats": [{"kind": "narrate", "text": "朱明在网吧门口看到你。"}],
-                "lore_refs": [],
-                "adopt_player_body": False,
-                "private": False,
-                "location": "net_bar",
-                "participants": ["player", "npc_zhuming"],
                 "prose": "朱明在网吧门口看到你，把烟头踩灭，问你吃饭了没。",
                 "time_hint": None,
+                "summary": "朱明在网吧门口看见刘星。",
+                "location": "net_bar",
+                "participants": ["player", "npc_zhuming"],
+                "private": False,
+                "adopt_player_body": False,
+                "actor_questions": [],
                 "status": "pass",
                 "issues": [],
                 "decision": "打哈哈",

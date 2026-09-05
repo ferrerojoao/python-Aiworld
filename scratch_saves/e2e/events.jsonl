@@ -1,2 +1,0 @@
-{"id": "ev_00001", "kind": "narrative", "at": "2026-07-14T08:00:00", "location": null, "participants": ["player"], "known_by": null, "body": "七月的青石镇，白天被太阳晒得发白，鱼市散了早市，主街上只剩几家铺面敞着门。你在这个小镇过暑假，刚起床不久，站在主街的槐树荫下，想着今天去找点什么事做。", "summary": "开场", "player_input": null, "source": "opening"}
-{"id": "ev_00002", "kind": "narrative", "at": "2026-07-14T08:10:00", "location": "net_bar", "participants": ["player", "npc_zhuming"], "known_by": null, "body": "朱明从网吧出来，看见你愣了一下，把烟头踩灭，问你吃饭了没。", "summary": "朱明从网吧出来，看见你愣了一下。", "player_input": "去网吧找朱明，问他昨天为什么打架", "source": "turn"}
