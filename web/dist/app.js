@@ -756,16 +756,15 @@ async function loadWorldBrowser() {
 }
 
 function formatEventSummary(ev, scenes, npcs) {
-  if (ev.summary) {
-    return `${ev.at || ""} ${ev.summary}`;
-  }
   const scene = scenes.find((s) => s.id === ev.location);
-  const location = scene ? scene.name : ev.location || "某处";
+  const location = scene ? scene.name : ev.location || "";
   const names = (ev.participants || [])
     .map((id) => (id === "player" ? "你" : npcs[id]?.name || id))
     .join("、");
-  const body = (ev.body || "").replace(/\s+/g, " ").slice(0, 40);
-  return `${ev.at || ""} ${location}，${names}：${body}`;
+  const locTag = location ? ` [${location}]` : "";
+  const whoTag = names ? `（在场：${names}）` : "";
+  const summary = ev.summary || (ev.body || "").replace(/\s+/g, " ").slice(0, 40);
+  return `${ev.at || ""}${locTag} ${summary}${whoTag}`;
 }
 
 function setEditModeUI(active) {
