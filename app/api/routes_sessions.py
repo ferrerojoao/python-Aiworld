@@ -403,6 +403,8 @@ async def import_world(request: Request, sid: str, body: ImportWorldBody):
 
 @router.post("/sessions/{sid}/reset")
 async def reset_session(request: Request, sid: str):
+    from app.runtime.session import write_opening_event
+
     session = _get_session(request, sid)
     save = session.ledger.save
     save.clock = "2026-07-14T08:00:00"
@@ -420,10 +422,12 @@ async def reset_session(request: Request, sid: str):
     session.ledger.by_subject_loc = {}
     session.ledger.by_location = {}
     session.candidates.delete_all()
-    session.ledger.persist_save()
     events_path = session.ledger.events_path
     if events_path.exists():
         events_path.unlink()
+    # The world's opening prose starts every fresh ledger, including resets.
+    if not write_opening_event(session):
+        session.ledger.persist_save()
     return {"ok": True}
 
 

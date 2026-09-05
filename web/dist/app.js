@@ -174,6 +174,18 @@ async function discardCurrentTurn() {
 
 /* ---------- 会话 ---------- */
 
+async function loadEventHistory() {
+  if (!state.sid) return;
+  const data = await api(`/api/sessions/${state.sid}/ledger/events`);
+  const events = data.events || [];
+  if (!events.length) return;
+  $("#messages").innerHTML = "";
+  for (const ev of events) {
+    if (ev.player_input) addMessage("player", ev.player_input);
+    addMessage("npc", ev.body || "");
+  }
+}
+
 async function ensureSession() {
   const info = await api(`/api/worlds/${state.worldId}`);
   if (info.saves.includes(state.saveName)) {
@@ -592,6 +604,7 @@ async function switchToWorld(worldId) {
   const info = await api(`/api/sessions/${state.sid}`);
   state.worldName = info.world;
   $("#world-name").textContent = info.world;
+  await loadEventHistory();
   await refreshState();
   await syncPendingFromServer();
   await loadDirectorHistory();
@@ -626,6 +639,7 @@ async function loadWorldBrowser() {
   overview.innerHTML = `
     <h3>${data.overview.name || data.overview.id}</h3>
     <pre>${(data.overview.summary || []).join("\n")}</pre>
+    ${data.overview.opening ? `<p><strong>开场白</strong></p><pre>${escapeHtml(data.overview.opening)}</pre>` : ""}
     <p><strong>默认耗时</strong></p>
     <ul>${durationItems || "<li>无</li>"}</ul>
   `;
@@ -675,7 +689,8 @@ async function loadWorldBrowser() {
   (data.events || []).forEach((ev, index) => {
     const div = document.createElement("div");
     div.className = "item";
-    div.textContent = `#${index + 1} ${formatEventSummary(ev, data.scenes || [], data.npcs || {})}`;
+    const inputLine = ev.player_input ? `\n玩家：${ev.player_input}` : "";
+    div.textContent = `#${index + 1} ${formatEventSummary(ev, data.scenes || [], data.npcs || {})}${inputLine}`;
     events.appendChild(div);
   });
 }
@@ -753,6 +768,10 @@ function renderEditOverview(data) {
       </div>
 
       <div class="overview-right">
+        <div class="form-section overview-summary-section">
+          <h4>开场白（新建存档/重置后成为事件日志第一条，不随重置消失）</h4>
+          <textarea class="edit-field overview-summary" data-field="opening" rows="4">${escapeHtml(ov.opening || "")}</textarea>
+        </div>
         <div class="form-section overview-summary-section">
           <h4>概要</h4>
           <textarea class="edit-field overview-summary" data-field="summary" rows="8">${escapeHtml((ov.summary || []).join("\n"))}</textarea>
@@ -997,6 +1016,7 @@ function readOverview() {
   return {
     id: val("id"),
     name: val("name"),
+    opening: val("opening"),
     summary: splitLines(val("summary")),
     default_durations: {
       move_per_edge_min: Number(val("move")) || 10,
@@ -1191,6 +1211,7 @@ async function init() {
     const info = await api(`/api/sessions/${state.sid}`);
     state.worldName = info.world;
     $("#world-name").textContent = info.world;
+    await loadEventHistory();
     await refreshState();
     await syncPendingFromServer();
     await loadDirectorHistory();

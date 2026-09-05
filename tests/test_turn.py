@@ -36,7 +36,9 @@ def test_run_turn_creates_pending_candidate_without_writing_ledger(session, fake
 
     assert candidate.prose
     assert len(session.candidates.list_pending()) == 1
-    assert len(session.ledger.events) == 0
+    # Only the opening event exists; the turn itself writes nothing until adopt.
+    assert len(session.ledger.events) == 1
+    assert session.ledger.events[0]["source"] == "opening"
 
 
 def test_reroll_keeps_multiple_candidates(session, fake_llm, settings):
@@ -56,8 +58,9 @@ def test_adopt_commits_one_and_cleans_other_candidates(session, fake_llm, settin
 
     asyncio.run(runner.adopt(second.candidate_id))
 
-    assert len(session.ledger.narratives) == 1
-    assert session.ledger.narratives[0]["body"] == second.prose
+    assert len(session.ledger.narratives) == 2  # opening + adopted turn
+    assert session.ledger.narratives[-1]["body"] == second.prose
+    assert session.ledger.narratives[-1]["player_input"] is not None
     assert session.candidates.list_for_turn(first.turn_id) == []
 
 
@@ -68,8 +71,8 @@ def test_next_input_auto_adopts_single_candidate(session, fake_llm, settings):
     # The next turn sees exactly one pending candidate and auto-adopts it.
     second = asyncio.run(runner.run_turn("然后怎么办"))
 
-    assert len(session.ledger.narratives) == 1
-    assert session.ledger.narratives[0]["body"] == first.prose
+    assert len(session.ledger.narratives) == 2  # opening + adopted turn
+    assert session.ledger.narratives[-1]["body"] == first.prose
     assert len(session.candidates.list_pending()) == 1  # only the new candidate
 
 

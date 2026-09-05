@@ -134,6 +134,7 @@ class Transaction:
                 "known_by": candidate.side_effects.narrative.get("known_by"),
                 "body": candidate.prose,
                 "summary": candidate.side_effects.narrative.get("summary"),
+                "player_input": candidate.player_input or None,
                 "source": "turn",
             }
             self.ledger.append(narrative)

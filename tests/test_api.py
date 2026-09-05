@@ -57,7 +57,7 @@ def test_reroll_keeps_old_and_adopt_cleans(tmp_path):
         pending = client.get(f"/api/sessions/{sid}/candidates/pending").json()["candidates"]
         assert pending == []
         events = client.get(f"/api/sessions/{sid}/ledger/events").json()["events"]
-        assert len(events) == 1
+        assert len(events) == 2  # opening + adopted turn
         assert first_id != second_id
 
 
@@ -69,7 +69,7 @@ def test_next_input_auto_adopts_single_candidate(tmp_path):
         client.post(f"/api/sessions/{sid}/turn", json={"input": "继续问"})
 
         events = client.get(f"/api/sessions/{sid}/ledger/events").json()["events"]
-        assert len(events) == 1
+        assert len(events) == 2  # opening + adopted turn
         pending = client.get(f"/api/sessions/{sid}/candidates/pending").json()["candidates"]
         assert len(pending) == 1  # only the new turn's candidate
 
@@ -110,7 +110,7 @@ def test_turn_body_can_adopt_current_candidate(tmp_path):
         assert "event: candidate" in r.text
 
         events = client.get(f"/api/sessions/{sid}/ledger/events").json()["events"]
-        assert len(events) == 1
+        assert len(events) == 2  # opening + adopted turn
         pending = client.get(f"/api/sessions/{sid}/candidates/pending").json()["candidates"]
         assert len(pending) == 1  # new turn's candidate
 
@@ -259,7 +259,9 @@ def test_world_browser_and_reset(tmp_path):
         reset = client.post(f"/api/sessions/{sid}/reset")
         assert reset.status_code == 200
         events = client.get(f"/api/sessions/{sid}/ledger/events").json()["events"]
-        assert events == []
+        # After a reset only the world's opening event remains.
+        assert len(events) == 1
+        assert events[0]["source"] == "opening"
 
 
 def test_settings_and_director_chat(tmp_path):

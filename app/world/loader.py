@@ -87,6 +87,7 @@ def save_world_assets(root: str | Path, data: dict) -> None:
         "id": overview.get("id", root.name),
         "name": overview.get("name", root.name),
         "summary": overview.get("summary", []),
+        "opening": overview.get("opening", ""),
         "default_durations": overview.get("default_durations", {}),
     }
     write_json_atomic(root / "world.json", world_info)

@@ -14,6 +14,7 @@ class NarrativeRecord(BaseModel):
     known_by: list[str] | None = None  # None means public
     body: str
     summary: str | None = None
+    player_input: str | None = None  # the player's words that produced this event
     source: str = "turn"
 
 

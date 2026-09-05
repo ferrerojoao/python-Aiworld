@@ -7,6 +7,7 @@ class WorldInfo(BaseModel):
     id: str
     name: str
     summary: list[str] = Field(default_factory=list)
+    opening: str = ""  # opening prose: becomes the first ledger event of a save
     default_durations: dict[str, int] = Field(default_factory=dict)
     author_banned_words: list[str] = Field(default_factory=list)
 

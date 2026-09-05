@@ -48,12 +48,13 @@ async def main() -> None:
 
     runner = TurnRunner(session, llm, settings)
 
-    # 1. A chat turn -> pending candidate, no ledger writes yet.
+    # 1. A chat turn -> pending candidate, no new ledger events yet.
     c1 = await runner.run_turn("去网吧找朱明，问他昨天为什么打架")
     print("1. candidate prose:", c1.prose[:40])
     print("   side_effects:", c1.side_effects.model_dump())
     assert c1.prose and c1.side_effects.narrative
-    assert len(session.ledger.events) == 0, "ledger must be empty before adopt"
+    assert len(session.ledger.events) == 1, "only the opening event before adopt"
+    assert session.ledger.events[0]["source"] == "opening"
 
     # 2. Reroll keeps both versions.
     c2 = await runner.reroll(c1.turn_id, mode="rephrase", note="柔和一点")
@@ -62,8 +63,9 @@ async def main() -> None:
 
     # 3. Adopt second -> narrative lands in events.jsonl, candidates cleaned.
     await runner.adopt(c2.candidate_id)
-    assert len(session.ledger.narratives) == 1
-    assert session.ledger.narratives[0]["body"] == c2.prose
+    assert len(session.ledger.narratives) == 2  # opening + adopted turn
+    assert session.ledger.narratives[-1]["body"] == c2.prose
+    assert session.ledger.narratives[-1]["player_input"] is not None
     assert session.candidates.list_pending() == []
     printed = Path(SAVES / "e2e" / "events.jsonl").read_text(encoding="utf-8")
     assert "narrative" in printed
@@ -81,7 +83,7 @@ async def main() -> None:
     # 6. Next input auto-adopts single pending candidate (the query candidate
     #    commits as a no-op since it carries no narrative side effects).
     c4 = await runner.run_turn("然后呢")
-    assert len(session.ledger.narratives) == 1
+    assert len(session.ledger.narratives) == 2  # opening + adopted turn
     assert len(session.candidates.list_pending()) == 1  # the new turn's candidate
     print("6. auto-adopt ok; narratives:", len(session.ledger.narratives))
 
