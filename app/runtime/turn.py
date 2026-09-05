@@ -44,6 +44,29 @@ class TurnRunner:
         if self._progress_queue is not None:
             await self._progress_queue.put({"type": "stage", "stage": stage, "label": label})
 
+    def _storyteller_context(self, directive, fallback_scene: str) -> dict:
+        scene_id = directive.location or fallback_scene
+        scene_obj = next((s for s in self.session.world.scenes if s.id == scene_id), None)
+        present_ids = self.session.ledger.present_at(scene_id)
+        present_npcs = []
+        for pid in present_ids:
+            npc = self.session.world.npcs.get(pid)
+            if npc:
+                present_npcs.append(
+                    {"name": npc.name, "appearance": npc.appearance, "persona": npc.persona}
+                )
+        lore_bodies = []
+        for ref in directive.lore_refs:
+            entry = next((e for e in self.session.world.lorebook if e.id == ref), None)
+            if entry:
+                lore_bodies.append(entry.body)
+        return {
+            "present_npcs": present_npcs,
+            "scene_name": scene_obj.name if scene_obj else "",
+            "scene_desc": scene_obj.perceivable if scene_obj else "",
+            "lore_bodies": lore_bodies,
+        }
+
     # ------------------------------------------------------------------
     # Main entry
     # ------------------------------------------------------------------
@@ -150,6 +173,7 @@ class TurnRunner:
                 directive,
                 preset=self.preset,
                 player=self.session.ledger.save.player.model_dump(),
+                **self._storyteller_context(directive, scene),
                 model=self.settings.resolved_model("story"),
                 temperature=0.9,
             )
@@ -224,6 +248,7 @@ class TurnRunner:
                 directive,
                 preset=self.preset,
                 player=self.session.ledger.save.player.model_dump(),
+                **self._storyteller_context(directive, scene),
                 model=self.settings.resolved_model("story"),
                 temperature=0.9,
             )
@@ -248,6 +273,7 @@ class TurnRunner:
                 self.session.world,
                 dummy,
                 player=self.session.ledger.save.player.model_dump(),
+                **self._storyteller_context(dummy, scene),
                 model=self.settings.resolved_model("story"),
                 temperature=0.9,
             )

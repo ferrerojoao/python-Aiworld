@@ -34,14 +34,23 @@ async def run_director(
         "世界概要（硬规则，不可违背）：",
         *world.meta.summary,
     ]
+
+    # 角色资料：主角与在场 NPC 放在同一层级
     player = ledger.save.player
-    system_parts += [
-        "玩家角色：",
-        f"名字：{player.name}",
-        f"外貌：{player.appearance or '未设定'}",
-        f"人格：{player.persona or '未设定'}",
-        f"背景：{player.background or '未设定'}",
-    ]
+    character_lines = ["角色资料："]
+    character_lines.append(
+        f"[主角] 名字：{player.name}；外貌：{player.appearance or '未设定'}；人格：{player.persona or '未设定'}；背景：{player.background or '未设定'}"
+    )
+    for pid in present_ids:
+        npc = world.npcs.get(pid)
+        if npc:
+            character_lines.append(
+                f"[{npc.name}] 名字：{npc.name}；外貌：{npc.appearance or '未设定'}；人格：{npc.persona or '未设定'}"
+            )
+        else:
+            character_lines.append(f"[{pid}] 名字：{pid}")
+    system_parts += character_lines
+
     if preset.director_guidelines:
         system_parts.append("导演准则：")
         system_parts.append(preset.director_guidelines)
@@ -50,7 +59,7 @@ async def run_director(
         system_parts.append(preset.style)
         system_parts.append(preset.description_style)
     system_parts += [
-        "在场 NPC：" + npc_names,
+        "在场：" + npc_names,
         "当前场景：" + (scene.name if scene else "主街"),
         scene_text,
         "",
