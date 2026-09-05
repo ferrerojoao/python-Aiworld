@@ -9,7 +9,6 @@ DEFAULT_PRESET = NarrativePreset(
     style="克制写实，白描为主，少用形容词堆砌。",
     description_style="以玩家五官可感知为限写景，心理描写只写玩家自己的。",
     banned_words=[],
-    pace="slow",
 )
 
 

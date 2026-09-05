@@ -644,13 +644,23 @@ async function loadWorldBrowser() {
   }
 
   const events = $("#world-tab-events");
-  events.innerHTML = "<h3>事件日志流</h3>";
+  events.innerHTML = "<h3>事件日志流（规则化摘要）</h3>";
   for (const ev of (data.events || []).slice().reverse()) {
     const div = document.createElement("div");
     div.className = "item";
-    div.textContent = `${ev.at || ""} · ${ev.body || ""}`;
+    div.textContent = formatEventSummary(ev, data.scenes || [], data.npcs || {});
     events.appendChild(div);
   }
+}
+
+function formatEventSummary(ev, scenes, npcs) {
+  const scene = scenes.find((s) => s.id === ev.location);
+  const location = scene ? scene.name : ev.location || "某处";
+  const names = (ev.participants || [])
+    .map((id) => (id === "player" ? "你" : npcs[id]?.name || id))
+    .join("、");
+  const body = (ev.body || "").replace(/\s+/g, " ").slice(0, 40);
+  return `${ev.at || ""} ${location}，${names}：${body}`;
 }
 
 function setEditModeUI(active) {

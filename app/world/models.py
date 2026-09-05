@@ -53,7 +53,6 @@ class NarrativePreset(BaseModel):
     style: str = "克制写实，白描为主，少用形容词堆砌。"
     description_style: str = "以玩家五官可感知为限写景，心理描写只写玩家自己的。"
     banned_words: list[str] = Field(default_factory=list)
-    pace: str = "slow"
     director_guidelines: str = ""
     storyteller_preset: str = ""
 

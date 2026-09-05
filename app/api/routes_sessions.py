@@ -240,7 +240,6 @@ async def list_events(request: Request, sid: str):
 class PresetBody(BaseModel):
     style: str | None = None
     description_style: str | None = None
-    pace: str | None = None
     banned_words: list[str] | None = None
     director_guidelines: str | None = None
     storyteller_preset: str | None = None
@@ -261,8 +260,6 @@ async def update_presets(request: Request, sid: str, body: PresetBody):
         preset.style = body.style
     if body.description_style is not None:
         preset.description_style = body.description_style
-    if body.pace is not None:
-        preset.pace = body.pace
     if body.banned_words is not None:
         preset.banned_words = body.banned_words
     if body.director_guidelines is not None:
@@ -288,8 +285,6 @@ async def update_global_preset(request: Request, body: PresetBody):
         preset.style = body.style
     if body.description_style is not None:
         preset.description_style = body.description_style
-    if body.pace is not None:
-        preset.pace = body.pace
     if body.banned_words is not None:
         preset.banned_words = body.banned_words
     if body.director_guidelines is not None:
