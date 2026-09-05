@@ -129,22 +129,38 @@ function switchCandidate(delta) {
 
 async function rerollCurrent() {
   if (!state.currentTurnId) return;
-  const data = await api(`/api/sessions/${state.sid}/turns/${state.currentTurnId}/reroll`, {
-    method: "POST",
-    body: JSON.stringify({ mode: "rephrase", note: "" }),
-  });
-  state.candidates.push(data);
-  state.currentCandidateId = data.candidate_id;
-  renderCandidateMessage();
+  setPipelineStatus("正在重抽…");
+  try {
+    const data = await api(`/api/sessions/${state.sid}/turns/${state.currentTurnId}/reroll`, {
+      method: "POST",
+      body: JSON.stringify({ mode: "rephrase", note: "" }),
+    });
+    state.candidates.push(data);
+    state.currentCandidateId = data.candidate_id;
+    renderCandidateMessage();
+  } catch (e) {
+    clearPipelineStatus();
+    addMessage("npc", `⚠ 重抽失败：${e.message}`);
+  } finally {
+    clearPipelineStatus();
+  }
 }
 
 async function adoptCurrent() {
   if (!state.currentCandidateId) return;
-  await api(`/api/sessions/${state.sid}/candidates/${state.currentCandidateId}/adopt`, {
-    method: "POST",
-  });
-  clearCandidateControls();
-  await refreshState();
+  setPipelineStatus("正在采纳…");
+  try {
+    await api(`/api/sessions/${state.sid}/candidates/${state.currentCandidateId}/adopt`, {
+      method: "POST",
+    });
+    clearCandidateControls();
+    await refreshState();
+  } catch (e) {
+    clearPipelineStatus();
+    addMessage("npc", `⚠ 采纳失败：${e.message}`);
+  } finally {
+    clearPipelineStatus();
+  }
 }
 
 async function discardCurrentTurn() {

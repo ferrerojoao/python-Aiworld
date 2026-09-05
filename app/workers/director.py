@@ -34,6 +34,14 @@ async def run_director(
         "世界概要（硬规则，不可违背）：",
         *world.meta.summary,
     ]
+    player = ledger.save.player
+    system_parts += [
+        "玩家角色：",
+        f"名字：{player.name}",
+        f"外貌：{player.appearance or '未设定'}",
+        f"人格：{player.persona or '未设定'}",
+        f"背景：{player.background or '未设定'}",
+    ]
     if preset.director_guidelines:
         system_parts.append("导演准则：")
         system_parts.append(preset.director_guidelines)

@@ -149,6 +149,7 @@ class TurnRunner:
                 self.session.world,
                 directive,
                 preset=self.preset,
+                player=self.session.ledger.save.player.model_dump(),
                 model=self.settings.resolved_model("story"),
                 temperature=0.9,
             )
@@ -222,6 +223,7 @@ class TurnRunner:
                 self.session.world,
                 directive,
                 preset=self.preset,
+                player=self.session.ledger.save.player.model_dump(),
                 model=self.settings.resolved_model("story"),
                 temperature=0.9,
             )
@@ -245,6 +247,7 @@ class TurnRunner:
                 self.llm,
                 self.session.world,
                 dummy,
+                player=self.session.ledger.save.player.model_dump(),
                 model=self.settings.resolved_model("story"),
                 temperature=0.9,
             )
