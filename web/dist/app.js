@@ -976,10 +976,6 @@ function npcCard(id, card) {
         <div class="field">
           <label><input class="edit-field" data-field="has_actor" type="checkbox" ${c.has_actor ? "checked" : ""} /> 使用 Actor</label>
         </div>
-        <div class="field">
-          <label>正常日程</label>
-          <input class="edit-field" data-field="normal_schedule" value="${escapeHtml(c.normal_schedule || "")}" />
-        </div>
       </div>
       <button class="danger remove-item">删除</button>
     </div>
@@ -1123,7 +1119,6 @@ function readNpcs() {
       private_note: card.querySelector('[data-field="private_note"]')?.value ?? "",
       personal_secrets: card.querySelector('[data-field="personal_secrets"]')?.value ?? "",
       has_actor: !!card.querySelector('[data-field="has_actor"]')?.checked,
-      normal_schedule: card.querySelector('[data-field="normal_schedule"]')?.value ?? "",
     };
   });
   return result;

@@ -30,11 +30,7 @@ def resolve_destination(text: str, world: WorldContent, ledger: Ledger) -> str |
             fact = ledger.where_is(npc_id)
             if fact and fact.get("location"):
                 return fact["location"]
-            # Fall back to schedule cue.
-            if npc.normal_schedule and "网吧" in npc.normal_schedule:
-                return "net_bar"
-            if npc.normal_schedule and "修车铺" in npc.normal_schedule:
-                return "main_street"
+            # 无最近位置事实时回退主街（不做日程推断）
             return "main_street"
 
     if "昨天" in text or "刚才" in text or "那个" in text:
