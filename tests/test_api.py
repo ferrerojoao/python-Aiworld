@@ -13,7 +13,13 @@ from tests.conftest import WORLD_ROOT, GENERIC_LLM_RESPONSE
 def _make_client(tmp_path):
     world_root = tmp_path / "qinghsi"
     shutil.copytree(WORLD_ROOT, world_root, ignore=shutil.ignore_patterns("saves"))
-    settings = Settings(content_root=tmp_path, candidate_ttl_days=7)
+    # data_dir must also be sandboxed: preset PUT would otherwise overwrite
+    # the real data/presets.json with test values.
+    settings = Settings(
+        content_root=tmp_path,
+        data_dir=tmp_path / "data",
+        candidate_ttl_days=7,
+    )
     llm = FakeLLM({"*": GENERIC_LLM_RESPONSE})
     app = create_app(settings=settings, llm=llm)
     return TestClient(app)

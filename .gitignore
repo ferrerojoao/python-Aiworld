@@ -11,3 +11,5 @@ web/node_modules/
 web/dist/.vite/
 *.log
 scratch_saves/
+bt_all/
+bt_tt/
