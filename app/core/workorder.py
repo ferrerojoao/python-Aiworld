@@ -30,7 +30,7 @@ def world_summary_block(world: WorldContent) -> list[str]:
 
 
 def character_block(world: WorldContent, ledger: Ledger, present_ids: list[str], include_ids: bool = False) -> list[str]:
-    """主角 + 在场 NPC 名片（含 Actor 档位标注，可选附带 id）。"""
+    """主角 + 在场 NPC 名片（含 Actor 档位标注与运行时补卡，可选附带 id）。"""
     player = ledger.save.player
     lines = ["角色资料："]
     lines.append(
@@ -40,17 +40,13 @@ def character_block(world: WorldContent, ledger: Ledger, present_ids: list[str],
         npc = world.npcs.get(pid)
         if npc:
             entity = ledger.save.entities.get(pid)
-            ticket = ""
-            if entity and entity.forced_actor:
-                ticket = "（玩家点名强制使用 Actor）"
-            elif npc.has_actor:
-                ticket = "（配 Actor）"
-            else:
-                ticket = "（导演代笔）"
+            ticket = "（配 Actor）" if npc.has_actor or (entity and entity.has_actor) else "（导演代笔）"
             id_tag = f"（id: {npc.id}）" if include_ids else ""
             lines.append(
                 f"[{npc.name}]{id_tag}{ticket} 名字：{npc.name}；外貌：{npc.appearance or '未设定'}；人格：{npc.persona or '未设定'}"
             )
+            if entity and entity.persona_patch:
+                lines.append(f"  档案增补（补卡事务产物，等同于人物卡内容）：{entity.persona_patch[:120]}")
         else:
             lines.append(f"[{pid}] 名字：{pid}")
     return lines
@@ -147,7 +143,7 @@ def writer_golden_rules() -> list[str]:
         "金科玉律（绝对不可违背）：",
         "绝不泄漏：你读到的幕后注、私密事件、秘密，一律不得出现在正文或任何角色的台词里；"
         "你不知道的信息不能由角色说出来，角色只能说自己知道的事。",
-        "深抉择纪律：标（配 Actor）或（玩家点名强制使用 Actor）的 NPC 撞上深抉择（内心判断 / 涉密反应 / 是否信任）时，"
+        "深抉择纪律：标（配 Actor）的 NPC 撞上深抉择（内心判断 / 涉密反应 / 是否信任）时，"
         "你**不得替他决定**，必须在输出里填 actor_questions（npc_id / question / context），引擎会派他的 Actor 决定后回来再成文；"
         "标（导演代笔）的 NPC 或普通对话由你直接写出即可，不填 actor_questions。",
         "actor_questions 的 context 只写该 NPC 本人会知道的情境，禁止写只有你知道的动机、私密或幕后注。",
@@ -257,8 +253,7 @@ def build_director_chat_system(
     parts += [
         "可执行的幕后操作（只有玩家明确要求时才填 action，普通闲聊绝不填）：",
         "- 静默覆写 override：玩家声明某人/某物在哪或去做某事 → payload {subject, location}",
-        "- 强制派活 force_actor：玩家要求某 NPC 必须/不必用 Agent → payload {npc_id, forced: true|false}",
-        "- 升档 set_actor：玩家判断某 NPC 该配/取消 Agent（档位管理）→ payload {npc_id, has_actor: true|false}",
+        "- 角色档位 set_actor：玩家判断某 NPC 配/不配 Actor → payload {npc_id, has_actor: true|false}",
         "- 记忆注入 inject_memory：玩家要求给某 NPC 私下注入一条记忆 → payload {npc_id, memory}（只有他知道）",
         "- 事件访问改判 access_rejudge：玩家要求某事件公开或私密 → payload {event_id, known_by: [知情者...] 或 null}",
         "- 补卡事务 amend_card：玩家要求增补某 NPC 人物卡 → payload {npc_id, persona_patch}",
@@ -266,7 +261,7 @@ def build_director_chat_system(
         "讨论剧情时，若结论明确，最后给一句简短的输入建议（玩家可直接复制进正文框）。",
         "",
         "输出必须是 JSON 对象，字段：",
-        '{"reply": "你的回复文本（直接回答玩家，必填）", "action": null | {"type": "override|force_actor|set_actor|inject_memory|access_rejudge|amend_card", "payload": {"字段": "值"}}}',
+        '{"reply": "你的回复文本（直接回答玩家，必填）", "action": null | {"type": "override|set_actor|inject_memory|access_rejudge|amend_card", "payload": {"字段": "值"}}}',
         "reply：给玩家的戏外回复。",
         "action：只有当玩家明确要求执行幕后操作时才填；否则为 null。",
         "注意：payload 里的 npc_id / subject 必须使用角色 id（如 npc_zhuming，见角色资料行的 id 标注），不要用中文名字。",

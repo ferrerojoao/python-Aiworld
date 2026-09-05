@@ -47,9 +47,8 @@ class TurnRunner:
         if npc is None:
             return False
         entity = self.session.ledger.save.entities.get(npc_id)
-        forced = bool(entity and entity.forced_actor)
         runtime_has = bool(entity and entity.has_actor)
-        return bool(npc.has_actor or runtime_has or forced)
+        return bool(npc.has_actor or runtime_has)
 
     async def _write_turn(
         self,

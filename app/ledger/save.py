@@ -14,8 +14,7 @@ class SaveMeta(BaseModel):
 
 class EntityRuntime(BaseModel):
     lifecycle: str = "active"  # active | retired
-    has_actor: bool = False
-    forced_actor: bool = False
+    has_actor: bool = False  # 运行时档位（set_actor，玩家判断；与卡上初值叠加）
     persona_patch: str | None = None
 
 

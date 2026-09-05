@@ -513,8 +513,6 @@ function describeAction(action) {
   switch (action.type) {
     case "override":
       return `静默覆写：${p.subject || "?"} 在 ${p.location || "?"}`;
-    case "force_actor":
-      return `强制派活：${p.npc_id || "?"} ${p.forced === false ? "取消" : "必须"}用 Agent`;
     case "set_actor":
       return `角色档位：${p.npc_id || "?"} ${p.has_actor === false ? "取消配" : "配"} Actor`;
     case "inject_memory":

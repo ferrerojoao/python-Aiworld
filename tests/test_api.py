@@ -320,9 +320,9 @@ def test_director_chat_pending_action_confirm(tmp_path):
 
     llm = PrefixKeyLLM(
         {
-            "让朱明必须用 Agent": {
-                "reply": "好的，我将把朱明设为强制使用 Actor。",
-                "action": {"type": "force_actor", "payload": {"npc_id": "npc_zhuming", "forced": True}},
+            "让朱明配 Agent": {
+                "reply": "好的，我将把朱明设为配 Actor。",
+                "action": {"type": "set_actor", "payload": {"npc_id": "npc_zhuming", "has_actor": True}},
             }
         }
     )
@@ -333,9 +333,9 @@ def test_director_chat_pending_action_confirm(tmp_path):
         # The chat proposes the action but does not apply it yet.
         chat = client.post(
             f"/api/sessions/{sid}/director",
-            json={"topic": "chat", "message": "让朱明必须用 Agent"},
+            json={"topic": "chat", "message": "让朱明配 Agent"},
         ).json()
-        assert chat["pending_action"]["type"] == "force_actor"
+        assert chat["pending_action"]["type"] == "set_actor"
 
         # Nothing applied before confirmation.
         import json
@@ -351,12 +351,12 @@ def test_director_chat_pending_action_confirm(tmp_path):
             json={"topic": "confirm", "action": chat["pending_action"]},
         )
         assert confirm.status_code == 200
-        assert confirm.json()["forced_actor"] is True
+        assert confirm.json()["has_actor"] is True
 
         save = json.loads(
             (tmp_path / "qinghsi" / "saves" / "main" / "save.json").read_text(encoding="utf-8")
         )
-        assert save["entities"]["npc_zhuming"]["forced_actor"] is True
+        assert save["entities"]["npc_zhuming"]["has_actor"] is True
 
 
 def test_director_confirm_set_actor_and_inject_memory(tmp_path):

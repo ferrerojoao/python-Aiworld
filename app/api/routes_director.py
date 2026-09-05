@@ -106,16 +106,6 @@ def _execute_action(session, action_type: str, payload: dict) -> dict:
         apply_access_override(ledger, event_id, known_by)
         return {"ok": True, "action": action_type}
 
-    if action_type == "force_actor":
-        npc_id = _resolve_npc_ref(session, payload.get("npc_id", ""))
-        forced = bool(payload.get("forced", True))
-        if npc_id is None:
-            raise HTTPException(status_code=404, detail=f"npc not found: {payload.get('npc_id')}")
-        entity = ledger.save.entities.setdefault(npc_id, EntityRuntime())
-        entity.forced_actor = forced
-        ledger.persist_save()
-        return {"ok": True, "action": action_type, "npc_id": npc_id, "forced_actor": forced}
-
     if action_type == "set_actor":
         # 升格/降档：玩家判断的角色档位管理（has_actor 运行时单向由玩家控制，
         # 落存档级 entities，不动内容包资产）。
