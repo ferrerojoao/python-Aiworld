@@ -55,12 +55,33 @@ async def main() -> None:
     # 钩子 + 矛盾（Actor 一律不该看到）
     ledger.save.hooks.append(Hook(id="hk_1", text="朱明答应教刘星打游戏", status="open"))
     ledger.save.pending_conflicts.append(Conflict(id="cf_1", desc="朱明自称从不去网吧"))
+    # 王蓉也有一件自知隐秘——朱明绝不能知道它
+    session.world.npcs["npc_wangrong"].personal_secrets = "王蓉暗恋市里来的实习老师。"
     ledger.persist_save()
 
     order = build_work_order("actor_npc_zhuming", session.world, ledger, "net_bar")
 
-    must_have = ["你正在扮演：朱明", "人格：", "喝可乐", "当前场景", "你记得的事"]
-    must_not = ["王蓉", "修车铺要关门", "他爸在县城欠了赌债", "教刘星打游戏", "自称从不去网吧", "世界书候选", "事件日志", "编剧准则", "开放钩子", "待澄清矛盾"]
+    # 本人自知的隐秘必须出现（他是朱明，他爸欠债是他的心结）
+    # 他人私密/作者底牌/钩子/矛盾/编剧视角一律不得出现
+    must_have = [
+        "你正在扮演：朱明",
+        "人格：",
+        "喝可乐",
+        "当前场景",
+        "你记得的事",
+        "他爸在县城欠了赌债",
+    ]
+    must_not = [
+        "王蓉暗恋市里来的实习老师",
+        "修车铺要关门",
+        "教刘星打游戏",
+        "自称从不去网吧",
+        "世界书候选",
+        "事件日志（世界近期",
+        "编剧准则",
+        "开放钩子",
+        "待澄清矛盾",
+    ]
 
     ok = True
     for needle in must_have:

@@ -34,7 +34,8 @@ class NpcCard(BaseModel):
     name: str
     appearance: str = ""
     persona: str = ""
-    private_note: str | None = None
+    private_note: str | None = None  # 作者底牌：无人（含 NPC 自己）知道的真相，仅编剧可读
+    personal_secrets: str | None = None  # 该 NPC 自知的隐秘（心结/往事/把柄），进他自己的 Actor 切片
     has_actor: bool = False
     normal_schedule: str | None = None
 

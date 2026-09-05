@@ -98,9 +98,14 @@ def private_notes_block(world: WorldContent, present_ids: list[str]) -> list[str
     lines = []
     for pid in present_ids:
         npc = world.npcs.get(pid)
-        if npc and npc.private_note:
+        if npc and (npc.private_note or npc.personal_secrets):
+            notes = []
+            if npc.private_note:
+                notes.append(npc.private_note)
+            if npc.personal_secrets:
+                notes.append(f"[{npc.name} 自知] {npc.personal_secrets}")
             lines.append(
-                f"幕后注（仅你可读，绝不写进正文，也不得让任何角色知道）：[{npc.name}] {npc.private_note}"
+                f"幕后注（仅你可读，绝不写进正文，也不得让任何角色知道）：[{npc.name}] {'；'.join(notes)}"
             )
     return lines
 
@@ -210,6 +215,8 @@ def build_actor_work_order(
         "你的档案（人物卡）：",
         f"姓名：{npc.name}；外貌：{npc.appearance or '未设定'}；人格：{npc.persona or '未设定'}",
     ]
+    if npc.personal_secrets:
+        parts.append(f"你心里的事（只有你自己知道，绝不对外人说）：{npc.personal_secrets}")
     entity = ledger.save.entities.get(npc_id)
     if entity and entity.persona_patch:
         parts.append(f"档案增补：{entity.persona_patch}")
