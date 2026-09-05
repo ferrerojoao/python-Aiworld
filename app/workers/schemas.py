@@ -38,13 +38,13 @@ class StoryOutput(BaseModel):
 class QCOutput(BaseModel):
     status: str = Field(
         default="pass",
-        validation_alias=AliasChoices("status", "result", "verdict", "状态", "结果"),
+        validation_alias=AliasChoices("status", "verdict", "result", "状态", "结果"),
     )
     prose: str = Field(
         default="",
         validation_alias=AliasChoices(
             "prose", "body", "text", "content", "output", "revised", "fixed_text",
-            "正文", "内容", "输出", "结果", "回复", "文本", "修订",
+            "正文", "内容", "输出", "回复", "文本", "修订",
         ),
     )
     issues: list[dict] = Field(default_factory=list, validation_alias=AliasChoices("issues", "问题", "矛盾"))
