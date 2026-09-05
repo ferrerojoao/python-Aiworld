@@ -654,6 +654,9 @@ async function loadWorldBrowser() {
 }
 
 function formatEventSummary(ev, scenes, npcs) {
+  if (ev.summary) {
+    return `${ev.at || ""} ${ev.summary}`;
+  }
   const scene = scenes.find((s) => s.id === ev.location);
   const location = scene ? scene.name : ev.location || "某处";
   const names = (ev.participants || [])

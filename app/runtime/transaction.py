@@ -133,6 +133,7 @@ class Transaction:
                 "participants": candidate.side_effects.narrative.get("participants") or ["player"],
                 "known_by": candidate.side_effects.narrative.get("known_by"),
                 "body": candidate.prose,
+                "summary": candidate.side_effects.narrative.get("summary"),
                 "source": "turn",
             }
             self.ledger.append(narrative)

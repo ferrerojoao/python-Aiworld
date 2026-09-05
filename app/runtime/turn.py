@@ -67,6 +67,36 @@ class TurnRunner:
             "lore_bodies": lore_bodies,
         }
 
+    def _deterministic_summary(self, directive) -> str:
+        parts = []
+        for beat in directive.beats:
+            if beat.kind == "speech":
+                npc = self.session.world.npcs.get(beat.speaker or "")
+                name = npc.name if npc else beat.speaker or ""
+                text = beat.meaning or beat.text
+                if text:
+                    parts.append(f"{name}{text}" if name else text)
+            elif beat.kind == "narrate" and beat.text:
+                parts.append(beat.text[:30])
+        return "；".join(parts).strip()
+
+    async def _build_summary(self, directive, player_input: str) -> str:
+        deterministic = self._deterministic_summary(directive)
+        if len(deterministic) >= 8:
+            return deterministic
+        try:
+            text = await self.llm.complete_text(
+                [
+                    {"role": "system", "content": "用一句话概括这段剧情发生了什么，不超过30字，不要解释。"},
+                    {"role": "user", "content": f"剧情指令：{directive.model_dump()}\n玩家输入：{player_input}"},
+                ],
+                model=self.settings.resolved_model("qc"),
+                temperature=0.2,
+            )
+            return text.strip()
+        except Exception:
+            return deterministic
+
     # ------------------------------------------------------------------
     # Main entry
     # ------------------------------------------------------------------
@@ -191,6 +221,7 @@ class TurnRunner:
         )
 
         # Build one candidate version.
+        summary = await self._build_summary(directive, player_input)
         turn_id = new_id("turn")
         candidate_id = new_id("cand")
         now = dt.datetime.now().isoformat(timespec="seconds")
@@ -207,6 +238,7 @@ class TurnRunner:
                     "location": directive.location or scene,
                     "participants": directive.participants or ["player"],
                     "known_by": None if not directive.private else directive.participants,
+                    "summary": summary,
                 },
                 events=[],
             ),
@@ -228,6 +260,7 @@ class TurnRunner:
             if latest.side_effects.narrative
             else self.session.ledger.save.player_scene
         )
+        side_effects = latest.side_effects
         if mode == "redirect":
             await self._progress("director", "导演重排中")
             directive = await run_director(
@@ -252,6 +285,10 @@ class TurnRunner:
                 model=self.settings.resolved_model("story"),
                 temperature=0.9,
             )
+            summary = await self._build_summary(directive, latest.player_input)
+            side_effects = latest.side_effects.model_copy(deep=True)
+            if side_effects.narrative is not None:
+                side_effects.narrative["summary"] = summary
         else:
             # rephrase / retarget reuse the existing directive's visible shape
             # by re-running storyteller with an extra instruction.
@@ -297,7 +334,7 @@ class TurnRunner:
             mode=mode,
             player_input=latest.player_input,
             prose=qc.prose,
-            side_effects=latest.side_effects,
+            side_effects=side_effects,
             conflicts=qc.issues,
             created_at=now,
             updated_at=now,

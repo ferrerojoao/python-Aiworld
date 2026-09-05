@@ -13,6 +13,7 @@ class NarrativeRecord(BaseModel):
     participants: list[str] = Field(default_factory=list)
     known_by: list[str] | None = None  # None means public
     body: str
+    summary: str | None = None
     source: str = "turn"
 
 

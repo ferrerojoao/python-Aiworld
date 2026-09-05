@@ -24,6 +24,12 @@ def test_query_bypass_creates_read_only_candidate(session, fake_llm, settings):
     assert candidate.side_effects.narrative is None
 
 
+def test_candidate_has_summary(session, fake_llm, settings):
+    runner = _runner(session, fake_llm, settings)
+    candidate = asyncio.run(runner.run_turn("去网吧找朱明"))
+    assert candidate.side_effects.narrative.get("summary")
+
+
 def test_run_turn_creates_pending_candidate_without_writing_ledger(session, fake_llm, settings):
     runner = _runner(session, fake_llm, settings)
     candidate = asyncio.run(runner.run_turn("去网吧找朱明，问他昨天为什么打架"))
