@@ -218,11 +218,12 @@ def test_global_preset_is_separate_from_world(tmp_path):
         sid = r.json()["sid"]
         put = client.put(
             "/api/presets",
-            json={"writer_guidelines": "轻快明亮"},
+            json={"writer_guidelines": "轻快明亮", "banned_words": ["烟头", "好面子"]},
         )
         assert put.status_code == 200
         state = client.get(f"/api/sessions/{sid}/state").json()
         assert state["preset"]["writer_guidelines"] == "轻快明亮"
+        assert state["preset"]["banned_words"] == ["烟头", "好面子"]
         world = client.get(f"/api/sessions/{sid}/world").json()
         assert "presets" not in world
 

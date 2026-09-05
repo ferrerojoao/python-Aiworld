@@ -210,7 +210,9 @@ async function refreshState() {
   $("#clock").textContent = data.clock || "-";
   $("#scene").textContent = data.scene_name || data.scene || "-";
   if (data.preset) {
-    $("#writer-guidelines-input").value = data.preset.writer_guidelines || "";
+    const p = data.preset;
+    $("#writer-guidelines-input").value = p.writer_guidelines || "";
+    $("#banned-words-input").value = (p.banned_words || []).join(", ");
   }
   renderLeftRail(data);
 }
@@ -472,6 +474,7 @@ async function savePreset() {
     method: "PUT",
     body: JSON.stringify({
       writer_guidelines: $("#writer-guidelines-input").value,
+      banned_words: splitList($("#banned-words-input").value),
     }),
   });
   alert("编剧准则已保存");

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AIWorld</title>
-  <link rel="stylesheet" href="style.css?v=28" />
+  <link rel="stylesheet" href="style.css?v=29" />
 </head>
 <body>
   <div id="app">
@@ -85,6 +85,8 @@
         <h3>编剧准则</h3>
         <label>创作与写作要求（排戏走向 + 正文风格合一）</label>
         <textarea id="writer-guidelines-input" rows="12" placeholder="例如：不要主动揭穿秘密；优先让 NPC 主动制造冲突；克制写实，白描为主，少用形容词堆砌…"></textarea>
+        <label>禁用词（逗号分隔，质检硬拦替换）</label>
+        <input id="banned-words-input" type="text" placeholder="例如：一丝, 不易察觉, 鲜明对比" />
         <button id="save-preset">保存预设</button>
       </div>
 
@@ -167,6 +169,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=28"></script>
+  <script src="app.js?v=29"></script>
 </body>
 </html>
