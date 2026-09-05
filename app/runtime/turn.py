@@ -110,6 +110,7 @@ class TurnRunner:
                 scene_id=scene,
                 preset=self.preset,
                 actor_decisions="\n".join(decisions),
+                rewrite_note=rewrite_note,
                 model=self.settings.resolved_model("story"),
                 temperature=0.8,
             )
