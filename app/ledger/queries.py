@@ -120,17 +120,20 @@ class Ledger:
         return result
 
     def experiences(self, entity: str, viewer: str) -> list[str]:
-        """Rule-assembled memory entries for an entity from the viewer's view."""
+        """Memory entries for an entity from the viewer's view.
+
+        Each entry uses the event's generated summary when available,
+        falling back to a short body snippet.
+        """
+        limit = self.world.meta.default_durations.get("memory_limit", 50)
         lines: list[str] = []
         for ev in self.visible_to(viewer):
             participants = ev.get("participants", [])
             if entity not in participants and viewer not in participants:
                 continue
-            at = ev.get("at", "")
-            loc = ev.get("location") or "某处"
-            body = (ev.get("body") or "")[:60]
-            lines.append(f"{at} {loc}，{body}")
-        return lines[-self.world.meta.default_durations.get("memory_limit", 50) :] if lines else []
+            summary = ev.get("summary") or (ev.get("body") or "")[:40]
+            lines.append(f"{ev.get('at', '')} {summary}")
+        return lines[-limit:] if lines else []
 
     def lore_candidates(self, scene_id: str, npc_ids: list[str]) -> list[dict[str, Any]]:
         tags = set()
