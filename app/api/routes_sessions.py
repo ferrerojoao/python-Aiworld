@@ -406,6 +406,7 @@ async def reset_session(request: Request, sid: str):
     session = _get_session(request, sid)
     save = session.ledger.save
     save.clock = "2026-07-14T08:00:00"
+    save.meta.next_event_id = 1
     save.player_scene = "main_street"
     save.narrative_preset = session.world.presets
     save.entities = {}

@@ -309,27 +309,60 @@ async function sendInput(text) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const raw = await res.text();
-  const events = parseSSE(raw);
-  for (const ev of events) {
-    if (ev.event === "stage") {
-      setPipelineStatus(ev.data.label || ev.data.stage || "处理中");
-    } else if (ev.event === "candidate") {
-      clearPipelineStatus();
-      state.candidates = [ev.data];
-      state.currentCandidateId = ev.data.candidate_id;
-      state.currentTurnId = ev.data.turn_id;
-      state.currentMessageEl = null;
-      renderCandidateMessage();
-    } else if (ev.event === "error") {
-      clearPipelineStatus();
-      addMessage("npc", `⚠ ${ev.data.message || "错误"}`);
+  if (!res.ok || !res.body) {
+    clearPipelineStatus();
+    addMessage("npc", `⚠ HTTP ${res.status}`);
+    await refreshState();
+    return;
+  }
+
+  // Read the SSE stream incrementally so stage events update the pipeline
+  // status in real time instead of appearing all at once at the end.
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    buffer += decoder.decode(chunk.value, { stream: true });
+    const blocks = buffer.split("\n\n");
+    buffer = blocks.pop() || "";
+    for (const block of blocks) {
+      if (block.trim()) handleSSEBlock(block);
     }
   }
-  if (!events.some((ev) => ev.event === "candidate" || ev.event === "error")) {
-    clearPipelineStatus();
-  }
+  if (buffer.trim()) handleSSEBlock(buffer);
+  clearPipelineStatus();
   await refreshState();
+}
+
+function handleSSEBlock(block) {
+  const lines = block.split("\n");
+  let event = "message";
+  let data = "";
+  for (const line of lines) {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    if (line.startsWith("data:")) data += line.slice(5).trim();
+  }
+  let payload;
+  try {
+    payload = JSON.parse(data);
+  } catch (e) {
+    payload = data;
+  }
+  if (event === "stage") {
+    setPipelineStatus(payload.label || payload.stage || "处理中");
+  } else if (event === "candidate") {
+    clearPipelineStatus();
+    state.candidates = [payload];
+    state.currentCandidateId = payload.candidate_id;
+    state.currentTurnId = payload.turn_id;
+    state.currentMessageEl = null;
+    renderCandidateMessage();
+  } else if (event === "error") {
+    clearPipelineStatus();
+    addMessage("npc", `⚠ ${payload.message || "错误"}`);
+  }
 }
 
 async function quickSend(text) {
@@ -644,13 +677,13 @@ async function loadWorldBrowser() {
   }
 
   const events = $("#world-tab-events");
-  events.innerHTML = "<h3>事件日志流（规则化摘要）</h3>";
-  for (const ev of (data.events || []).slice().reverse()) {
+  events.innerHTML = "<h3>事件日志流</h3>";
+  (data.events || []).forEach((ev, index) => {
     const div = document.createElement("div");
     div.className = "item";
-    div.textContent = formatEventSummary(ev, data.scenes || [], data.npcs || {});
+    div.textContent = `#${index + 1} ${formatEventSummary(ev, data.scenes || [], data.npcs || {})}`;
     events.appendChild(div);
-  }
+  });
 }
 
 function formatEventSummary(ev, scenes, npcs) {
