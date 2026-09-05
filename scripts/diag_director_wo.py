@@ -83,6 +83,20 @@ async def main() -> None:
     idx = system.find("事件日志")
     print("\n--- 事件日志段预览 ---")
     print(system[idx : idx + 240])
+
+    # Order assertions for the 2026-09-05 assembly design:
+    # 金科玉律 upfront, dynamic context near the input, format last.
+    order_checks = [
+        ("金科玉律", "角色资料"),
+        ("金科玉律", "事件日志"),
+        ("事件日志", "当前场景"),
+        ("当前场景", "在场 NPC 近况"),
+        ("编剧准则", "输出必须是 JSON 对象"),
+    ]
+    for earlier, later in order_checks:
+        ok = system.find(earlier) < system.find(later)
+        print(f"{'OK ' if ok else 'FAIL'} 顺序: {earlier} 在 {later} 之前")
+        assert ok, f"order broken: {earlier} should precede {later}"
     print("\nWORK ORDER VERIFY PASSED")
 
     shutil.rmtree(SAVES, ignore_errors=True)
