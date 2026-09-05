@@ -20,3 +20,4 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = "-p no:cacheprovider --basetemp=bt_all"

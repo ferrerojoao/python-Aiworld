@@ -157,7 +157,7 @@ def test_debug_trace_available_after_turn(tmp_path):
         sid = r.json()["sid"]
         client.post(f"/api/sessions/{sid}/turn", json={"input": "问朱明昨天的事"})
         trace = client.get(f"/api/sessions/{sid}/debug/latest").json()["trace"]
-        assert len(trace) >= 3  # director, storyteller, qc
+        assert len(trace) >= 2  # writer, qc (merged agent pipeline)
         assert trace[0]["messages"]
 
 

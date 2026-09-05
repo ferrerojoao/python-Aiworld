@@ -119,6 +119,25 @@ class TurnRunner:
             out.prose = player_input
         return out
 
+    def _deferred_actor_notes(self, out) -> list[dict]:
+        """Notes for deep choices not dispatched to an isolated Actor.
+
+        Two cases: a second-pass question with a ticket (recursion guard, we
+        only run one two-stage loop per turn), or a question for an NPC
+        without a ticket (ghostwritten by the writer). Both are surfaced as
+        minor issues instead of being silently dropped.
+        """
+        notes = []
+        for q in out.actor_questions:
+            npc = self.session.world.npcs.get(q.npc_id)
+            name = npc.name if npc else q.npc_id
+            if self._actor_ticket(q.npc_id):
+                desc = f"二稿仍提出{name}的未决深抉择（{q.question[:40]}），本回合不再追派 Actor"
+            else:
+                desc = f"{name} 无 Actor 配给，该深抉择已由编剧代笔（{q.question[:40]}）"
+            notes.append({"level": "minor", "desc": desc})
+        return notes
+
     # ------------------------------------------------------------------
     # Main entry
     # ------------------------------------------------------------------
@@ -214,7 +233,7 @@ class TurnRunner:
                 },
                 events=[],
             ),
-            conflicts=qc.issues,
+            conflicts=qc.issues + self._deferred_actor_notes(out),
             created_at=now,
             updated_at=now,
         )
@@ -273,7 +292,7 @@ class TurnRunner:
             player_input=latest.player_input,
             prose=qc.prose,
             side_effects=side_effects,
-            conflicts=qc.issues,
+            conflicts=qc.issues + self._deferred_actor_notes(out),
             created_at=now,
             updated_at=now,
         )
