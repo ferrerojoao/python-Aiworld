@@ -66,6 +66,49 @@ async def run_director(
         "actor 节点的 meaning 只写该 NPC 本人会知道的情境，禁止写只有导演/作者知道的动机与秘密。",
     ]
 
+    # --- 账本工作单：事件日志 / 近况 / 幕后注 / 世界书候选 / 钩子 / 矛盾 ---
+    recent = ledger.narratives[-10:]
+    if recent:
+        system_parts.append("事件日志（世界近期发生的事，全部向你开放）：")
+        for ev in recent:
+            summary = (ev.get("summary") or (ev.get("body") or ""))[:60]
+            line = f"- {ev.get('at', '')} {summary}"
+            if ev.get("player_input"):
+                line += f"（玩家当时说：{ev['player_input'][:30]}）"
+            system_parts.append(line)
+
+    near_lines = []
+    for pid in present_ids:
+        npc = world.npcs.get(pid)
+        if npc is None:
+            continue
+        if npc.private_note:
+            system_parts.append(f"幕后注（仅你可读，绝不写进正文，也不得让任何角色知道）：[{npc.name}] {npc.private_note}")
+        mem = ledger.experiences(npc.id, npc.id)[-2:]
+        if mem:
+            near_lines.append(f"[{npc.name}] 最近经历：{'；'.join(mem)}")
+    if near_lines:
+        system_parts.append("在场 NPC 近况：")
+        system_parts.extend(near_lines)
+
+    cands = ledger.lore_candidates(scene_id, present_ids)
+    if cands:
+        system_parts.append("世界书候选（本场可能相关，只有摘要；要用就在 lore_refs 里填 id）：")
+        for c in cands:
+            system_parts.append(f"- [{c['id']}] {c['summary']}")
+
+    open_hooks = [h for h in ledger.save.hooks if h.status == "open"]
+    if open_hooks:
+        system_parts.append("开放钩子（悬而未决的事，可作排戏素材）：")
+        for h in open_hooks:
+            system_parts.append(f"- {h.text[:60]}")
+
+    open_conflicts = [c for c in ledger.save.pending_conflicts if c.status == "open"]
+    if open_conflicts:
+        system_parts.append("待澄清矛盾（玩家可选无视，你避免再扩散）：")
+        for c in open_conflicts:
+            system_parts.append(f"- {c.desc[:60]}")
+
     if preset.director_guidelines:
         system_parts.append("导演准则：")
         system_parts.append(preset.director_guidelines)
