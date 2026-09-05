@@ -116,6 +116,43 @@ def _execute_action(session, action_type: str, payload: dict) -> dict:
         ledger.persist_save()
         return {"ok": True, "action": action_type, "npc_id": npc_id, "forced_actor": forced}
 
+    if action_type == "set_actor":
+        # 升格/降档：玩家判断的角色档位管理（has_actor 运行时单向由玩家控制，
+        # 落存档级 entities，不动内容包资产）。
+        npc_id = _resolve_npc_ref(session, payload.get("npc_id", ""))
+        if npc_id is None:
+            raise HTTPException(status_code=404, detail=f"npc not found: {payload.get('npc_id')}")
+        has = bool(payload.get("has_actor", True))
+        entity = ledger.save.entities.setdefault(npc_id, EntityRuntime())
+        entity.has_actor = has
+        ledger.persist_save()
+        return {"ok": True, "action": action_type, "npc_id": npc_id, "has_actor": has}
+
+    if action_type == "inject_memory":
+        # 记忆注入（M16）：落一条私密事件 known_by=[该NPC]，只进他自己的切片。
+        npc_id = _resolve_npc_ref(session, payload.get("npc_id", ""))
+        memory = (payload.get("memory") or "").strip()
+        if npc_id is None:
+            raise HTTPException(status_code=404, detail=f"npc not found: {payload.get('npc_id')}")
+        if not memory:
+            raise HTTPException(status_code=400, detail="memory is required")
+        npc = session.world.npcs.get(npc_id)
+        event = {
+            "id": ledger.allocate_event_id(),
+            "kind": "narrative",
+            "at": ledger.save.clock,
+            "location": None,
+            "participants": [npc_id],
+            "known_by": [npc_id],
+            "body": memory,
+            "summary": memory[:60],
+            "player_input": None,
+            "source": "director",
+        }
+        ledger.append(event)
+        ledger.persist_save()
+        return {"ok": True, "action": action_type, "event": event, "npc": npc.name if npc else npc_id}
+
     if action_type == "override":
         subject = _resolve_npc_ref(session, payload.get("subject", ""))
         location = payload.get("location", "")

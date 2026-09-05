@@ -515,6 +515,10 @@ function describeAction(action) {
       return `静默覆写：${p.subject || "?"} 在 ${p.location || "?"}`;
     case "force_actor":
       return `强制派活：${p.npc_id || "?"} ${p.forced === false ? "取消" : "必须"}用 Agent`;
+    case "set_actor":
+      return `角色档位：${p.npc_id || "?"} ${p.has_actor === false ? "取消配" : "配"} Actor`;
+    case "inject_memory":
+      return `记忆注入：给 ${p.npc_id || "?"} 注入记忆`;
     case "access_rejudge":
       return `事件改判：${p.event_id || "?"} → ${p.known_by ? "私密" : "公开"}`;
     case "amend_card":

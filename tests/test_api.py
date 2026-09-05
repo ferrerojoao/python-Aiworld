@@ -359,6 +359,78 @@ def test_director_chat_pending_action_confirm(tmp_path):
         assert save["entities"]["npc_zhuming"]["forced_actor"] is True
 
 
+def test_director_confirm_set_actor_and_inject_memory(tmp_path):
+    """set_actor writes the runtime has_actor; inject_memory lays a private
+    event visible only to that NPC."""
+    from app.core.llm import FakeLLM
+
+    class PrefixKeyLLM(FakeLLM):
+        def _key(self, messages):
+            for msg in reversed(messages):
+                if msg.get("role") in {"user", "system"}:
+                    content = msg.get("content", "")
+                    for prefix in self.responses:
+                        if content.startswith(prefix):
+                            return prefix
+            return "*"
+
+    llm = PrefixKeyLLM(
+        {
+            "给王蓉配 Agent": {
+                "reply": "好的，王蓉将配给 Actor。",
+                "action": {"type": "set_actor", "payload": {"npc_id": "npc_wangrong", "has_actor": True}},
+            },
+            "给朱明注入一段记忆": {
+                "reply": "好的，我会私下记下这条。",
+                "action": {
+                    "type": "inject_memory",
+                    "payload": {"npc_id": "npc_zhuming", "memory": "朱明心里记着：那天刘星在网吧替他挡了一下。"},
+                },
+            },
+        }
+    )
+    with _make_client(tmp_path, llm=llm) as client:
+        r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
+        sid = r.json()["sid"]
+
+        chat = client.post(
+            f"/api/sessions/{sid}/director",
+            json={"topic": "chat", "message": "给王蓉配 Agent"},
+        ).json()
+        assert chat["pending_action"]["type"] == "set_actor"
+        confirm = client.post(
+            f"/api/sessions/{sid}/director",
+            json={"topic": "confirm", "action": chat["pending_action"]},
+        )
+        assert confirm.status_code == 200
+        assert confirm.json()["has_actor"] is True
+
+        # Runtime promotion survives reload and drives deep-choice dispatch.
+        import json
+
+        save = json.loads(
+            (tmp_path / "qinghsi" / "saves" / "main" / "save.json").read_text(encoding="utf-8")
+        )
+        assert save["entities"]["npc_wangrong"]["has_actor"] is True
+
+        chat2 = client.post(
+            f"/api/sessions/{sid}/director",
+            json={"topic": "chat", "message": "给朱明注入一段记忆"},
+        ).json()
+        confirm2 = client.post(
+            f"/api/sessions/{sid}/director",
+            json={"topic": "confirm", "action": chat2["pending_action"]},
+        )
+        assert confirm2.status_code == 200
+        ev = confirm2.json()["event"]
+        assert ev["known_by"] == ["npc_zhuming"]
+        assert ev["location"] is None
+
+        events = client.get(f"/api/sessions/{sid}/ledger/events").json()["events"]
+        injected = next(e for e in events if e["id"] == ev["id"])
+        assert injected["known_by"] == ["npc_zhuming"]
+
+
 def test_settings_and_director_chat(tmp_path):
     with _make_client(tmp_path) as client:
         r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
