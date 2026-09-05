@@ -39,11 +39,10 @@ async def main() -> None:
                 "source": "turn",
             }
         )
-    # an open hook + a pending conflict
-    from app.ledger.save import Conflict, Hook
+    # an open hook (conflict machinery was removed: 矛盾归玩家自决)
+    from app.ledger.save import Hook
 
     session.ledger.save.hooks.append(Hook(id="hk_1", text="朱明答应明天教刘星打游戏", status="open"))
-    session.ledger.save.pending_conflicts.append(Conflict(id="cf_1", desc="朱明自称从不去网吧，但有人看见他常去"))
     session.ledger.persist_save()
 
     fake = FakeLLM(
@@ -71,15 +70,16 @@ async def main() -> None:
     assert out.prose
 
     system = fake.calls[0]["messages"][0]["content"]
-    sections = ["事件日志", "在场 NPC 近况", "幕后注", "世界书候选", "开放钩子", "待澄清矛盾"]
+    sections = ["事件日志", "在场 NPC 近况", "幕后注", "世界书候选", "开放钩子"]
     for name in sections:
         found = name in system
         print(f"{'OK ' if found else 'MISS'} {name}")
         assert found, f"missing work-order section: {name}"
-    for needle in ["等他打完这把", "拉你进队打游戏", "朱明答应明天教刘星打游戏", "自称从不去网吧", "他爸在县城欠了赌债", "镇上唯一的网吧"]:
+    for needle in ["等他打完这把", "拉你进队打游戏", "朱明答应明天教刘星打游戏", "他爸在县城欠了赌债", "镇上唯一的网吧"]:
         found = needle in system
         print(f"{'OK ' if found else 'MISS'} 内容: {needle}")
         assert found, f"missing content: {needle}"
+    assert "待澄清矛盾" not in system, "conflict block should be gone"
     idx = system.find("事件日志")
     print("\n--- 事件日志段预览 ---")
     print(system[idx : idx + 240])

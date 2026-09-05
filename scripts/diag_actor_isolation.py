@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.workorder import build_work_order
-from app.ledger.save import Conflict, Hook
+from app.ledger.save import Hook
 from app.runtime.session import create_session
 
 WORLD = Path(__file__).resolve().parent.parent / "content" / "qinghsi"
@@ -52,9 +52,8 @@ async def main() -> None:
             "source": "turn",
         }
     )
-    # 钩子 + 矛盾（Actor 一律不该看到）
+    # hook exists but must never reach the actor
     ledger.save.hooks.append(Hook(id="hk_1", text="朱明答应教刘星打游戏", status="open"))
-    ledger.save.pending_conflicts.append(Conflict(id="cf_1", desc="朱明自称从不去网吧"))
     # 王蓉也有一件自知隐秘——朱明绝不能知道它
     session.world.npcs["npc_wangrong"].personal_secrets = "王蓉暗恋市里来的实习老师。"
     ledger.persist_save()
@@ -75,12 +74,10 @@ async def main() -> None:
         "王蓉暗恋市里来的实习老师",
         "修车铺要关门",
         "教刘星打游戏",
-        "自称从不去网吧",
         "世界书候选",
         "事件日志（世界近期",
         "编剧准则",
         "开放钩子",
-        "待澄清矛盾",
     ]
 
     ok = True

@@ -29,15 +29,6 @@ class Hook(BaseModel):
     related: list[str] = Field(default_factory=list)
 
 
-class Conflict(BaseModel):
-    id: str
-    at: str = ""
-    level: str = "major"
-    desc: str = ""
-    status: str = "open"
-    ref: str | None = None
-
-
 class PlayerProfile(BaseModel):
     id: str = "player"
     name: str = "你"
@@ -56,6 +47,5 @@ class SaveData(BaseModel):
     entities: dict[str, EntityRuntime] = Field(default_factory=dict)
     axes: dict[str, int] = Field(default_factory=dict)  # 二期预留
     hooks: list[Hook] = Field(default_factory=list)
-    pending_conflicts: list[Conflict] = Field(default_factory=list)
     scene_addons: dict[str, Scene] = Field(default_factory=dict)
     access_overrides: dict[str, list[str] | None] = Field(default_factory=dict)

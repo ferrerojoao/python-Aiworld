@@ -53,7 +53,7 @@ class QCOutput(BaseModel):
             "正文", "内容", "输出", "回复", "文本", "修订",
         ),
     )
-    issues: list[dict] = Field(default_factory=list, validation_alias=AliasChoices("issues", "问题", "矛盾"))
+    issues: list[dict] = Field(default_factory=list, validation_alias=AliasChoices("issues", "问题", "修改记录"))
 
 
 class ActorDecision(BaseModel):
@@ -64,7 +64,6 @@ class ActorDecision(BaseModel):
 
 class AuditOutput(BaseModel):
     hook_texts: list[str] = Field(default_factory=list, validation_alias=AliasChoices("hook_texts", "hooks", "钩子"))
-    conflicts: list[dict] = Field(default_factory=list, validation_alias=AliasChoices("conflicts", "矛盾"))
     lifecycle: list[dict] = Field(
         default_factory=list,
         validation_alias=AliasChoices("lifecycle", "lifecycle_changes", "生命周期"),

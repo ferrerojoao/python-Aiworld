@@ -127,13 +127,6 @@ def hooks_block(ledger: Ledger, text_len: int = 60) -> list[str]:
     return ["开放钩子（悬而未决的事，可作素材）：", *(f"- {h.text[:text_len]}" for h in open_hooks)]
 
 
-def conflicts_block(ledger: Ledger, text_len: int = 60) -> list[str]:
-    open_conflicts = [c for c in ledger.save.pending_conflicts if c.status == "open"]
-    if not open_conflicts:
-        return []
-    return ["待澄清矛盾（玩家可选无视，你避免再扩散）：", *(f"- {c.desc[:text_len]}" for c in open_conflicts)]
-
-
 # ---------------------------------------------------------------------------
 # 主观层 · 角色契约（按 agent 身份选择；每个契约 = 身份/金科玉律/输出格式）
 # ---------------------------------------------------------------------------
@@ -265,10 +258,9 @@ def build_work_order(
         parts += npc_history_block(ledger, present_ids)
         # H 幕后注（机密，自带警示，与 C 呼应双保险）
         parts += private_notes_block(world, present_ids)
-        # I 可选素材（候选/钩子/矛盾，未来 token 超支时最先可裁）
+        # I 可选素材（候选/钩子，未来 token 超支时最先可裁）
         parts += lore_candidates_block(ledger, scene_id, present_ids)
         parts += hooks_block(ledger)
-        parts += conflicts_block(ledger)
         # J 编剧准则（创作与写作要求，贴近动笔位置）
         if preset.writer_guidelines:
             parts.append("编剧准则（创作与写作要求，必须遵循）：")
