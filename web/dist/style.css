@@ -100,7 +100,8 @@ body {
   color: #fff;
 }
 
-#present-npcs .rail-item {
+#present-npcs .rail-item,
+#scene-nav .rail-item {
   cursor: default;
 }
 

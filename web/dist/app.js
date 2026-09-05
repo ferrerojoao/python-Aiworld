@@ -213,11 +213,10 @@ function renderLeftRail(data) {
   nav.appendChild(current);
 
   for (const adj of data.adjacent || []) {
-    const btn = document.createElement("button");
-    btn.className = "rail-item";
-    btn.textContent = adj.name;
-    btn.onclick = () => quickSend(`去${adj.name}`);
-    nav.appendChild(btn);
+    const item = document.createElement("div");
+    item.className = "rail-item";
+    item.textContent = adj.name;
+    nav.appendChild(item);
   }
 
   const present = $("#present-npcs");
@@ -363,11 +362,6 @@ function handleSSEBlock(block) {
     clearPipelineStatus();
     addMessage("npc", `⚠ ${payload.message || "错误"}`);
   }
-}
-
-async function quickSend(text) {
-  addMessage("player", text);
-  await sendInput(text);
 }
 
 /* ---------- 抽屉 ---------- */
