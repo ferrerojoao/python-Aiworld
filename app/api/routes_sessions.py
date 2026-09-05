@@ -221,8 +221,28 @@ class PresetBody(BaseModel):
     style: str | None = None
     description_style: str | None = None
     banned_words: list[str] | None = None
-    director_guidelines: str | None = None
-    storyteller_preset: str | None = None
+    writer_guidelines: str | None = None
+    director_guidelines: str | None = None  # legacy
+    storyteller_preset: str | None = None  # legacy
+
+
+def _apply_preset_update(preset, body: PresetBody) -> None:
+    if body.style is not None:
+        preset.style = body.style
+    if body.description_style is not None:
+        preset.description_style = body.description_style
+    if body.banned_words is not None:
+        preset.banned_words = body.banned_words
+    if body.writer_guidelines is not None:
+        preset.writer_guidelines = body.writer_guidelines
+        # The merged writer reads one unified box; clear the legacy boxes so
+        # the fallback concatenation never shadows the new content.
+        preset.director_guidelines = ""
+        preset.storyteller_preset = ""
+    if body.director_guidelines is not None:
+        preset.director_guidelines = body.director_guidelines
+    if body.storyteller_preset is not None:
+        preset.storyteller_preset = body.storyteller_preset
 
 
 class PlayerBody(BaseModel):
@@ -236,16 +256,7 @@ class PlayerBody(BaseModel):
 async def update_presets(request: Request, sid: str, body: PresetBody):
     _get_session(request, sid)
     preset = request.app.state.global_preset
-    if body.style is not None:
-        preset.style = body.style
-    if body.description_style is not None:
-        preset.description_style = body.description_style
-    if body.banned_words is not None:
-        preset.banned_words = body.banned_words
-    if body.director_guidelines is not None:
-        preset.director_guidelines = body.director_guidelines
-    if body.storyteller_preset is not None:
-        preset.storyteller_preset = body.storyteller_preset
+    _apply_preset_update(preset, body)
     save_global_preset(
         Path(request.app.state.settings.data_dir) / "presets.json",
         preset,
@@ -261,16 +272,7 @@ async def get_global_preset(request: Request):
 @router.put("/presets")
 async def update_global_preset(request: Request, body: PresetBody):
     preset = request.app.state.global_preset
-    if body.style is not None:
-        preset.style = body.style
-    if body.description_style is not None:
-        preset.description_style = body.description_style
-    if body.banned_words is not None:
-        preset.banned_words = body.banned_words
-    if body.director_guidelines is not None:
-        preset.director_guidelines = body.director_guidelines
-    if body.storyteller_preset is not None:
-        preset.storyteller_preset = body.storyteller_preset
+    _apply_preset_update(preset, body)
     save_global_preset(
         Path(request.app.state.settings.data_dir) / "presets.json",
         preset,

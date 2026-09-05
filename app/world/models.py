@@ -54,8 +54,23 @@ class NarrativePreset(BaseModel):
     style: str = "克制写实，白描为主，少用形容词堆砌。"
     description_style: str = "以玩家五官可感知为限写景，心理描写只写玩家自己的。"
     banned_words: list[str] = Field(default_factory=list)
-    director_guidelines: str = ""
-    storyteller_preset: str = ""
+    writer_guidelines: str = ""  # 编剧准则：创作/排戏/写作要求合一（当前唯一编辑框）
+    director_guidelines: str = ""  # legacy：合并前保留，非空时参与有效值
+    storyteller_preset: str = ""  # legacy：合并前保留，非空时参与有效值
+
+    @property
+    def effective_writer_guidelines(self) -> str:
+        """The single guidance block for the merged writer agent.
+
+        Prefers the new unified field; falls back to the pre-merge boxes
+        (director guidelines + storyteller preset) so old saves keep working.
+        """
+        if self.writer_guidelines:
+            return self.writer_guidelines
+        merged = f"{self.director_guidelines}\n\n{self.storyteller_preset}".strip()
+        if merged:
+            return merged
+        return ""
 
 
 class WorldContent(BaseModel):

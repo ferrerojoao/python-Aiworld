@@ -1,0 +1,32 @@
+{
+  "meta": {
+    "world_id": "qinghsi",
+    "save_name": "e2e",
+    "created_at": "",
+    "next_event_id": 3
+  },
+  "clock": "2026-07-14T08:10:00",
+  "player_scene": "net_bar",
+  "player": {
+    "id": "player",
+    "name": "你",
+    "appearance": "",
+    "persona": "",
+    "background": "",
+    "attributes": {}
+  },
+  "narrative_preset": {
+    "style": "克制写实，白描为主，少用形容词堆砌。",
+    "description_style": "以玩家五官可感知为限写景，心理描写只写玩家自己的。",
+    "banned_words": [],
+    "writer_guidelines": "",
+    "director_guidelines": "",
+    "storyteller_preset": ""
+  },
+  "entities": {},
+  "axes": {},
+  "hooks": [],
+  "pending_conflicts": [],
+  "scene_addons": {},
+  "access_overrides": {}
+}

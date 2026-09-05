@@ -210,8 +210,9 @@ async function refreshState() {
   $("#clock").textContent = data.clock || "-";
   $("#scene").textContent = data.scene_name || data.scene || "-";
   if (data.preset) {
-    $("#director-guidelines-input").value = data.preset.director_guidelines || "";
-    $("#storyteller-preset-input").value = data.preset.storyteller_preset || "";
+    const p = data.preset;
+    const legacy = [p.director_guidelines, p.storyteller_preset].filter(Boolean).join("\n\n");
+    $("#writer-guidelines-input").value = p.writer_guidelines || legacy || "";
   }
   renderLeftRail(data);
 }
@@ -472,11 +473,10 @@ async function savePreset() {
   await api(`/api/presets`, {
     method: "PUT",
     body: JSON.stringify({
-      director_guidelines: $("#director-guidelines-input").value,
-      storyteller_preset: $("#storyteller-preset-input").value,
+      writer_guidelines: $("#writer-guidelines-input").value,
     }),
   });
-  alert("预设已保存");
+  alert("编剧准则已保存");
 }
 
 /* ---------- 系统设置 ---------- */
