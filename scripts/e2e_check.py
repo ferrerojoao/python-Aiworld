@@ -73,17 +73,11 @@ async def main() -> None:
     assert session.ledger.save.clock == "2026-07-14T08:10:00", session.ledger.save.clock
     print("4. clock advanced to", session.ledger.save.clock)
 
-    # 5. Query route bypasses LLM.
-    c3 = await runner.run_turn("现在什么时辰")
-    assert c3.mode == "query" and c3.side_effects.narrative is None
-    print("5. query bypass ok:", c3.prose)
-
-    # 6. Next input auto-adopts single pending candidate (the query candidate
-    #    commits as a no-op since it carries no narrative side effects).
+    # 5. Next input auto-adopts the pending single candidate.
     c4 = await runner.run_turn("然后呢")
     assert len(session.ledger.narratives) == 2  # opening + adopted turn
     assert len(session.candidates.list_pending()) == 1  # the new turn's candidate
-    print("6. auto-adopt ok; narratives:", len(session.ledger.narratives))
+    print("5. auto-adopt ok; narratives:", len(session.ledger.narratives))
 
     print("\nALL E2E CHECKS PASSED")
 

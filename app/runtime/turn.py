@@ -170,27 +170,6 @@ class TurnRunner:
                 delta = 60
             rule_bundle["delta_minutes"] = delta
 
-        if route == "query":
-            from app.rules.scenes import scene_description
-
-            clock = self.session.ledger.save.clock or "-"
-            desc = scene_description(scene, self.session.world, self.session.ledger)
-            now = dt.datetime.now().isoformat(timespec="seconds")
-            candidate = Candidate(
-                candidate_id=new_id("cand"),
-                turn_id=new_id("turn"),
-                trace_id=new_id("tr"),
-                mode="query",
-                player_input=player_input,
-                prose=f"现在是 {clock}。{desc}",
-                side_effects=SideEffects(),
-                conflicts=[],
-                created_at=now,
-                updated_at=now,
-            )
-            self.session.candidates.save(candidate)
-            return candidate
-
         out = await self._write_turn(
             player_input, scene=scene, rule_bundle=rule_bundle
         )

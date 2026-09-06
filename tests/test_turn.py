@@ -114,13 +114,6 @@ def test_jump_advances_delta(session, fake_llm, settings):
     assert candidate.side_effects.delta_minutes == 240
 
 
-def test_query_bypass_creates_read_only_candidate(session, fake_llm, settings):
-    runner = _runner(session, fake_llm, settings)
-    candidate = asyncio.run(runner.run_turn("现在什么时辰"))
-    assert candidate.mode == "query"
-    assert candidate.side_effects.narrative is None
-
-
 def test_candidate_has_summary(session, fake_llm, settings):
     runner = _runner(session, fake_llm, settings)
     candidate = asyncio.run(runner.run_turn("去网吧找朱明"))
