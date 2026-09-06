@@ -38,34 +38,31 @@ async def run_qc(
     model: str = "fake",
     temperature: float = 0.2,
 ) -> QCOutput:
-    """QC worker: style check, leak check, banned words, conflicts."""
+    """QC worker: style, leak and banned-words checks (all by the LLM)."""
     preset = preset or world.presets
-    banned = set(preset.banned_words)
-    issues: list[dict] = []
-    fixed = prose
-
-    for word in banned:
-        if word in fixed:
-            fixed = fixed.replace(word, "……")
-            issues.append({"level": "minor", "desc": f"禁用词替换: {word}"})
+    banned = list(preset.banned_words)
 
     system = "\n".join(
         [
             "你是 AIWorld 的质检员，负责文风、泄漏和禁用词检查。",
             "只返回 JSON，格式如下：",
             '{"status": "pass|fixed", "prose": "质检后的正文（可修改，不得为空）", "issues": [{"desc": "修改记录"}]}',
-            "status：pass=无需修改；fixed=已修改正文或替换禁用词。",
+            "status：pass=无需修改；fixed=已修改正文。",
             "issues：修改记录列表（改了什么/为什么改），没有则为空数组。",
             "具体检查项：",
             "1. 文风一致性：按编剧准则核对文风与描写方式，明显不符处局部改写——只动需要改的句子，其余部分保持原样透传。",
             "2. 泄漏比对（必须执行）：参照区列出每个出场角色「知道的事」。某角色台词呈现的知识超出其已知范围，"
             "就是泄漏（剧情错误），必须脱敏改写为模糊表述。",
-            "3. 禁用词：发现禁用词时直接替换为省略号。",
+            "3. 禁用词（必须执行）：下面给出一份禁用词表。正文里出现这些词时，必须**局部改写**该处——"
+            "换成不违禁的等价说法，保持句子通顺、文意不变，**绝不要**把词替换成省略号或删掉造成语句残缺；"
+            "改写后记录到 issues。",
             "不要检查剧情走向是否合理、是否存在设定矛盾——那是玩家的判断，不是你的职责。",
+            "",
+            "禁用词表：" + ("、".join(banned) if banned else "（无）"),
         ]
     )
     messages = [{"role": "system", "content": system}]
-    user_parts = [f"正文：\n{fixed}"]
+    user_parts = [f"正文：\n{prose}"]
     if reference:
         user_parts.append(f"\n参照区（只读比对用，禁止出现在正文里）：\n{reference}")
     user_parts.append("\n请给出质检结果。")
@@ -79,8 +76,7 @@ async def run_qc(
     )
     out = QCOutput.model_validate(data)
     if not out.prose:
-        out.prose = fixed
-    if issues:
-        out.issues.extend(issues)
+        out.prose = prose
+    if out.issues:
         out.status = "fixed"
     return out
