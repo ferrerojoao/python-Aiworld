@@ -69,13 +69,20 @@ async def _director_chat(request, session, message: str):
     messages.extend(history)
     messages.append({"role": "user", "content": message})
 
-    data = await llm.complete_json(
-        messages,
-        DirectorReply,
-        model=settings.resolved_model("director"),
-        temperature=0.7,
-    )
-    out = DirectorReply.model_validate(data)
+    out = None
+    for attempt in range(2):
+        data = await llm.complete_json(
+            messages,
+            DirectorReply,
+            model=settings.resolved_model("director"),
+            temperature=0.7,
+        )
+        out = DirectorReply.model_validate(data)
+        if out.reply:
+            break
+    if out is None or not out.reply:
+        out = DirectorReply(reply="（导演暂时没想出什么，稍后再聊。）")
+
     session.director_history.append({"role": "user", "content": message})
     session.director_history.append({"role": "assistant", "content": out.reply or ""})
     result: dict = {"reply": out.reply or ""}
