@@ -92,6 +92,60 @@ def test_retired_npc_absent_from_present_at(session):
     assert "npc_zhuming" not in ledger.present_at("net_bar")
 
 
+def test_index_maintained_incrementally(session):
+    """Append updates the derived indexes: later location wins for where_is
+    and by_participant feeds experiences with visibility filtering."""
+    ledger = session.ledger
+    ledger.append(
+        {
+            "id": ledger.allocate_event_id(),
+            "kind": "narrative",
+            "at": "2026-07-14T09:00:00",
+            "location": "net_bar",
+            "participants": ["npc_zhuming"],
+            "known_by": None,
+            "body": "朱明在网吧。",
+            "summary": "朱明在网吧。",
+        }
+    )
+    assert ledger.where_is("npc_zhuming")["location"] == "net_bar"
+    assert "npc_zhuming" in ledger.present_at("net_bar")
+
+    # A later, different location overwrites the previous snapshot.
+    ledger.append(
+        {
+            "id": ledger.allocate_event_id(),
+            "kind": "narrative",
+            "at": "2026-07-14T10:00:00",
+            "location": "school_gate",
+            "participants": ["npc_zhuming"],
+            "known_by": None,
+            "body": "朱明到了校门口。",
+            "summary": "朱明到了校门口。",
+        }
+    )
+    assert ledger.where_is("npc_zhuming")["location"] == "school_gate"
+    assert "npc_zhuming" not in ledger.present_at("net_bar")
+    assert "npc_zhuming" in ledger.present_at("school_gate")
+
+    # A private event involving only 王蓉 stays invisible to 朱明.
+    ledger.append(
+        {
+            "id": ledger.allocate_event_id(),
+            "kind": "narrative",
+            "at": "2026-07-14T10:05:00",
+            "location": "alley_old_building",
+            "participants": ["npc_wangrong"],
+            "known_by": ["npc_wangrong"],
+            "body": "王蓉一个人来老巷。",
+            "summary": "王蓉一个人来老巷。",
+        }
+    )
+    zhuming_mem = "\n".join(ledger.experiences("npc_zhuming", "npc_zhuming"))
+    assert "朱明在网吧" in zhuming_mem and "到了校门口" in zhuming_mem
+    assert "王蓉一个人来老巷" not in zhuming_mem
+
+
 def test_access_rejudge(session):
     ledger = session.ledger
     ev = {

@@ -386,8 +386,8 @@ async def reset_session(request: Request, sid: str):
     session.ledger.events = []
     session.ledger.narratives = []
     session.ledger.by_id = {}
-    session.ledger.by_subject_loc = {}
     session.ledger.by_location = {}
+    session.ledger._rebuild_indexes()  # 清空并重建派生索引（last_location/by_participant）
     session.candidates.delete_all()
     events_path = session.ledger.events_path
     if events_path.exists():
