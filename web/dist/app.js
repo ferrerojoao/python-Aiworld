@@ -521,6 +521,10 @@ function describeAction(action) {
       return `事件改判：${p.event_id || "?"} → ${p.known_by ? "私密" : "公开"}`;
     case "amend_card":
       return `补卡事务：${p.npc_id || "?"} 增补人物卡`;
+    case "create_npc":
+      return `角色转正：为「${p.name || "?"}」建档`;
+    case "add_scene":
+      return `场景转正：注册新地点「${p.name || "?"}」`;
     default:
       return `${action.type || "?"} ${JSON.stringify(p)}`;
   }

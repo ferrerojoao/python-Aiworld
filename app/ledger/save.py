@@ -47,3 +47,4 @@ class SaveData(BaseModel):
     axes: dict[str, int] = Field(default_factory=dict)  # 二期预留
     hooks: list[Hook] = Field(default_factory=list)
     access_overrides: dict[str, list[str] | None] = Field(default_factory=dict)
+    audit_last_error: str | None = None  # 最近一次审计失败记录（不再静默）

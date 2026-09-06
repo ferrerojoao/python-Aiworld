@@ -187,4 +187,58 @@ def _execute_action(session, action_type: str, payload: dict) -> dict:
         _write_npc_card(session, npc_id)
         return {"ok": True, "action": action_type}
 
+    if action_type == "create_npc":
+        # 角色转正：AI 现场捏的角色 → 玩家深聊 → 建档为实例 NPC 卡。
+        name = (payload.get("name") or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name is required")
+        from app.world.models import NpcCard
+
+        npc_id = f"npc_{payload.get('npc_id') or name[:8]}"
+        while npc_id in session.world.npcs:
+            npc_id += "_x"
+        card = NpcCard(
+            id=npc_id,
+            name=name,
+            appearance=(payload.get("appearance") or "").strip(),
+            persona=(payload.get("persona") or "").strip() or f"名字：{name}。（作者尚未细写）",
+            private_note=(payload.get("private_note") or "").strip() or None,
+            personal_secrets=(payload.get("personal_secrets") or "").strip() or None,
+            has_actor=bool(payload.get("has_actor", False)),
+        )
+        from app.core.store import write_json_atomic
+
+        npcs_dir = session.world_dir / "npcs"
+        npcs_dir.mkdir(exist_ok=True)
+        write_json_atomic(npcs_dir / f"{npc_id}.json", card.model_dump())
+        session.reload_world()
+        return {"ok": True, "action": action_type, "npc_id": npc_id}
+
+    if action_type == "add_scene":
+        # 场景转正：玩家走进/提及包外地点 → 注册为实例场景节点，可复用。
+        name = (payload.get("name") or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name is required")
+        from app.world.models import Scene
+
+        scene_id = payload.get("scene_id") or f"scene_{name[:8]}"
+        while scene_id in {s.id for s in session.world.scenes}:
+            scene_id += "_x"
+        scene = Scene(
+            id=scene_id,
+            name=name,
+            aliases=payload.get("aliases") or [name],
+            tags=payload.get("tags") or [],
+            perceivable=payload.get("perceivable") or "这里看起来是个还没仔细描述的地方。",
+            open_hours=payload.get("open_hours") or "全天",
+            adjacent=payload.get("adjacent") or [session.ledger.save.player_scene],
+        )
+        from app.core.store import write_json_atomic
+
+        scenes_path = session.world_dir / "scenes.json"
+        scenes = [s.model_dump() for s in session.world.scenes] + [scene.model_dump()]
+        write_json_atomic(scenes_path, scenes)
+        session.reload_world()
+        return {"ok": True, "action": action_type, "scene_id": scene_id}
+
     raise HTTPException(status_code=400, detail=f"unknown action: {action_type}")

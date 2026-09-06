@@ -140,6 +140,9 @@ def writer_golden_rules() -> list[str]:
         "金科玉律（绝对不可违背）：",
         "绝不泄漏：你读到的幕后注、私密事件、秘密，一律不得出现在正文或任何角色的台词里；"
         "你不知道的信息不能由角色说出来，角色只能说自己知道的事。",
+        "位置是快照不是事实：NPC 的最后位置/在场名单是最近一次记录的快照，可能已过期。"
+        "编排「去找某人」的戏时，依据此人的人物卡与最近经历合理推断他此刻可能在何处——找到、扑空、他挪了地方都是合理的叙事，"
+        "不要机械地把快照位置当作他此刻的所在。",
         "深抉择纪律：标（配 Actor）的 NPC 撞上深抉择（内心判断 / 涉密反应 / 是否信任）时，"
         "你**不得替他决定**，必须在输出里填 actor_questions（npc_id / question / context），引擎会派他的 Actor 决定后回来再成文；"
         "标（导演代笔）的 NPC 或普通对话由你直接写出即可，不填 actor_questions。",
@@ -251,11 +254,13 @@ def build_director_chat_system(
         "- 记忆注入 inject_memory：玩家要求给某 NPC 私下注入一条记忆 → payload {npc_id, memory}（只有他知道）",
         "- 事件访问改判 access_rejudge：玩家要求某事件公开或私密 → payload {event_id, known_by: [知情者...] 或 null}",
         "- 补卡事务 amend_card：玩家要求增补某 NPC 人物卡 → payload {npc_id, amendment}",
+        "- 角色转正 create_npc：玩家要求给无档案的角色建档 → payload {name, persona?, appearance?, has_actor?}",
+        "- 场景转正 add_scene：玩家声明一个新地点 → payload {name, perceivable?}（注册后可复用）",
         "纪律：不得替玩家决定是否执行；一旦要执行必须返回 action 供玩家确认。",
         "讨论剧情时，若结论明确，最后给一句简短的输入建议（玩家可直接复制进正文框）。",
         "",
         "输出必须是 JSON 对象，字段：",
-        '{"reply": "你的回复文本（直接回答玩家，必填）", "action": null | {"type": "override|set_actor|inject_memory|access_rejudge|amend_card", "payload": {"字段": "值"}}}',
+        '{"reply": "你的回复文本（直接回答玩家，必填）", "action": null | {"type": "override|set_actor|inject_memory|access_rejudge|amend_card|create_npc|add_scene", "payload": {"字段": "值"}}}',
         "reply：给玩家的戏外回复。",
         "action：只有当玩家明确要求执行幕后操作时才填；否则为 null。",
         "注意：payload 里的 npc_id / subject 必须使用角色 id（如 npc_zhuming，见角色资料行的 id 标注），不要用中文名字。",

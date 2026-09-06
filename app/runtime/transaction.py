@@ -161,10 +161,10 @@ class Transaction:
             if last_narrative is not None:
                 try:
                     await audit(last_narrative)
-                except Exception:
-                    # Audit failure must not roll back the already-adopted narrative.
-                    # A future version can record run_id and retry later.
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    # Audit failure must not roll back the already-adopted
+                    # narrative, but it must not be silent either.
+                    self.ledger.save.audit_last_error = f"{type(exc).__name__}: {exc}"
 
         self.ledger.persist_save()
         # Clean this turn's candidate files only after a successful commit.

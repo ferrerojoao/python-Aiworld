@@ -432,6 +432,68 @@ def test_director_confirm_set_actor_and_inject_memory(tmp_path):
         assert injected["known_by"] == ["npc_zhuming"]
 
 
+def test_director_confirm_create_npc_and_add_scene(tmp_path):
+    """Player-driven promotion: a grabbed character becomes an instance NPC
+    card; a new place becomes a navigable instance scene."""
+    from app.core.llm import FakeLLM
+
+    class PrefixKeyLLM(FakeLLM):
+        def _key(self, messages):
+            for msg in reversed(messages):
+                if msg.get("role") in {"user", "system"}:
+                    content = msg.get("content", "")
+                    for prefix in self.responses:
+                        if content.startswith(prefix):
+                            return prefix
+            return "*"
+
+    llm = PrefixKeyLLM(
+        {
+            "给那个老乞丐建档": {
+                "reply": "好的，我来给老乞丐建档。",
+                "action": {
+                    "type": "create_npc",
+                    "payload": {"name": "老乞丐", "appearance": "破棉袄，走路一瘸一拐。", "has_actor": False},
+                },
+            },
+            "街角新开了家奶茶店": {
+                "reply": "好的，我把它注册为新地点。",
+                "action": {"type": "add_scene", "payload": {"name": "街角奶茶店", "perceivable": "门脸不大，招牌是手写的。"}},
+            },
+        }
+    )
+    with _make_client(tmp_path, llm=llm) as client:
+        r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
+        sid = r.json()["sid"]
+
+        chat = client.post(
+            f"/api/sessions/{sid}/director",
+            json={"topic": "chat", "message": "给那个老乞丐建档"},
+        ).json()
+        confirm = client.post(
+            f"/api/sessions/{sid}/director",
+            json={"topic": "confirm", "action": chat["pending_action"]},
+        )
+        assert confirm.status_code == 200
+        npc_id = confirm.json()["npc_id"]
+        world = client.get(f"/api/sessions/{sid}/world").json()
+        assert npc_id in world["npcs"]
+        assert world["npcs"][npc_id]["name"] == "老乞丐"
+
+        chat2 = client.post(
+            f"/api/sessions/{sid}/director",
+            json={"topic": "chat", "message": "街角新开了家奶茶店"},
+        ).json()
+        confirm2 = client.post(
+            f"/api/sessions/{sid}/director",
+            json={"topic": "confirm", "action": chat2["pending_action"]},
+        )
+        assert confirm2.status_code == 200
+        scene_id = confirm2.json()["scene_id"]
+        world = client.get(f"/api/sessions/{sid}/world").json()
+        assert any(s["id"] == scene_id and s["name"] == "街角奶茶店" for s in world["scenes"])
+
+
 def test_settings_and_director_chat(tmp_path):
     with _make_client(tmp_path) as client:
         r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
