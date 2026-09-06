@@ -95,6 +95,16 @@ def _resolve_npc_ref(session, ref: str) -> str | None:
     return None
 
 
+def _write_npc_card(session, npc_id: str) -> None:
+    """Persist one NPC card in the save's world instance and reload."""
+    from app.core.store import write_json_atomic
+
+    npc = session.world.npcs[npc_id]
+    card_path = session.world_dir / "npcs" / f"{npc_id}.json"
+    write_json_atomic(card_path, npc.model_dump())
+    session.reload_world()
+
+
 def _execute_action(session, action_type: str, payload: dict) -> dict:
     """Execute a confirmed backstage action (player already confirmed it)."""
     ledger = session.ledger
@@ -107,15 +117,13 @@ def _execute_action(session, action_type: str, payload: dict) -> dict:
         return {"ok": True, "action": action_type}
 
     if action_type == "set_actor":
-        # 升格/降档：玩家判断的角色档位管理（has_actor 运行时单向由玩家控制，
-        # 落存档级 entities，不动内容包资产）。
+        # 角色档位：直接写存档世界实例的人物卡（设计 C，玩家判断）。
         npc_id = _resolve_npc_ref(session, payload.get("npc_id", ""))
         if npc_id is None:
             raise HTTPException(status_code=404, detail=f"npc not found: {payload.get('npc_id')}")
         has = bool(payload.get("has_actor", True))
-        entity = ledger.save.entities.setdefault(npc_id, EntityRuntime())
-        entity.has_actor = has
-        ledger.persist_save()
+        session.world.npcs[npc_id].has_actor = has
+        _write_npc_card(session, npc_id)
         return {"ok": True, "action": action_type, "npc_id": npc_id, "has_actor": has}
 
     if action_type == "inject_memory":
@@ -167,13 +175,16 @@ def _execute_action(session, action_type: str, payload: dict) -> dict:
         return {"ok": True, "action": action_type, "event": event}
 
     if action_type == "amend_card":
+        # 补卡事务：把增补内容写入存档世界实例的人物卡（人格增厚，玩家确认后）。
         npc_id = _resolve_npc_ref(session, payload.get("npc_id", ""))
-        persona_patch = payload.get("persona_patch")
+        amendment = (payload.get("amendment") or "").strip()
         if npc_id is None:
             raise HTTPException(status_code=404, detail=f"npc not found: {payload.get('npc_id')}")
-        entity = ledger.save.entities.setdefault(npc_id, EntityRuntime())
-        entity.persona_patch = persona_patch
-        ledger.persist_save()
+        if not amendment:
+            raise HTTPException(status_code=400, detail="amendment is required")
+        npc = session.world.npcs[npc_id]
+        npc.persona = f"{npc.persona}\n{amendment}".strip()
+        _write_npc_card(session, npc_id)
         return {"ok": True, "action": action_type}
 
     raise HTTPException(status_code=400, detail=f"unknown action: {action_type}")

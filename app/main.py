@@ -37,7 +37,7 @@ def create_app(settings: Settings | None = None, llm=None) -> FastAPI:
                 for save_dir in save_root.iterdir():
                     if (save_dir / "save.json").exists():
                         try:
-                            session = open_session(world_dir, save_root, save_dir.name)
+                            session = open_session(save_root, save_dir.name)
                             app.state.sessions[session.sid] = session
                         except Exception:
                             continue

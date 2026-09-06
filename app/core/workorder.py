@@ -39,14 +39,11 @@ def character_block(world: WorldContent, ledger: Ledger, present_ids: list[str],
     for pid in present_ids:
         npc = world.npcs.get(pid)
         if npc:
-            entity = ledger.save.entities.get(pid)
-            ticket = "（配 Actor）" if npc.has_actor or (entity and entity.has_actor) else "（导演代笔）"
+            ticket = "（配 Actor）" if npc.has_actor else "（导演代笔）"
             id_tag = f"（id: {npc.id}）" if include_ids else ""
             lines.append(
                 f"[{npc.name}]{id_tag}{ticket} 名字：{npc.name}；外貌：{npc.appearance or '未设定'}；人格：{npc.persona or '未设定'}"
             )
-            if entity and entity.persona_patch:
-                lines.append(f"  档案增补（补卡事务产物，等同于人物卡内容）：{entity.persona_patch[:120]}")
         else:
             lines.append(f"[{pid}] 名字：{pid}")
     return lines
@@ -209,9 +206,6 @@ def build_actor_work_order(
     ]
     if npc.personal_secrets:
         parts.append(f"你心里的事（只有你自己知道，绝不对外人说）：{npc.personal_secrets}")
-    entity = ledger.save.entities.get(npc_id)
-    if entity and entity.persona_patch:
-        parts.append(f"档案增补：{entity.persona_patch}")
     parts += scene_snapshot_block(world, ledger, scene_id)
     mem = ledger.experiences(npc_id, npc_id)[-memory_limit:]
     if mem:
@@ -256,7 +250,7 @@ def build_director_chat_system(
         "- 角色档位 set_actor：玩家判断某 NPC 配/不配 Actor → payload {npc_id, has_actor: true|false}",
         "- 记忆注入 inject_memory：玩家要求给某 NPC 私下注入一条记忆 → payload {npc_id, memory}（只有他知道）",
         "- 事件访问改判 access_rejudge：玩家要求某事件公开或私密 → payload {event_id, known_by: [知情者...] 或 null}",
-        "- 补卡事务 amend_card：玩家要求增补某 NPC 人物卡 → payload {npc_id, persona_patch}",
+        "- 补卡事务 amend_card：玩家要求增补某 NPC 人物卡 → payload {npc_id, amendment}",
         "纪律：不得替玩家决定是否执行；一旦要执行必须返回 action 供玩家确认。",
         "讨论剧情时，若结论明确，最后给一句简短的输入建议（玩家可直接复制进正文框）。",
         "",

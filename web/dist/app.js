@@ -1161,19 +1161,15 @@ async function saveWorldEdit() {
     return;
   }
   try {
-    await api(`/api/worlds/${state.worldId}`, {
+    await api(`/api/sessions/${state.sid}/world`, {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    alert("已保存到当前世界资产包");
+    alert("已保存到当前存档的世界实例");
     setEditModeUI(false);
     await loadWorldBrowser();
   } catch (e) {
-    if (String(e.message).includes("409")) {
-      alert("当前世界已有存档，不能原地覆盖。请使用“另存为新世界”。");
-    } else {
-      alert(`保存失败：${e.message}`);
-    }
+    alert(`保存失败：${e.message}`);
   }
 }
 
@@ -1187,11 +1183,11 @@ async function saveAsWorld() {
     return;
   }
   try {
-    const res = await api(`/api/worlds/${state.worldId}/save-as`, {
+    const res = await api(`/api/sessions/${state.sid}/world/save-as`, {
       method: "POST",
       body: JSON.stringify({ new_world_id: newId.trim(), ...data }),
     });
-    alert(`已另存为新世界：${res.world_id}`);
+    alert(`已把当前世界（含演化）沉淀为新世界资产包：${res.world_id}`);
     setEditModeUI(false);
     await loadWorldList();
     switchWorldTab("list");

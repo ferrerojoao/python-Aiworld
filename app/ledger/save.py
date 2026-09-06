@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from app.world.models import NarrativePreset, Scene
+from app.world.models import NarrativePreset
 
 
 class SaveMeta(BaseModel):
@@ -14,8 +14,7 @@ class SaveMeta(BaseModel):
 
 class EntityRuntime(BaseModel):
     lifecycle: str = "active"  # active | retired
-    has_actor: bool = False  # 运行时档位（set_actor，玩家判断；与卡上初值叠加）
-    persona_patch: str | None = None
+    # has_actor / persona 全部在存档的世界实例（world/）人物卡里，运行时只有一个开关
 
 
 class Hook(BaseModel):
@@ -47,5 +46,4 @@ class SaveData(BaseModel):
     entities: dict[str, EntityRuntime] = Field(default_factory=dict)
     axes: dict[str, int] = Field(default_factory=dict)  # 二期预留
     hooks: list[Hook] = Field(default_factory=list)
-    scene_addons: dict[str, Scene] = Field(default_factory=dict)
     access_overrides: dict[str, list[str] | None] = Field(default_factory=dict)

@@ -199,36 +199,37 @@ def test_debug_trace_available_after_turn(tmp_path):
         assert trace[0]["messages"]
 
 
-def test_world_save_as_when_has_save(tmp_path):
+def test_world_edit_and_save_as(tmp_path):
     with _make_client(tmp_path) as client:
         r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
         sid = r.json()["sid"]
         world = client.get(f"/api/sessions/{sid}/world").json()
 
-        # In-place save must be blocked because qinghsi already has a save.
-        r = client.put(
-            "/api/worlds/qinghsi",
-            json={
-                "overview": world["overview"],
-                "lorebook": world["lorebook"],
-                "scenes": world["scenes"],
-                "npcs": world["npcs"],
-                "axes": world["axes"],
-            },
-        )
-        assert r.status_code == 409
+        # Design C: editing writes the save's world instance, never the asset.
+        payload = {
+            "overview": world["overview"],
+            "lorebook": world["lorebook"],
+            "scenes": world["scenes"],
+            "npcs": world["npcs"],
+            "axes": world["axes"],
+        }
+        payload["overview"]["name"] = "青石镇（已改）"
+        r = client.put(f"/api/sessions/{sid}/world", json=payload)
+        assert r.status_code == 200
+        world2 = client.get(f"/api/sessions/{sid}/world").json()
+        assert world2["overview"]["name"] == "青石镇（已改）"
+        # The content-pack template itself is untouched.
+        import json as _json
 
-        # Save-as should create a new world.
+        from pathlib import Path as _Path
+
+        template = _json.loads(_Path(tmp_path / "qinghsi" / "world.json").read_text(encoding="utf-8"))
+        assert template["name"] == "青石镇"
+
+        # Save-as promotes the instance (with evolution) to a new template.
         r = client.post(
-            "/api/worlds/qinghsi/save-as",
-            json={
-                "new_world_id": "qinghsi_edit",
-                "overview": world["overview"],
-                "lorebook": world["lorebook"],
-                "scenes": world["scenes"],
-                "npcs": world["npcs"],
-                "axes": world["axes"],
-            },
+            f"/api/sessions/{sid}/world/save-as",
+            json={"new_world_id": "qinghsi_edit", **payload},
         )
         assert r.status_code == 200
         worlds = client.get("/api/worlds").json()["worlds"]
@@ -320,9 +321,9 @@ def test_director_chat_pending_action_confirm(tmp_path):
 
     llm = PrefixKeyLLM(
         {
-            "让朱明配 Agent": {
-                "reply": "好的，我将把朱明设为配 Actor。",
-                "action": {"type": "set_actor", "payload": {"npc_id": "npc_zhuming", "has_actor": True}},
+            "让王蓉配 Agent": {
+                "reply": "好的，王蓉将配 Actor。",
+                "action": {"type": "set_actor", "payload": {"npc_id": "npc_wangrong", "has_actor": True}},
             }
         }
     )
@@ -333,19 +334,19 @@ def test_director_chat_pending_action_confirm(tmp_path):
         # The chat proposes the action but does not apply it yet.
         chat = client.post(
             f"/api/sessions/{sid}/director",
-            json={"topic": "chat", "message": "让朱明配 Agent"},
+            json={"topic": "chat", "message": "让王蓉配 Agent"},
         ).json()
         assert chat["pending_action"]["type"] == "set_actor"
 
-        # Nothing applied before confirmation.
+        # Nothing applied before confirmation: instance card still has_actor=False.
         import json
 
-        save = json.loads(
-            (tmp_path / "qinghsi" / "saves" / "main" / "save.json").read_text(encoding="utf-8")
+        card = json.loads(
+            (tmp_path / "qinghsi" / "saves" / "main" / "world" / "npcs" / "npc_wangrong.json").read_text(encoding="utf-8")
         )
-        assert "npc_zhuming" not in save.get("entities", {})
+        assert card["has_actor"] is False
 
-        # Confirm executes it.
+        # Confirm executes it on the instance card.
         confirm = client.post(
             f"/api/sessions/{sid}/director",
             json={"topic": "confirm", "action": chat["pending_action"]},
@@ -353,10 +354,10 @@ def test_director_chat_pending_action_confirm(tmp_path):
         assert confirm.status_code == 200
         assert confirm.json()["has_actor"] is True
 
-        save = json.loads(
-            (tmp_path / "qinghsi" / "saves" / "main" / "save.json").read_text(encoding="utf-8")
+        card = json.loads(
+            (tmp_path / "qinghsi" / "saves" / "main" / "world" / "npcs" / "npc_wangrong.json").read_text(encoding="utf-8")
         )
-        assert save["entities"]["npc_zhuming"]["has_actor"] is True
+        assert card["has_actor"] is True
 
 
 def test_director_confirm_set_actor_and_inject_memory(tmp_path):
@@ -405,13 +406,13 @@ def test_director_confirm_set_actor_and_inject_memory(tmp_path):
         assert confirm.status_code == 200
         assert confirm.json()["has_actor"] is True
 
-        # Runtime promotion survives reload and drives deep-choice dispatch.
+        # Promotion survives reload and lives on the world-instance card.
         import json
 
-        save = json.loads(
-            (tmp_path / "qinghsi" / "saves" / "main" / "save.json").read_text(encoding="utf-8")
+        card = json.loads(
+            (tmp_path / "qinghsi" / "saves" / "main" / "world" / "npcs" / "npc_wangrong.json").read_text(encoding="utf-8")
         )
-        assert save["entities"]["npc_wangrong"]["has_actor"] is True
+        assert card["has_actor"] is True
 
         chat2 = client.post(
             f"/api/sessions/{sid}/director",

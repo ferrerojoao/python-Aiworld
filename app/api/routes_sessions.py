@@ -98,24 +98,27 @@ async def delete_world(request: Request, world_id: str):
 
 @router.put("/worlds/{world_id}")
 async def update_world_assets(request: Request, world_id: str, body: WorldAssetData):
-    world_root = _world_root(request, world_id)
-    save_root = world_root / "saves"
-    has_saves = save_root.is_dir() and any((save_root / p).joinpath("save.json").exists() for p in save_root.iterdir())
-    if has_saves:
-        raise HTTPException(
-            status_code=409,
-            detail="该世界已有存档，不能原地覆盖；请使用“另存为新世界”。",
-        )
+    # 旧语义（改资产 + 409 锁）已废弃：世界=存档实例，编辑一律走
+    # PUT /sessions/{sid}/world 写实例。此处仅作兼容提示。
+    raise HTTPException(status_code=410, detail="已改为编辑当前存档的世界实例：PUT /sessions/{sid}/world")
+
+
+@router.put("/sessions/{sid}/world")
+async def update_session_world(request: Request, sid: str, body: WorldAssetData):
+    """Edit the save's writable world instance (design C)."""
+    session = _get_session(request, sid)
     payload = body.model_dump()
-    payload["overview"]["id"] = world_id
-    save_world_assets(world_root, payload)
+    payload["overview"]["id"] = session.world.meta.id
+    save_world_assets(session.world_dir, payload)
+    session.reload_world()
     return {"ok": True}
 
 
-@router.post("/worlds/{world_id}/save-as")
-async def save_as_world(request: Request, world_id: str, body: SaveAsWorldBody):
-    # Ensure the source world exists.
-    _world_root(request, world_id)
+@router.post("/sessions/{sid}/world/save-as")
+async def save_session_world_as(request: Request, sid: str, body: SaveAsWorldBody):
+    """Promote the current world instance (with all evolution) to a new
+    content-pack template for future saves."""
+    session = _get_session(request, sid)
     new_id = body.new_world_id.strip()
     if not new_id:
         raise HTTPException(status_code=400, detail="new_world_id is required")
@@ -147,10 +150,9 @@ async def list_sessions(request: Request):
 
 @router.post("/sessions/open")
 async def open_existing_session(request: Request, body: OpenSessionBody):
-    world_root = _world_root(request, body.world_id)
     save_root = _save_root(request, body.world_id)
     try:
-        session = open_session(world_root, save_root, body.save_name)
+        session = open_session(save_root, body.save_name)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     request.app.state.sessions[session.sid] = session
@@ -302,17 +304,14 @@ async def world_browser(request: Request, sid: str):
 
 @router.get("/sessions/{sid}/world/export")
 async def export_world(request: Request, sid: str):
+    """Export the save's writable world instance (with all evolution)."""
     session = _get_session(request, sid)
-    world_root = _world_root(request, session.world.meta.id)
+    instance_root = session.world_dir
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in sorted(world_root.rglob("*")):
-            if (
-                path.is_file()
-                and "saves" not in path.parts
-                and path.name != "presets.json"
-            ):
-                zf.write(path, path.relative_to(world_root))
+        for path in sorted(instance_root.rglob("*")):
+            if path.is_file() and path.name != "presets.json":
+                zf.write(path, path.relative_to(instance_root))
     buffer.seek(0)
     filename = f"{session.world.meta.id}.zip"
     return StreamingResponse(
@@ -369,9 +368,12 @@ async def import_world(request: Request, sid: str, body: ImportWorldBody):
 
 @router.post("/sessions/{sid}/reset")
 async def reset_session(request: Request, sid: str):
-    from app.runtime.session import write_opening_event
+    from app.runtime.session import rebuild_world_instance, write_opening_event
 
     session = _get_session(request, sid)
+    # 世界实例从模板重建（演化和编辑全清），运行态清零，开场重建。
+    template_root = Path(request.app.state.settings.content_root) / session.world.meta.id
+    rebuild_world_instance(session, template_root)
     save = session.ledger.save
     save.clock = "2026-07-14T08:00:00"
     save.meta.next_event_id = 1
