@@ -87,7 +87,7 @@ async def main() -> None:
     # Order assertions for the 2026-09-05 assembly design:
     # 金科玉律 upfront, dynamic context near the input, format last.
     order_checks = [
-        ("金科玉律", "角色资料"),
+        ("金科玉律", "玩家资料"),
         ("金科玉律", "事件日志"),
         ("事件日志", "当前场景"),
         ("当前场景", "在场 NPC 近况"),

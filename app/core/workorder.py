@@ -30,22 +30,29 @@ def world_summary_block(world: WorldContent) -> list[str]:
 
 
 def character_block(world: WorldContent, ledger: Ledger, present_ids: list[str], include_ids: bool = False) -> list[str]:
-    """主角 + 在场 NPC 名片（含 Actor 档位标注与运行时补卡，可选附带 id）。"""
+    """玩家资料 + 在场 NPC 名片（含 Actor 档位标注，可选附带 id）。
+
+    玩家与 NPC 分两段，避免「角色」笼统概念混用。
+    """
     player = ledger.save.player
-    lines = ["角色资料："]
+    lines = ["玩家资料："]
     lines.append(
         f"[主角] 名字：{player.name}；外貌：{player.appearance or '未设定'}；人格：{player.persona or '未设定'}；背景：{player.background or '未设定'}"
     )
+    npc_lines = []
     for pid in present_ids:
         npc = world.npcs.get(pid)
         if npc:
             ticket = "（配 Actor）" if npc.has_actor else "（导演代笔）"
             id_tag = f"（id: {npc.id}）" if include_ids else ""
-            lines.append(
+            npc_lines.append(
                 f"[{npc.name}]{id_tag}{ticket} 名字：{npc.name}；外貌：{npc.appearance or '未设定'}；人格：{npc.persona or '未设定'}"
             )
         else:
-            lines.append(f"[{pid}] 名字：{pid}")
+            npc_lines.append(f"[{pid}] 名字：{pid}")
+    if npc_lines:
+        lines.append("在场 NPC：")
+        lines.extend(npc_lines)
     return lines
 
 
@@ -70,6 +77,7 @@ def scene_snapshot_block(world: WorldContent, ledger: Ledger, scene_id: str) -> 
     present_ids = ledger.present_at(scene_id)
     names = [world.npcs[pid].name if pid in world.npcs else pid for pid in present_ids]
     return [
+        "当前时间：" + (ledger.save.clock or "-"),
         "在场：" + ("、".join(names) or "暂无"),
         "当前场景：" + (scene.name if scene else "主街"),
         scene.perceivable if scene else "未知场景",
@@ -138,8 +146,9 @@ def writer_golden_rules() -> list[str]:
     """不可违背的禁忌，置于高注意力区（prompt 前部）。"""
     return [
         "金科玉律（绝对不可违背）：",
-        "绝不泄漏：你读到的幕后注、私密事件、秘密，一律不得出现在正文或任何角色的台词里；"
-        "你不知道的信息不能由角色说出来，角色只能说自己知道的事。",
+        "秘密是未叙述的真相：你读到的幕后注、私密事件、秘密只能当作你排戏的参考，绝不能当作人人都知道的背景或旁白写进正文；"
+        "知情者可以在戏里揭示自己知道的秘密（坦白 / 撞破 / 对质，作为新戏自然发生，揭示后落新事件），"
+        "但**不该知道的人**绝不能说出——边界是「他知道不知道」。",
         "位置是快照不是事实：NPC 的最后位置/在场名单是最近一次记录的快照，可能已过期。"
         "编排「去找某人」的戏时，依据此人的人物卡与最近经历合理推断他此刻可能在何处——找到、扑空、他挪了地方都是合理的叙事，"
         "不要机械地把快照位置当作他此刻的所在。",
@@ -148,7 +157,7 @@ def writer_golden_rules() -> list[str]:
         "标（导演代笔）的 NPC 或普通对话由你直接写出即可，不填 actor_questions。",
         "actor_questions 的 context 只写该 NPC 本人会知道的情境，禁止写只有你知道的动机、私密或幕后注。",
         "不要提到 AIWorld、系统、编剧、剧本指令、玩家输入等元信息。",
-        "不要打破第四面墙，只写玩家在故事里能感知到的内容。正文按第二人称写玩家。",
+        "不要打破第四面墙，只写玩家在故事里能感知到的内容。",
     ]
 
 
@@ -297,8 +306,8 @@ def build_work_order(
         parts += world_summary_block(world)
         # C 金科玉律（禁忌前置，高注意力区）
         parts += writer_golden_rules()
-        # D 角色资料（含档位标注）
-        parts += character_block(world, ledger, present_ids)
+        # D 玩家资料 + 在场 NPC（含 id 标注，编剧须用规范 id）
+        parts += character_block(world, ledger, present_ids, include_ids=True)
         # E 事件日志（理解本句输入的钥匙）
         parts += event_log_block(ledger)
         # F 场景快照（此刻环境）
