@@ -65,9 +65,12 @@ def event_log_block(ledger: Ledger, limit: int = 10, recent_full: int = 3, summa
 
     def _summary_line(ev: dict) -> str:
         summary = (ev.get("summary") or (ev.get("body") or ""))[:summary_len]
-        line = f"- {_id_tag(ev)}{ev.get('at', '')} {summary}"
-        if ev.get("player_input"):
-            line += f"（玩家当时说：{ev['player_input'][:input_len]}）"
+        at = ev.get("at", "")
+        pinput = ev.get("player_input")
+        if pinput:
+            line = f"- {_id_tag(ev)}{at} 玩家：「{pinput[:input_len]}」 {summary}"
+        else:
+            line = f"- {_id_tag(ev)}{at} {summary}"
         return line
 
     recent = ledger.narratives[-limit:]
