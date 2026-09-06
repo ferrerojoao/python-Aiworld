@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.config import Settings
 from app.core.llm import FakeLLM
 from app.runtime.session import create_session, write_opening_event
+from app.world.models import NarrativePreset
 from app.workers.writer import run_writer
 
 WORLD = Path(__file__).resolve().parent.parent / "content" / "qinghsi"
@@ -65,7 +66,7 @@ async def main() -> None:
         session.ledger,
         "问朱明昨天为什么打架",
         scene_id="net_bar",
-        preset=session.world.presets,
+        preset=NarrativePreset(writer_guidelines="测试编剧准则：克制写实。"),
     )
     assert out.prose
 
@@ -84,14 +85,15 @@ async def main() -> None:
     print("\n--- 事件日志段预览 ---")
     print(system[idx : idx + 240])
 
-    # Order assertions for the 2026-09-05 assembly design:
-    # 金科玉律 upfront, dynamic context near the input, format last.
+    # Order assertions for the 2026-09-05 continuation-first assembly.
+    # Use collision-free anchors ("事件日志" also appears in the golden rules).
     order_checks = [
         ("金科玉律", "玩家资料"),
-        ("金科玉律", "事件日志"),
-        ("事件日志", "当前场景"),
-        ("当前场景", "在场 NPC 近况"),
-        ("编剧准则", "输出必须是 JSON 对象"),
+        ("金科玉律", "编剧准则"),
+        ("编剧准则", "玩家资料"),
+        ("当前场景", "最近剧情（原文）"),  # scene snapshot before the recent prose
+        ("更早事件（摘要）", "最近剧情（原文）"),  # summaries before prose
+        ("输出必须是 JSON 对象", "最近剧情（原文）"),  # output format before the log
     ]
     for earlier, later in order_checks:
         ok = system.find(earlier) < system.find(later)

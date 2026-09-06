@@ -56,19 +56,32 @@ def character_block(world: WorldContent, ledger: Ledger, present_ids: list[str],
     return lines
 
 
-def event_log_block(ledger: Ledger, limit: int = 10, summary_len: int = 60, input_len: int = 30, include_ids: bool = False) -> list[str]:
+def event_log_block(ledger: Ledger, limit: int = 10, recent_full: int = 3, summary_len: int = 60, input_len: int = 30, include_ids: bool = False) -> list[str]:
+    """Event log for the writer: older ones as summaries, the newest 3 as
+    full prose (so the writer can "continue" straight after them)."""
+
+    def _id_tag(ev: dict) -> str:
+        return f"[{ev['id']}] " if include_ids and ev.get("id") else ""
+
+    def _summary_line(ev: dict) -> str:
+        summary = (ev.get("summary") or (ev.get("body") or ""))[:summary_len]
+        line = f"- {_id_tag(ev)}{ev.get('at', '')} {summary}"
+        if ev.get("player_input"):
+            line += f"（玩家当时说：{ev['player_input'][:input_len]}）"
+        return line
+
     recent = ledger.narratives[-limit:]
     if not recent:
         return []
-    lines = ["事件日志（世界近期发生的事，全部向你开放）："]
-    for ev in recent:
-        summary = (ev.get("summary") or (ev.get("body") or ""))[:summary_len]
-        line = f"- {ev.get('at', '')} {summary}"
-        if include_ids and ev.get("id"):
-            line = f"- [{ev['id']}] {line[2:]}"
-        if ev.get("player_input"):
-            line += f"（玩家当时说：{ev['player_input'][:input_len]}）"
-        lines.append(line)
+    lines = ["事件日志（世界近期发生的事）："]
+    older = recent[:-recent_full] if len(recent) > recent_full else []
+    if older:
+        lines.append("更早事件（摘要）：")
+        lines.extend(_summary_line(ev) for ev in older)
+    newest = recent[-recent_full:]
+    lines.append("最近剧情（原文）：")
+    for ev in newest:
+        lines.append(f"- {_id_tag(ev)}{ev.get('at', '')}：{ev.get('body', '')}")
     return lines
 
 
@@ -308,25 +321,25 @@ def build_work_order(
         parts += world_summary_block(world)
         # C 金科玉律（禁忌前置，高注意力区）
         parts += writer_golden_rules()
-        # D 玩家资料 + 在场 NPC（含 id 标注，编剧须用规范 id）
-        parts += character_block(world, ledger, present_ids, include_ids=True)
-        # E 事件日志（理解本句输入的钥匙）
-        parts += event_log_block(ledger)
-        # F 场景快照（此刻环境）
-        parts += scene_snapshot_block(world, ledger, scene_id)
-        # G 在场 NPC 近况
-        parts += npc_history_block(ledger, present_ids)
-        # H 幕后注（机密，自带警示，与 C 呼应双保险）
-        parts += private_notes_block(world, present_ids)
-        # I 可选素材（候选/钩子，未来 token 超支时最先可裁）
-        parts += lore_candidates_block(ledger, scene_id, present_ids)
-        parts += hooks_block(ledger)
-        # J 编剧准则（创作与写作要求，贴近动笔位置）
+        # J 编剧准则（创作与写作要求，紧跟金科玉律）
         if preset.writer_guidelines:
             parts.append("编剧准则（创作与写作要求，必须遵循）：")
             parts.append(preset.writer_guidelines)
-        # K 输出格式（近因区，紧贴玩家输入消息）
+        # D 玩家资料 + 在场 NPC（含 id 标注，编剧须用规范 id）
+        parts += character_block(world, ledger, present_ids, include_ids=True)
+        # H 幕后注（机密，与金科玉律呼应双保险）
+        parts += private_notes_block(world, present_ids)
+        # F 场景快照（此刻环境：当前时间/在场/场景/可感知）
+        parts += scene_snapshot_block(world, ledger, scene_id)
+        # G 在场 NPC 近况
+        parts += npc_history_block(ledger, present_ids)
+        # I 可选素材（候选/钩子，未来 token 超支时最先可裁）
+        parts += lore_candidates_block(ledger, scene_id, present_ids)
+        parts += hooks_block(ledger)
+        # K 输出格式（指令，近因区）
         parts += writer_output_format()
+        # E 事件日志（更早摘要在前 → 最近原文在后，收尾紧贴玩家输入以便续写）
+        parts += event_log_block(ledger)
         return "\n".join(parts)
 
     if viewer.startswith("actor_"):
