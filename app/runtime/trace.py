@@ -10,6 +10,11 @@ class TraceRecorder:
         self._llm = llm
         self.entries: list[dict[str, Any]] = []
 
+    def get_usage(self) -> dict[str, int]:
+        if hasattr(self._llm, "get_usage"):
+            return self._llm.get_usage()
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "calls": 0}
+
     async def complete_json(self, messages, schema, *, model="fake", temperature=0.2):
         entry: dict[str, Any] = {
             "type": "json",

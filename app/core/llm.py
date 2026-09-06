@@ -44,15 +44,22 @@ class LLMGateway:
         api_key: str,
         max_concurrency: int = 4,
         timeout: float = 120,
+        reasoning_effort: str = "",
     ):
         self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
         self._sem = asyncio.Semaphore(max_concurrency)
+        self.reasoning_effort = reasoning_effort.lower()
         self.usage = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
             "total_tokens": 0,
             "calls": 0,
         }
+
+    def _effort_kwargs(self) -> dict[str, Any]:
+        # Only forward reasoning_effort when a level is set; downgrade to
+        # silent (no param) if the endpoint rejects it.
+        return {"reasoning_effort": self.reasoning_effort} if self.reasoning_effort else {}
 
     def _add_usage(self, response) -> None:
         usage = getattr(response, "usage", None)
@@ -96,6 +103,7 @@ class LLMGateway:
                 "messages": msgs,
                 "temperature": temperature,
             }
+            kwargs.update(self._effort_kwargs())
             if use_response_format:
                 kwargs["response_format"] = {"type": "json_object"}
             text: str | None = None
@@ -111,6 +119,11 @@ class LLMGateway:
                 last_error = exc
                 if text:
                     last_raw = text
+                if "reasoning_effort" in str(exc).lower():
+                    # Endpoint does not support a reasoning level; stop
+                    # forwarding it for the remaining attempts.
+                    self.reasoning_effort = ""
+                    continue
                 if "json_object" in str(exc).lower():
                     # Some local servers do not accept response_format; retry
                     # the same attempt shape without it.
@@ -128,12 +141,24 @@ class LLMGateway:
         model: str,
         temperature: float = 0.7,
     ) -> str:
-        async with self._sem:
-            response = await self._client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-            )
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        kwargs.update(self._effort_kwargs())
+        try:
+            async with self._sem:
+                response = await self._client.chat.completions.create(**kwargs)
+        except Exception as exc:  # noqa: BLE001
+            if "reasoning_effort" in str(exc).lower():
+                self.reasoning_effort = ""
+                async with self._sem:
+                    response = await self._client.chat.completions.create(
+                        model=model, messages=messages, temperature=temperature
+                    )
+            else:
+                raise
         self._add_usage(response)
         return response.choices[0].message.content or ""
 

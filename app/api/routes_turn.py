@@ -50,6 +50,8 @@ async def post_turn(request: Request, sid: str, body: TurnBody):
     async def event_stream():
         queue: asyncio.Queue = asyncio.Queue()
         runner.set_progress_queue(queue)
+        before = trace.get_usage()
+        cache_before = session.ledger.cache_stats_snapshot()
 
         async def run():
             try:
@@ -58,6 +60,9 @@ async def post_turn(request: Request, sid: str, body: TurnBody):
                     # default to adopt before processing the next input.
                     await runner.adopt(body.adopt_candidate_id)
                 candidate = await runner.run_turn(body.input)
+                after = trace.get_usage()
+                cache_after = session.ledger.cache_stats_snapshot()
+                settings = request.app.state.settings
                 await queue.put(
                     {
                         "type": "candidate",
@@ -68,6 +73,18 @@ async def post_turn(request: Request, sid: str, body: TurnBody):
                             "prose": candidate.prose,
                             "side_effects": candidate.side_effects.model_dump(),
                             "conflicts": candidate.conflicts,
+                            "usage": {
+                                "prompt_tokens": after["prompt_tokens"] - before["prompt_tokens"],
+                                "completion_tokens": after["completion_tokens"] - before["completion_tokens"],
+                                "total_tokens": after["total_tokens"] - before["total_tokens"],
+                                "calls": after["calls"] - before["calls"],
+                            },
+                            "cache": {
+                                "hits": cache_after["hits"] - cache_before["hits"],
+                                "misses": cache_after["misses"] - cache_before["misses"],
+                            },
+                            "model": settings.resolved_model("story"),
+                            "reasoning_effort": settings.reasoning_effort or "auto",
                         },
                     }
                 )

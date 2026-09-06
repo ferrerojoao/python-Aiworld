@@ -52,6 +52,8 @@ class Ledger:
         self.last_location: dict[str, dict[str, Any]] = {}
         # 小抄②：每个人参与过哪些事件（experiences 热路径）
         self.by_participant: dict[str, list[dict[str, Any]]] = {}
+        # 索引命中率统计（展示用，量测"小抄"是否在起作用）
+        self.cache_stats: dict[str, int] = {"hits": 0, "misses": 0}
 
         for event in self.events:
             self._index(event)
@@ -92,20 +94,33 @@ class Ledger:
     # ------------------------------------------------------------------
     # Queries
     # ------------------------------------------------------------------
+    def _probe(self, entity: str) -> dict[str, Any] | None:
+        """Look up the location snapshot, counting index hits/misses."""
+        event = self.last_location.get(entity)
+        if event is not None:
+            self.cache_stats["hits"] += 1
+        else:
+            self.cache_stats["misses"] += 1
+        return event
+
     def where_is(self, entity: str) -> dict[str, Any] | None:
-        return self.last_location.get(entity)
+        return self._probe(entity)
 
     def present_at(self, scene: str) -> list[str]:
         result = []
-        for subject, event in self.last_location.items():
-            if subject not in self.world.npcs:
-                continue  # player 等非 NPC 不算在场者
+        for subject in self.world.npcs.keys():
+            event = self._probe(subject)
+            if event is None:
+                continue
             entity = self.save.entities.get(subject)
             if entity and entity.lifecycle == "retired":
                 continue  # 退场者停止参与在场推导与主动调度（REQ 〇章）
             if event.get("location") == scene:
                 result.append(subject)
         return sorted(result)
+
+    def cache_stats_snapshot(self) -> dict[str, int]:
+        return dict(self.cache_stats)
 
     def visible_to(self, viewer: str) -> list[dict[str, Any]]:
         """Narrative events visible to a viewer.

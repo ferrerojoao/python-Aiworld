@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AIWorld</title>
-  <link rel="stylesheet" href="style.css?v=37" />
+  <link rel="stylesheet" href="style.css?v=38" />
 </head>
 <body>
   <div id="app">
@@ -43,6 +43,7 @@
         <input id="input" type="text" placeholder="输入你的行动 / 对话 / 跳时…" autocomplete="off" />
         <button type="submit">发送</button>
       </form>
+      <div id="usage-status" class="usage-status"></div>
     </main>
 
     <!-- 右侧抽屉：导演 / 预设 / 设置 -->
@@ -107,6 +108,13 @@
         <input id="setting-model-main" type="text" placeholder="qwen2.5:7b" />
         <label>辅助模型</label>
         <input id="setting-model-cheap" type="text" placeholder="qwen2.5:7b" />
+        <label>推理等级（自动 = 不指定）</label>
+        <select id="setting-reasoning">
+          <option value="auto">自动</option>
+          <option value="low">低</option>
+          <option value="medium">中</option>
+          <option value="high">高</option>
+        </select>
         <label>字体大小</label>
         <select id="setting-font-size">
           <option value="13">小</option>
@@ -170,6 +178,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=37"></script>
+  <script src="app.js?v=38"></script>
 </body>
 </html>

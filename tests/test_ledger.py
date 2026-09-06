@@ -146,6 +146,28 @@ def test_index_maintained_incrementally(session):
     assert "王蓉一个人来老巷" not in zhuming_mem
 
 
+def test_cache_stats_counts_hits_and_misses(session):
+    ledger = session.ledger
+    assert ledger.where_is("npc_zhuming") is None
+    stats = ledger.cache_stats_snapshot()
+    assert stats["misses"] >= 1 and stats["hits"] == 0
+    ledger.append(
+        {
+            "id": ledger.allocate_event_id(),
+            "kind": "narrative",
+            "at": "2026-07-14T09:00:00",
+            "location": "net_bar",
+            "participants": ["npc_zhuming"],
+            "known_by": None,
+            "body": "朱明在网吧。",
+            "summary": "朱明在网吧。",
+        }
+    )
+    assert ledger.where_is("npc_zhuming")["location"] == "net_bar"
+    stats = ledger.cache_stats_snapshot()
+    assert stats["hits"] >= 1
+
+
 def test_access_rejudge(session):
     ledger = session.ledger
     ev = {

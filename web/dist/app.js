@@ -370,6 +370,7 @@ function handleSSEBlock(block) {
     state.currentCandidateId = payload.candidate_id;
     state.currentTurnId = payload.turn_id;
     state.currentMessageEl = null;
+    updateUsageStatus(payload);
     renderCandidateMessage();
   } else if (event === "error") {
     clearPipelineStatus();
@@ -452,6 +453,20 @@ async function loadDirectorHistory() {
   for (const item of data.history || []) {
     addDirectorMsg(item.role === "user" ? "user" : "assistant", item.content);
   }
+}
+
+function updateUsageStatus(data) {
+  const el = $("#usage-status");
+  if (!el) return;
+  const u = data.usage || {};
+  const c = data.cache || {};
+  const total = (c.hits || 0) + (c.misses || 0);
+  const rate = total ? Math.round(((c.hits || 0) / total) * 100) : 0;
+  const effLabel = { low: "低", medium: "中", high: "高" }[data.reasoning_effort] || "自动";
+  el.textContent =
+    `本轮：输入 ${u.prompt_tokens || 0} · 输出 ${u.completion_tokens || 0} token` +
+    ` · ${u.calls || 0} 次调用 · 缓存命中 ${rate}%（${c.hits || 0}/${total}）` +
+    ` · ${data.model || "-"} · 推理：${effLabel}`;
 }
 
 async function sendDirectorMessage() {
@@ -551,6 +566,7 @@ async function loadSettings() {
   $("#setting-api-key").value = data.llm_api_key || "";
   $("#setting-model-main").value = data.model_main || "";
   $("#setting-model-cheap").value = data.model_cheap || "";
+  $("#setting-reasoning").value = data.reasoning_effort || "auto";
 
   const fontSize = localStorage.getItem("aiworld_font_size") || "14";
   const theme = localStorage.getItem("aiworld_theme") || "dark";
@@ -577,6 +593,7 @@ async function saveSettings() {
       llm_api_key: $("#setting-api-key").value,
       model_main: $("#setting-model-main").value,
       model_cheap: $("#setting-model-cheap").value,
+      reasoning_effort: $("#setting-reasoning").value,
     }),
   });
 

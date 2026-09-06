@@ -508,6 +508,7 @@ def test_settings_and_director_chat(tmp_path):
 
         settings = client.get("/api/settings").json()
         assert "llm_base_url" in settings
+        assert "reasoning_effort" in settings
 
         put = client.put(
             "/api/settings",
@@ -516,11 +517,13 @@ def test_settings_and_director_chat(tmp_path):
                 "llm_api_key": "test-key",
                 "model_main": "test-model",
                 "model_cheap": "test-model",
+                "reasoning_effort": "low",
             },
         )
         assert put.status_code == 200
         settings = client.get("/api/settings").json()
         assert settings["llm_base_url"] == "http://example.test/v1"
+        assert settings["reasoning_effort"] == "low"
 
 
 def _candidate_id_from_sse(text: str) -> str:
