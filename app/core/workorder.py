@@ -184,16 +184,12 @@ def writer_output_format() -> list[str]:
     return [
         "",
         "输出必须是 JSON 对象，字段：",
-        '{"prose": "正文全文（必填，直接成稿）", "time_hint": null | {"desc": "天黑了", "advance_to": "night"},'
-        ' "summary": "一句话剧情摘要（不超过30字）", "location": "场景id", "participants": ["player", "npc_zhuming"],'
-        ' "private": false, "adopt_player_body": false, "actor_questions": []}',
+        '{"prose": "正文全文（必填，直接成稿）", "summary": "一句话剧情摘要（不超过30字）", "actor_questions": []}',
         "prose：本场戏正文，唯一正文字段。",
-        "time_hint：仅当正文明确推进时间时填对象，否则 null。",
         "summary：本场发生的核心事件摘要，供事件日志使用。",
-        "location / participants：本场发生的场景与在场者（与玩家输入一致）。",
-        "private：本场为私下情境（密室/四下无人/隐蔽动作）时 true，其余 false。",
         "actor_questions：需要派 Actor 的深抉择列表，没有则空数组。",
-        "禁止输出节拍表、directives、beats 等任何其他字段。",
+        "时间、地点、在场者、私密情境等世界变化都由引擎从你的正文里结算——你不需要、也不要输出这些字段，只需把变化在正文里写清楚（如「天黑了」「走出网吧」「王蓉先走了」）。",
+        "禁止输出 location、participants、time_hint、private 或任何其他字段。",
     ]
 
 
@@ -294,6 +290,43 @@ def build_director_chat_system(
         "禁止输出其他字段。",
     ]
     return "\n".join(parts)
+
+
+def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -> str:
+    """Audit work order: settle world side effects from the prose.
+
+    The audit infers time advance, location, presence, privacy and one-shot
+    vs registered scenes from the narrative, then settles hooks/lifecycle.
+    """
+    scene_id = scene_id or ledger.save.player_scene or "main_street"
+    scene = next((s for s in world.scenes if s.id == scene_id), None)
+    present_ids = ledger.present_at(scene_id)
+    names = [world.npcs[pid].name if pid in world.npcs else pid for pid in present_ids]
+    scene_list = "、".join(s.name for s in world.scenes)
+    return "\n".join(
+        [
+            "你是 AIWorld 的世界审计：玩家采纳一条正文后，你从正文里结算世界的副作用，并落钩子与生命周期。",
+            "只返回 JSON，格式如下：",
+            '{"location": "场景id", "scene_name": "地点名（新地点给中文名）", "register_scene": false,'
+            ' "participants": ["player", "npc_zhuming"], "private": false, "delta_minutes": 0,'
+            ' "hook_texts": ["承诺/未了事"], "closed_hook_ids": ["已兑现钩子id"], "lifecycle": [{"npc_id": "npc_zhuming", "status": "retired"}]}',
+            "判定规则：",
+            "- location / participants：正文里玩家与他人此刻所在之处。玩家在正文中明确移动（离开/去别处/回家）时更新；"
+            "人员进出场同步更新 participants（离开者不保留）。",
+            "- 场景若已在场景表里，用其 id；正文进入未注册的新地点时，location 给一个英文 id，scene_name 给中文名。"
+            "register_scene：玩家声明要去/回访/会复用该地点时为 true（注册为可导航场景）；"
+            "剧情顺笔的一次性舞台（如今晚的草地、密室）为 false（不进导航集，显示名仍可用）。",
+            "- private：四下无人/密室/隐蔽情境为 true，否则 false。",
+            "- delta_minutes：正文明确推进了时间（天黑了/第二天/过了一会/到了晚上）时，给出推进的分钟数；"
+            "没有明确时间流逝给 0。",
+            "- hook_texts / closed_hook_ids / lifecycle：按正文语义识别，规则同前。",
+            "当前时间：" + (ledger.save.clock or "-"),
+            "当前场景：" + (scene.name if scene else scene_id),
+            "在场：" + ("、".join(names) or "暂无"),
+            "已注册场景：" + (scene_list or "（无）"),
+            *world.meta.summary,
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------

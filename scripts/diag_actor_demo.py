@@ -50,7 +50,15 @@ WRITER_SECOND = {
 }
 ACTOR_OUT = {"decision": "含糊带过", "action_hint": "岔开话题，去买两瓶可乐", "tone": "不耐烦里带点心虚"}
 QC_OUT = {"status": "pass", "prose": "朱明把脸别过去，含糊地说了句「哥，那事别提了」，起身去买了两瓶可乐。", "issues": []}
-AUDIT_OUT = {"hook_texts": [], "conflicts": [], "lifecycle": []}
+AUDIT_OUT = {
+    "location": "net_bar",
+    "participants": ["player", "npc_zhuming"],
+    "private": False,
+    "delta_minutes": 0,
+    "hook_texts": [],
+    "closed_hook_ids": [],
+    "lifecycle": [],
+}
 
 
 class PrefixKeyLLM(FakeLLM):
@@ -110,7 +118,7 @@ async def main() -> None:
 
     print("\n◆ 最终候选正文:")
     print(candidate.prose)
-    assert candidate.prose and candidate.side_effects.narrative["participants"] == ["player", "npc_zhuming"]
+    assert candidate.prose and candidate.side_effects.narrative["summary"]
     print("\nALL ACTOR DEMO CHECKS PASSED")
 
     shutil.rmtree(SAVES, ignore_errors=True)

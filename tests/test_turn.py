@@ -166,6 +166,80 @@ def test_next_input_auto_adopts_single_candidate(session, fake_llm, settings):
     assert len(session.candidates.list_pending()) == 1  # only the new candidate
 
 
+def test_audit_settles_side_effects_and_one_shot_scene(session, settings):
+    """At adopt, the audit inference drives clock/location/presence/privacy
+    and leaves one-shot scenes unregistered (display name only)."""
+    writer_out = {
+        "prose": "两人走到镇外一片苇草丛里，天渐渐黑了。王蓉悄悄说了一件心事。",
+        "summary": "刘星和王蓉在苇草深处说话，天黑了。",
+        "actor_questions": [],
+    }
+    qc_out = {"status": "pass", "prose": "两人走到镇外一片苇草丛里，天渐渐黑了。王蓉悄悄说了一件心事。", "issues": []}
+    audit_out = {
+        "location": "weicao_deep",
+        "scene_name": "苇草深处",
+        "register_scene": False,
+        "participants": ["player", "npc_wangrong"],
+        "private": True,
+        "delta_minutes": 240,
+        "hook_texts": [],
+        "closed_hook_ids": [],
+        "lifecycle": [],
+    }
+    llm = PrefixKeyLLM(
+        {
+            "玩家输入：": writer_out,
+            "正文：": qc_out,
+            "已采纳正文": audit_out,
+        }
+    )
+    runner = _runner(session, llm, settings)
+    candidate = asyncio.run(runner.run_turn("跟她出去走走"))
+    asyncio.run(runner.adopt(candidate.candidate_id))
+
+    assert session.ledger.save.clock == "2026-07-14T12:00:00"  # 08:00 + 240min
+    ev = session.ledger.narratives[-1]
+    assert ev["location"] == "weicao_deep"
+    assert ev["known_by"] == ["player", "npc_wangrong"]  # private
+    assert ev["location_name"] == "苇草深处"
+    # One-shot scene is NOT registered in the world instance.
+    assert not any(s.id == "weicao_deep" for s in session.world.scenes)
+    # Presence follows the audit inference.
+    assert "npc_zhuming" not in session.ledger.present_at("weicao_deep")
+
+
+def test_audit_registers_reusable_scene(session, settings):
+    """A scene the player declares reusable gets registered (M17 转正)."""
+    audit_out = {
+        "location": "milktea_shop",
+        "scene_name": "街角奶茶店",
+        "register_scene": True,
+        "participants": ["player"],
+        "private": False,
+        "delta_minutes": 0,
+        "hook_texts": [],
+        "closed_hook_ids": [],
+        "lifecycle": [],
+    }
+    llm = PrefixKeyLLM(
+        {
+            "玩家输入：": {
+                "prose": "你走进街角新开的奶茶店，点了杯柠檬水。",
+                "summary": "刘星去了新开的奶茶店。",
+                "actor_questions": [],
+            },
+            "正文：": {"status": "pass", "prose": "你走进街角新开的奶茶店，点了杯柠檬水。", "issues": []},
+            "已采纳正文": audit_out,
+        }
+    )
+    runner = _runner(session, llm, settings)
+    candidate = asyncio.run(runner.run_turn("去街角那家奶茶店"))
+    asyncio.run(runner.adopt(candidate.candidate_id))
+
+    assert any(s.id == "milktea_shop" and s.name == "街角奶茶店" for s in session.world.scenes)
+    assert session.ledger.save.player_scene == "milktea_shop"
+
+
 def test_multiple_candidates_blocks_new_turn(session, fake_llm, settings):
     runner = _runner(session, fake_llm, settings)
     first = asyncio.run(runner.run_turn("问朱明昨天的事"))

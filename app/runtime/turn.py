@@ -113,8 +113,6 @@ class TurnRunner:
                 temperature=0.8,
             )
 
-        if out.adopt_player_body:
-            out.prose = player_input
         return out
 
     def _deferred_actor_notes(self, out) -> list[dict]:
@@ -153,12 +151,15 @@ class TurnRunner:
         scene = self.session.ledger.save.player_scene
         rule_bundle: dict = {"route": route, "scene": scene}
 
-        # Rule pre-solve for move.
+        # Rule pre-solve for move: only when the destination actually
+        # resolves. Unresolved moves leave scene/clock to the audit, which
+        # settles location/registration from the adopted prose.
         if route == "move":
             dest = resolve_destination(player_input, self.session.world, self.session.ledger)
-            delta = travel_minutes(scene, dest, self.session.world)
-            rule_bundle.update({"destination": dest, "delta_minutes": delta, "scene": dest})
-            scene = dest
+            if dest:
+                delta = travel_minutes(scene, dest, self.session.world)
+                rule_bundle.update({"destination": dest, "delta_minutes": delta, "scene": dest})
+                scene = dest
         elif route == "jump":
             if "第二天" in player_input or "明天" in player_input:
                 delta = 12 * 60
@@ -175,14 +176,15 @@ class TurnRunner:
         )
 
         await self._progress("qc", "质检员审校中")
+        qc_participants = ["player"] + [q.npc_id for q in out.actor_questions]
         qc = await run_qc(
             self.llm,
             self.session.world,
             self.session.ledger,
             out.prose,
-            participants=out.participants,
+            participants=qc_participants,
             preset=self.preset,
-            reference=build_qc_reference(self.session.world, self.session.ledger, out.participants or []),
+            reference=build_qc_reference(self.session.world, self.session.ledger, qc_participants),
             model=self.settings.resolved_model("qc"),
             temperature=self.settings.temp_qc,
         )
@@ -192,7 +194,6 @@ class TurnRunner:
         turn_id = new_id("turn")
         candidate_id = new_id("cand")
         now = dt.datetime.now().isoformat(timespec="seconds")
-        participants = out.participants or (["player"] + [q.npc_id for q in out.actor_questions])
         candidate = Candidate(
             candidate_id=candidate_id,
             turn_id=turn_id,
@@ -202,10 +203,9 @@ class TurnRunner:
             prose=qc.prose,
             side_effects=SideEffects(
                 delta_minutes=rule_bundle.get("delta_minutes", 0),
+                # 规则段可定移动目的地；正文语义副作用（时间/在场/私密）由采纳时审计推断。
                 narrative={
-                    "location": out.location or scene,
-                    "participants": participants or ["player"],
-                    "known_by": None if not out.private else (participants or ["player"]),
+                    "location": rule_bundle.get("destination"),
                     "summary": summary,
                 },
                 events=[],
@@ -248,7 +248,7 @@ class TurnRunner:
             self.session.ledger,
             out.prose,
             preset=self.preset,
-            reference=build_qc_reference(self.session.world, self.session.ledger, out.participants or []),
+            reference=build_qc_reference(self.session.world, self.session.ledger, []),
             model=self.settings.resolved_model("qc"),
             temperature=self.settings.temp_qc,
         )
@@ -256,9 +256,6 @@ class TurnRunner:
         side_effects = latest.side_effects.model_copy(deep=True)
         if side_effects.narrative is not None:
             side_effects.narrative["summary"] = out.summary or (out.prose or "")[:40]
-            side_effects.narrative["location"] = out.location or scene
-            if out.participants:
-                side_effects.narrative["participants"] = out.participants
 
         now = dt.datetime.now().isoformat(timespec="seconds")
         candidate = Candidate(
@@ -282,12 +279,14 @@ class TurnRunner:
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
-    async def _audit_callback(self, narrative_event: dict):
-        await run_audit(
+    async def _audit_callback(self, candidate):
+        """Audit input adapter: run_audit now takes prose + player input."""
+        return await run_audit(
             self.llm,
+            self.session.world,
             self.session.ledger,
-            narrative_event,
-            hook_limit=self.settings.hook_limit,
+            candidate.prose,
+            candidate.player_input or "",
             model=self.settings.resolved_model("audit"),
             temperature=0.2,
         )

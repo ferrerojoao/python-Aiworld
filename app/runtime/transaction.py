@@ -107,39 +107,70 @@ class Transaction:
         self.candidates = candidates
 
     async def commit(self, candidate_id: str, *, audit) -> None:
+        """Adopt a candidate.
+
+        Rule-solved effects (move/jump delta, destination) come from the
+        candidate; prose-semantic effects (time/location/presence/privacy,
+        scene registration, hooks, lifecycle) come from the audit inference
+        — the audit runs here as the single settlement point and writes
+        nothing itself; this method applies its result.
+        """
         candidate = self.candidates.load(candidate_id)
         if candidate is None:
             raise KeyError(f"candidate not found: {candidate_id}")
 
-        turn_id = candidate.turn_id
+        audit_out = None
+        if audit is not None:
+            try:
+                audit_out = await audit(candidate)
+            except Exception as exc:  # noqa: BLE001
+                # Audit failure must not roll back the adopt nor stay silent.
+                self.ledger.save.audit_last_error = f"{type(exc).__name__}: {exc}"
+
+        # World clock: rule delta (move/jump) + prose-semantic delta.
         clock = self.ledger.save.clock or "2026-07-14T08:00:00"
-        # Clock is a simple ISO string; MVP advances by minutes.
-        if candidate.side_effects.delta_minutes:
+        delta = candidate.side_effects.delta_minutes or 0
+        if audit_out is not None:
+            delta += audit_out.delta_minutes or 0
+        if delta:
             try:
                 parsed = dt.datetime.fromisoformat(clock)
-                parsed += dt.timedelta(minutes=candidate.side_effects.delta_minutes)
+                parsed += dt.timedelta(minutes=delta)
                 clock = parsed.replace(microsecond=0).isoformat()
             except ValueError:
                 pass
         self.ledger.save.clock = clock
 
-        if candidate.side_effects.narrative is not None:
-            event_id = self.ledger.allocate_event_id()
-            narrative = {
-                "id": event_id,
-                "kind": "narrative",
-                "at": clock,
-                "location": candidate.side_effects.narrative.get("location") or self.ledger.save.player_scene,
-                "participants": candidate.side_effects.narrative.get("participants") or ["player"],
-                "known_by": candidate.side_effects.narrative.get("known_by"),
-                "body": candidate.prose,
-                "summary": candidate.side_effects.narrative.get("summary"),
-                "player_input": candidate.player_input or None,
-                "source": "turn",
-            }
-            self.ledger.append(narrative)
-            if candidate.side_effects.narrative.get("location"):
-                self.ledger.save.player_scene = candidate.side_effects.narrative["location"]
+        # Narrative record: rule-solved location wins; audit fills the rest.
+        narrated = candidate.side_effects.narrative or {}
+        location = narrated.get("location") or (audit_out.location if audit_out else None) or self.ledger.save.player_scene
+        participants = (audit_out.participants if audit_out and audit_out.participants else None) or ["player"]
+        private = bool(audit_out.private) if audit_out else False
+        known_by = participants if private else None
+
+        event_id = self.ledger.allocate_event_id()
+        narrative = {
+            "id": event_id,
+            "kind": "narrative",
+            "at": clock,
+            "location": location,
+            "participants": participants,
+            "known_by": known_by,
+            "body": candidate.prose,
+            "summary": narrated.get("summary") or (candidate.prose or "")[:40],
+            "player_input": candidate.player_input or None,
+            "source": "turn",
+        }
+        if location not in {s.id for s in self.ledger.world.scenes}:
+            scene_alias = narrated.get("location_name")
+            if audit_out and audit_out.scene_name and not scene_alias:
+                scene_alias = audit_out.scene_name
+            if scene_alias:
+                narrative["location_name"] = scene_alias
+            if audit_out and audit_out.register_scene and location:
+                self.ledger.register_scene(location, scene_alias or location)
+        self.ledger.append(narrative)
+        self.ledger.save.player_scene = location
 
         for event in candidate.side_effects.events:
             event = dict(event)
@@ -152,23 +183,29 @@ class Transaction:
         for key, value in candidate.side_effects.axes.items():
             self.ledger.save.axes[key] = value
 
-        # Audit runs synchronously after the narrative is recorded.
-        if audit is not None:
-            last_narrative = next(
-                (ev for ev in reversed(self.ledger.events) if ev["kind"] == "narrative"),
-                None,
+        # Apply the audit's hook/lifecycle settlement.
+        if audit_out is not None:
+            from app.ledger.hooks import add_hooks, close_hooks
+
+            add_hooks(
+                self.ledger,
+                audit_out.hook_texts,
+                event=narrative,
+                limit=getattr(self, "hook_limit", 5),
             )
-            if last_narrative is not None:
-                try:
-                    await audit(last_narrative)
-                except Exception as exc:  # noqa: BLE001
-                    # Audit failure must not roll back the already-adopted
-                    # narrative, but it must not be silent either.
-                    self.ledger.save.audit_last_error = f"{type(exc).__name__}: {exc}"
+            close_hooks(self.ledger, audit_out.closed_hook_ids)
+            for item in audit_out.lifecycle or []:
+                npc_id = str(item.get("npc_id") or item.get("id") or "")
+                status = str(item.get("status") or "")
+                if npc_id in self.ledger.world.npcs and status == "retired":
+                    from app.ledger.save import EntityRuntime
+
+                    entity = self.ledger.save.entities.setdefault(npc_id, EntityRuntime())
+                    entity.lifecycle = "retired"
 
         self.ledger.persist_save()
         # Clean this turn's candidate files only after a successful commit.
-        self.candidates.delete_turn(turn_id)
+        self.candidates.delete_turn(candidate.turn_id)
 
     def discard_turn(self, turn_id: str) -> None:
         self.candidates.delete_turn(turn_id)

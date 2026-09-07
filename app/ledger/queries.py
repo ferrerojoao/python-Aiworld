@@ -122,6 +122,27 @@ class Ledger:
     def cache_stats_snapshot(self) -> dict[str, int]:
         return dict(self.cache_stats)
 
+    def register_scene(self, scene_id: str, name: str) -> bool:
+        """Register a reusable scene node in the save's world instance
+        (M17 转正，仅玩家声明的可复用地点；一次性布景不注册)."""
+        if any(s.id == scene_id for s in self.world.scenes):
+            return False
+        from app.core.store import write_json_atomic
+        from app.world.models import Scene
+
+        scene = Scene(
+            id=scene_id,
+            name=name or scene_id,
+            aliases=[name or scene_id],
+            perceivable="这里看起来是个还没仔细描述的地方。",
+            open_hours="全天",
+            adjacent=[self.save.player_scene],
+        )
+        self.world.scenes.append(scene)
+        scenes_path = self.save_dir / "world" / "scenes.json"
+        write_json_atomic(scenes_path, [s.model_dump() for s in self.world.scenes])
+        return True
+
     def visible_to(self, viewer: str) -> list[dict[str, Any]]:
         """Narrative events visible to a viewer.
 

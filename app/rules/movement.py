@@ -9,11 +9,11 @@ from app.world.models import WorldContent
 def resolve_destination(text: str, world: WorldContent, ledger: Ledger) -> str | None:
     """Resolve a destination from player text.
 
-    Four routes:
-    1. direct scene alias
-    2. 'find NPC' -> NPC schedule/last location
-    3. 'last/that place' -> player's last location (not tracked yet; fallback main_street)
-    4. unknown named place -> register ad-hoc (not implemented in MVP, return main_street)
+    Three routes return None when unresolved, so the audit inference from the
+    adopted prose owns the final location:
+    1. direct scene alias -> scene id
+    2. 'find NPC' -> NPC schedule/last location (None when no fact)
+    3. unknown named place -> None (audit may register/reuse from prose)
     """
     text = text.strip()
     alias_map = {}
@@ -30,14 +30,11 @@ def resolve_destination(text: str, world: WorldContent, ledger: Ledger) -> str |
             fact = ledger.where_is(npc_id)
             if fact and fact.get("location"):
                 return fact["location"]
-            # 无最近位置事实时回退主街（不做日程推断）
-            return "main_street"
+            # 无最近位置事实时不猜测，交给审计按正文结算
+            return None
 
-    if "昨天" in text or "刚才" in text or "那个" in text:
-        return "main_street"
-
-    # New ad-hoc locations are not implemented yet; land on main street.
-    return "main_street"
+    # 未命中的地点不硬编码回主街；正文语义由采纳时审计推断。
+    return None
 
 
 def travel_minutes(from_scene: str | None, to_scene: str, world: WorldContent) -> int:
