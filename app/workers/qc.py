@@ -10,12 +10,30 @@ def build_qc_reference(world: WorldContent, ledger: Ledger, participants: list[s
 
     The merged writer is omniscient, so the QC pass is the last gate against
     knowledge leaks: a character's lines must stay inside their visible set.
+
+    Player secrets are the opposite boundary: personal_secrets are known to
+    the player only (no NPC may mention them — disguise identity), and
+    private_note is known to the writer only (neither player nor NPC knows).
+    Set them as forbidden zones the QC must never see leaked.
     """
     blocks = []
     scene_id = ledger.save.player_scene
     scene = next((s for s in world.scenes if s.id == scene_id), None)
     if scene:
         blocks.append(f"当前场景（{scene.name}）：{scene.perceivable}")
+
+    player = ledger.save.player
+    if player.personal_secrets:
+        blocks.append(
+            f"主角自知隐秘（只有玩家自己知道，任何 NPC 说出或提及都算泄漏，"
+            f"必须脱敏：{player.personal_secrets}"
+        )
+    if player.private_note:
+        blocks.append(
+            f"主角幕后注（连玩家也不知道的背景，正文绝不可揭示，只有编剧心里有数："
+            f"{player.private_note}"
+        )
+
     for pid in participants or []:
         npc = world.npcs.get(pid)
         if npc is None:
@@ -52,7 +70,9 @@ async def run_qc(
             "具体检查项：",
             "1. 文风一致性：按编剧准则核对文风与描写方式，明显不符处局部改写——只动需要改的句子，其余部分保持原样透传。",
             "2. 泄漏比对（必须执行）：参照区列出每个出场角色「知道的事」。某角色台词呈现的知识超出其已知范围，"
-            "就是泄漏（剧情错误），必须脱敏改写为模糊表述。",
+            "就是泄漏（剧情错误），必须脱敏改写为模糊表述。"
+            "参照区另有两条玩家边界：主角自知隐秘只有玩家自己知道——任何 NPC 说出或提及都算泄漏；"
+            "主角幕后注连玩家都不知道——正文任何形式的揭示都算泄漏（可作暗示铺垫，不可说破）。",
             "3. 禁用词（必须执行）：下面给出一份禁用词表。正文里出现这些词时，必须**局部改写**该处——"
             "换成不违禁的等价说法，保持句子通顺、文意不变，**绝不要**把词替换成省略号或删掉造成语句残缺；"
             "改写后记录到 issues。",

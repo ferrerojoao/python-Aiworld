@@ -413,3 +413,16 @@ def test_player_notes_reach_writer_work_order(session, settings):
     assert "其实是镇长的私生子" not in actor  # 主角底牌不泄漏进 NPC 切片
     assert "网吧冬天会失火" not in actor  # 朱明的幕后注（他也不知道）不给他自己看
     assert "他爸欠了赌债" in actor  # 朱明自知隐秘进他自己的切片
+
+    # QC 参照区：玩家秘密是禁区（NPC 提及=泄漏；正文揭示=泄漏）。
+    from app.workers.qc import build_qc_reference
+
+    reference = build_qc_reference(session.world, session.ledger, ["player", "npc_zhuming"])
+    assert "假面骑士" not in reference  # 无秘密时的基线
+    session.ledger.save.player.personal_secrets = "夜里是假面骑士"
+    session.ledger.save.player.private_note = "受神之加护，赐予者名雅典娜"
+    reference = build_qc_reference(session.world, session.ledger, ["player", "npc_zhuming"])
+    assert "假面骑士" in reference
+    assert "雅典娜" in reference
+    assert "只有玩家自己知道" in reference
+    assert "连玩家也不知道" in reference
