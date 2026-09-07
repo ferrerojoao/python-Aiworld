@@ -254,8 +254,9 @@ function renderLeftRail(data) {
   } else {
     for (const g of goalList) {
       const li = document.createElement("li");
-      const big = g.kind === "big" ? "【主线】" : "【支线】";
-      li.textContent = `${big}${g.text}`;
+      const big = g.kind === "big" ? "主线" : "支线";
+      const owner = g.subject_name && g.subject_name !== "玩家" ? `·${g.subject_name}` : "";
+      li.textContent = `【${big}${owner}】${g.text}`;
       goals.appendChild(li);
     }
   }

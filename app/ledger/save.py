@@ -22,14 +22,17 @@ class Goal(BaseModel):
     编剧写作时向目标引导。钩子台账已废弃（2026-09-07）。
 
     kind: big=大目标（主线）/ small=小目标（支线/节点）
+    subject: 目标归属者——"player"=玩家的目标；"npc_xxx"=该 NPC 的目标
+             （由玩家与导演讨论时替 NPC 设立，剧情里由该 NPC 主动推进）
     status: active | done | abandoned
     big_goal_id: 小目标挂靠的大目标（仅展示层级，不参与判定）
-    npc_id: 关联 NPC（编剧引导/主动登门素材）
+    npc_id: 关联 NPC（引导素材/主动登门）
     """
 
     id: str
     text: str
     kind: str = "small"  # big | small
+    subject: str = "player"  # player | npc_xxx（目标归属者）
     status: str = "active"  # active | done | abandoned
     big_goal_id: str | None = None
     npc_id: str | None = None

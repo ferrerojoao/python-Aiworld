@@ -164,19 +164,24 @@ def active_lore_block(ledger: Ledger) -> list[str]:
 
 
 def goals_block(ledger: Ledger) -> list[str]:
-    """剧情目标（M14）：玩家在导演窗口设立的方向，编剧写作时必须自然
-    地向其引导。置于预设段之后（不可裁块）。"""
+    """剧情目标（M14）：玩家在导演窗口设立的方向（玩家目标与 NPC 目标），
+    编剧写作时必须自然地向其引导。置于预设段之后（不可裁块）。"""
     goals = [g for g in ledger.save.goals if g.status == "active"]
     if not goals:
         return []
     lines = ["剧情目标（玩家设立的方向）："]
     for g in goals:
         tag = "大目标/主线" if g.kind == "big" else "小目标/支线"
+        owner = "玩家" if g.subject in {"", "player"} else (
+            ledger.world.npcs[g.subject].name if g.subject in ledger.world.npcs else g.subject
+        )
         npc_tag = f"（关联：{ledger.world.npcs[g.npc_id].name}）" if g.npc_id and g.npc_id in ledger.world.npcs else ""
-        lines.append(f"- [{tag}] {g.text}{npc_tag}")
+        lines.append(f"- [{tag}·{owner}] {g.text}{npc_tag}")
     lines.append(
         "引导纪律：把本回剧情**自然地**朝这些目标推进——NPC 提起线索、机会现前、冲突冒头；"
         "一次只推进一小步，禁止一轮内生硬给出全部结果；目标之外的自由展开不受限制。"
+        "目标归属者为 NPC 时，由**该 NPC** 在戏里主动推进：NPC 在场 → 让她自然提及（几句话、"
+        "一个试探）；NPC 不在场 → 安排她主动来找玩家（登门/路遇/托人带话）。"
     )
     return lines
 
@@ -309,7 +314,7 @@ def build_director_chat_system(
         "- 静默覆写 override：玩家声明某人/某物在哪或去做某事 → payload {subject, location}",
         "- 记忆注入 inject_memory：玩家要求给某 NPC 私下注入一条记忆 → payload {npc_id, memory}（只有他知道）",
         "- 事件访问改判 access_rejudge：玩家要求某事件公开或私密 → payload {event_id, known_by: [知情者...] 或 null}",
-        "- 剧情目标 set_goal：玩家要求设立/废弃剧情目标 → payload {text, kind: big|small, big_goal_id?, npc_id?}（设立）或 {goal_id, status: abandoned}（废弃）；大目标=主线，小目标=支线，活动目标上限 6 条",
+        "- 剧情目标 set_goal：玩家要求设立/废弃剧情目标 → payload {text, kind: big|small, subject?: player|npc_id, big_goal_id?, npc_id?}（设立）或 {goal_id, status: abandoned}（废弃）；大目标=主线，小目标=支线；subject=目标归属者（默认 player，玩家替 NPC 设立时给该 NPC id），活动目标上限 6 条",
         "（人物卡编辑、Actor 档位、转正/场景注册一律由世界工作台直接编辑，不走导演窗口。）",
         "纪律：不得替玩家决定是否执行；一旦要执行必须返回 action 供玩家确认。",
         "讨论剧情时，若结论明确，最后给一句简短的输入建议（玩家可直接复制进正文框）。",
@@ -355,7 +360,9 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
             "- delta_minutes：正文明确推进了时间（天黑了/第二天/过了一会/到了晚上）时，给出推进的分钟数；"
             "没有明确时间流逝给 0。",
             "- completed_goal_ids：正文已达到目标文本所述（小目标=当事达成；大目标=关键真相/冲突已解决）。"
-            "只推进未达成的不填——推进由编剧纪律负责，审计只判终点。",
+            "只推进未达成的不填——推进由编剧纪律负责，审计只判终点。"
+            "注意：目标归属者为 NPC 时，该目标 NPC 提及/推进目标只是推进（如王蓉提起接货），"
+            "只有当正文里目标所述之事真正发生（如玩家答应了）才判完成——推进不算完成。",
             "- lifecycle：按正文语义识别角色退场（死亡/永久离开）→ retired。",
             "当前时间：" + (ledger.save.clock or "-"),
             "当前场景：" + (scene.name if scene else scene_id),

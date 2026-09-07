@@ -358,10 +358,46 @@ def test_director_chat_pending_action_confirm(tmp_path):
         goal = confirm.json()["goal"]
         assert goal["status"] == "active"
         assert goal["kind"] == "big"
+        assert goal["subject"] == "player"
         assert goal["npc_id"] == "npc_zhuming"
 
         state = client.get(f"/api/sessions/{sid}/state").json()
         assert [g["text"] for g in state["goals"]] == ["查明朱明打架的真相"]
+        assert state["goals"][0]["subject_name"] == "玩家"
+
+
+def test_director_set_goal_npc_subject(tmp_path):
+    """A player may set an NPC's goal via the director window (subject=npc_id);
+    state resolves the display name."""
+    llm = FakeLLM(
+        {
+            "*": {
+                "reply": "好，王蓉的目标记下了。",
+                "action": {
+                    "type": "set_goal",
+                    "payload": {"text": "让主角答应下周跟她一起去接货", "kind": "small", "subject": "npc_wangrong", "npc_id": "npc_wangrong"},
+                },
+            }
+        }
+    )
+    with _make_client(tmp_path, llm=llm) as client:
+        r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
+        sid = r.json()["sid"]
+
+        chat = client.post(
+            f"/api/sessions/{sid}/director",
+            json={"topic": "chat", "message": "帮王蓉立个目标"},
+        ).json()
+        confirm = client.post(
+            f"/api/sessions/{sid}/director",
+            json={"topic": "confirm", "action": chat["pending_action"]},
+        )
+        assert confirm.status_code == 200
+        goal = confirm.json()["goal"]
+        assert goal["subject"] == "npc_wangrong"
+
+        state = client.get(f"/api/sessions/{sid}/state").json()
+        assert state["goals"][0]["subject_name"] == "王蓉"
 
 
 def test_director_confirm_set_goal_and_inject_memory(tmp_path):

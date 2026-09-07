@@ -51,15 +51,19 @@ def test_goal_cap(session):
 
 def test_goals_block_after_preset(session):
     """Goal block appears in the writer order AFTER the preset block and lists
-    active goals with their tags; no active goals → no block."""
+    active goals with their tags; no active goals → no block. NPC goals show
+    their owner and get the two-advance-mode discipline."""
     add_goal(session.ledger, text="查明朱明打架的真相", kind="big", npc_id="npc_zhuming")
-    add_goal(session.ledger, text="帮王蓉修好渔船", kind="small", npc_id="npc_wangrong")
+    add_goal(session.ledger, text="让主角答应下周跟她一起去接货", kind="small", subject="npc_wangrong", npc_id="npc_wangrong")
 
     order = build_work_order("writer", session.world, session.ledger, "net_bar")
     assert "剧情目标（玩家设立的方向）：" in order
-    assert "- [大目标/主线] 查明朱明打架的真相（关联：朱明）" in order
-    assert "- [小目标/支线] 帮王蓉修好渔船（关联：王蓉）" in order
+    assert "- [大目标/主线·玩家] 查明朱明打架的真相（关联：朱明）" in order
+    assert "- [小目标/支线·王蓉] 让主角答应下周跟她一起去接货（关联：王蓉）" in order
     assert "引导纪律" in order
+    # NPC 目标的两形态推进纪律。
+    assert "NPC 在场 → 让她自然提及" in order
+    assert "NPC 不在场 → 安排她主动来找玩家" in order
 
     # 位置：金科玉律之后、玩家资料之前（C → G → D；预设段为空时同样成立）。
     c_pos = order.index("金科玉律")
@@ -88,3 +92,17 @@ def test_goals_never_reach_actor_slice(session):
     actor = build_work_order("actor_npc_zhuming", session.world, session.ledger, "net_bar")
     assert "查明朱明打架的真相" not in actor
     assert "剧情目标" not in actor
+
+
+def test_audit_prompt_guards_advance_vs_complete(session):
+    """审计工作单须：列出活动目标、NPC 目标准确归属、且写明
+    "推进不算完成"防误判（王蓉提接货 ≠ 目标完成）。"""
+    from app.core.workorder import build_audit_work_order
+
+    add_goal(session.ledger, text="让主角答应下周跟她一起去接货", kind="small", subject="npc_wangrong", npc_id="npc_wangrong")
+    order = build_audit_work_order(session.world, session.ledger, "main_street")
+
+    assert "活动目标：" in order
+    assert "让主角答应下周跟她一起去接货" in order  # 目标全文在活动目标行
+    assert "该目标 NPC 提及/推进目标" in order  # 推进≠完成防误判
+    assert "推进不算完成" in order

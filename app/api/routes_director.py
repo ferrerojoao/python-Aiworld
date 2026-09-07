@@ -174,6 +174,7 @@ def _execute_action(session, action_type: str, payload: dict) -> dict:
                 ledger,
                 text=text,
                 kind=payload.get("kind") or "small",
+                subject=payload.get("subject") or "player",
                 big_goal_id=payload.get("big_goal_id") or None,
                 npc_id=npc_id,
             )

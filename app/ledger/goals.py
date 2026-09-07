@@ -21,7 +21,15 @@ def _now() -> str:
     return dt.datetime.now().isoformat(timespec="seconds")
 
 
-def add_goal(ledger, *, text: str, kind: str, big_goal_id: str | None = None, npc_id: str | None = None) -> Goal:
+def add_goal(
+    ledger,
+    *,
+    text: str,
+    kind: str,
+    subject: str = "player",
+    big_goal_id: str | None = None,
+    npc_id: str | None = None,
+) -> Goal:
     """Create a goal (player-confirmed via the director window). Returns None
     implicitly impossible: raising when the active cap is exceeded."""
     active = [g for g in ledger.save.goals if g.status == "active"]
@@ -31,6 +39,7 @@ def add_goal(ledger, *, text: str, kind: str, big_goal_id: str | None = None, np
         id=new_id("goal"),
         text=text.strip()[:120],
         kind="big" if kind == "big" else "small",
+        subject=subject or "player",
         status="active",
         big_goal_id=big_goal_id,
         npc_id=npc_id,

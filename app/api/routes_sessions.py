@@ -195,7 +195,17 @@ async def get_state(request: Request, sid: str):
         session.world.npcs.get(pid).name if pid in session.world.npcs else pid
         for pid in present_ids
     ]
-    goals = [g.model_dump() for g in session.ledger.save.goals if g.status == "active"]
+    goals = []
+    for g in session.ledger.save.goals:
+        if g.status != "active":
+            continue
+        item = g.model_dump()
+        item["subject_name"] = (
+            "玩家"
+            if g.subject in {"", "player"}
+            else (session.world.npcs[g.subject].name if g.subject in session.world.npcs else g.subject)
+        )
+        goals.append(item)
     return {
         "clock": session.ledger.save.clock,
         "scene": session.scene_description(),
