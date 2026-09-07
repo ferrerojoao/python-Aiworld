@@ -171,6 +171,14 @@ class Transaction:
                 self.ledger.register_scene(location, scene_alias or location)
         self.ledger.append(narrative)
         self.ledger.save.player_scene = location
+        # 显示名：注册场景=场景表 name；一次性场景=审计中文名（回退英文 id，避免 UI 出现英文）。
+        registered = next((s for s in self.ledger.world.scenes if s.id == location), None)
+        if registered:
+            self.ledger.save.scene_name = registered.name
+        elif audit_out and audit_out.scene_name:
+            self.ledger.save.scene_name = audit_out.scene_name
+        else:
+            self.ledger.save.scene_name = location
 
         for event in candidate.side_effects.events:
             event = dict(event)

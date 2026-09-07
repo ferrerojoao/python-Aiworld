@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 
@@ -205,6 +205,9 @@ def test_audit_settles_side_effects_and_one_shot_scene(session, settings):
     assert not any(s.id == "weicao_deep" for s in session.world.scenes)
     # Presence follows the audit inference.
     assert "npc_zhuming" not in session.ledger.present_at("weicao_deep")
+    # 显示名回写：一次性场景用审计中文名，UI 不再显示英文 id。
+    assert session.ledger.save.player_scene == "weicao_deep"
+    assert session.ledger.save.scene_name == "苇草深处"
 
 
 def test_audit_registers_reusable_scene(session, settings):
@@ -235,6 +238,7 @@ def test_audit_registers_reusable_scene(session, settings):
 
     assert any(s.id == "milktea_shop" and s.name == "街角奶茶店" for s in session.world.scenes)
     assert session.ledger.save.player_scene == "milktea_shop"
+    assert session.ledger.save.scene_name == "街角奶茶店"  # 注册场景显示名取场景表
 
 
 def test_multiple_candidates_blocks_new_turn(session, fake_llm, settings):

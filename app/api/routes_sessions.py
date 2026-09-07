@@ -200,7 +200,7 @@ async def get_state(request: Request, sid: str):
         "clock": session.ledger.save.clock,
         "scene": session.scene_description(),
         "scene_id": player_scene,
-        "scene_name": scene.name if scene else player_scene,
+        "scene_name": scene.name if scene else (session.ledger.save.scene_name or player_scene),
         "adjacent": adjacent,
         "present": present_ids,
         "present_names": present_names,
@@ -381,6 +381,7 @@ async def reset_session(request: Request, sid: str):
     save.clock = "2026-07-14T08:00:00"
     save.meta.next_event_id = 1
     save.player_scene = "main_street"
+    save.scene_name = ""
     save.narrative_preset = session.world.presets
     save.entities = {}
     save.axes = {}
