@@ -29,11 +29,18 @@ class Hook(BaseModel):
 
 
 class PlayerProfile(BaseModel):
+    """主角资料：与 NPC 人物卡基本一致（无 has_actor，无引擎调度）。
+
+    private_note = 作者底牌（无人知道的真相，含主角自己也不知道的）；
+    personal_secrets = 主角自知的隐秘/心结/前史（玩家心里的事）。
+    """
+
     id: str = "player"
     name: str = "你"
     appearance: str = ""
     persona: str = ""
-    background: str = ""
+    private_note: str | None = None
+    personal_secrets: str | None = None
     attributes: dict[str, int] = Field(default_factory=dict)  # 二期预留
 
 

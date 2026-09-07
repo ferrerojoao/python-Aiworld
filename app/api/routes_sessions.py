@@ -235,7 +235,8 @@ class PlayerBody(BaseModel):
     name: str | None = None
     appearance: str | None = None
     persona: str | None = None
-    background: str | None = None
+    private_note: str | None = None
+    personal_secrets: str | None = None
 
 
 @router.put("/sessions/{sid}/presets")
@@ -282,8 +283,10 @@ async def update_player(request: Request, sid: str, body: PlayerBody):
         player.appearance = body.appearance
     if body.persona is not None:
         player.persona = body.persona
-    if body.background is not None:
-        player.background = body.background
+    if body.private_note is not None:
+        player.private_note = body.private_note
+    if body.personal_secrets is not None:
+        player.personal_secrets = body.personal_secrets
     session.ledger.persist_save()
     return {"ok": True}
 

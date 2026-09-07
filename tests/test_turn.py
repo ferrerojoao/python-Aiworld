@@ -376,3 +376,40 @@ def test_lore_merge_dedup_and_cap(session, settings):
 
     asyncio.run(runner.adopt(candidate.candidate_id))
     assert session.ledger.save.active_lore_ids == ["fish_market"]
+
+
+def test_player_notes_reach_writer_work_order(session, settings):
+    """主角与 NPC 字段一致：幕后注/自知隐秘进编剧工作单，不进 Actor 切片。"""
+    from app.core.workorder import build_work_order
+
+    session.ledger.save.player.private_note = "其实是镇长的私生子"
+    session.ledger.save.player.personal_secrets = "欠了赌债"
+    session.world.npcs["npc_zhuming"].private_note = "网吧冬天会失火"
+    session.world.npcs["npc_zhuming"].personal_secrets = "他爸欠了赌债"
+    # 让朱明的近况成立：seed 一条他在 net_bar 的定位事件。
+    session.ledger.append(
+        {
+            "id": session.ledger.allocate_event_id(),
+            "kind": "narrative",
+            "at": "2026-07-14T08:00:00",
+            "location": "net_bar",
+            "participants": ["npc_zhuming"],
+            "known_by": None,
+            "body": "朱明在网吧。",
+            "summary": "朱明在网吧。",
+            "player_input": None,
+            "source": "seed",
+        }
+    )
+
+    writer = build_work_order("writer", session.world, session.ledger, "net_bar")
+    assert "主角·你" in writer
+    assert "其实是镇长的私生子" in writer
+    assert "欠了赌债" in writer
+    assert "网吧冬天会失火" in writer
+    assert "背景：" not in writer
+
+    actor = build_work_order("actor_npc_zhuming", session.world, session.ledger, "net_bar")
+    assert "其实是镇长的私生子" not in actor  # 主角底牌不泄漏进 NPC 切片
+    assert "网吧冬天会失火" not in actor  # 朱明的幕后注（他也不知道）不给他自己看
+    assert "他爸欠了赌债" in actor  # 朱明自知隐秘进他自己的切片

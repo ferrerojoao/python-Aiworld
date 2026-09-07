@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AIWorld</title>
-  <link rel="stylesheet" href="style.css?v=40" />
+  <link rel="stylesheet" href="style.css?v=41" />
 </head>
 <body>
   <div id="app">
@@ -77,9 +77,11 @@
         <label>外貌</label>
         <textarea id="player-appearance" rows="3" placeholder="外貌描述"></textarea>
         <label>人格 / 说话风格</label>
-        <textarea id="player-persona" rows="4" placeholder="性格、说话风格等"></textarea>
-        <label>背景</label>
-        <textarea id="player-background" rows="4" placeholder="背景故事"></textarea>
+        <textarea id="player-persona" rows="4" placeholder="性格、说话风格等（身份定位/职业也写这里）"></textarea>
+        <label>幕后注（作者底牌：无人知道的真相，仅编剧可读，永不进任何切片）</label>
+        <textarea id="player-private-note" rows="2" placeholder="例如：主角其实是镇长的私生子，连他自己都不知道"></textarea>
+        <label>自知隐秘（主角自己知道的心结/前史，如"他爸欠了赌债，最不愿提"）</label>
+        <textarea id="player-secrets" rows="2" placeholder="主角心里的事"></textarea>
         <button id="save-player">保存主角资料</button>
       </div>
 
@@ -178,6 +180,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=40"></script>
+  <script src="app.js?v=41"></script>
 </body>
 </html>

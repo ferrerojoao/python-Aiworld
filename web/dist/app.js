@@ -420,7 +420,8 @@ async function loadPlayer() {
   $("#player-name").value = data.name || "";
   $("#player-appearance").value = data.appearance || "";
   $("#player-persona").value = data.persona || "";
-  $("#player-background").value = data.background || "";
+  $("#player-private-note").value = data.private_note || "";
+  $("#player-secrets").value = data.personal_secrets || "";
 }
 
 async function savePlayer() {
@@ -430,7 +431,8 @@ async function savePlayer() {
       name: $("#player-name").value,
       appearance: $("#player-appearance").value,
       persona: $("#player-persona").value,
-      background: $("#player-background").value,
+      private_note: $("#player-private-note").value,
+      personal_secrets: $("#player-secrets").value,
     }),
   });
   alert("主角资料已保存");

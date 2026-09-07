@@ -32,12 +32,13 @@ def world_summary_block(world: WorldContent) -> list[str]:
 def character_block(world: WorldContent, ledger: Ledger, present_ids: list[str], include_ids: bool = False) -> list[str]:
     """玩家资料 + 在场 NPC 名片（含 Actor 档位标注，可选附带 id）。
 
-    玩家与 NPC 分两段，避免「角色」笼统概念混用。
+    玩家与 NPC 分两段，避免「角色」笼统概念混用。主角与 NPC 字段一致：
+    名字/外貌/人格 + 幕后注/自知隐秘（见 private_notes_block）。
     """
     player = ledger.save.player
     lines = ["玩家资料："]
     lines.append(
-        f"[主角] 名字：{player.name}；外貌：{player.appearance or '未设定'}；人格：{player.persona or '未设定'}；背景：{player.background or '未设定'}"
+        f"[主角] 名字：{player.name}；外貌：{player.appearance or '未设定'}；人格：{player.persona or '未设定'}"
     )
     npc_lines = []
     for pid in present_ids:
@@ -114,8 +115,22 @@ def npc_history_block(ledger: Ledger, present_ids: list[str], per_npc: int = 2) 
     return ["在场 NPC 近况：", *near_lines]
 
 
-def private_notes_block(world: WorldContent, present_ids: list[str]) -> list[str]:
+def private_notes_block(world: WorldContent, ledger: Ledger, present_ids: list[str]) -> list[str]:
+    """幕后注：作者底牌与角色自知隐秘（主角同 NPC，字段一致）。
+
+    消费方：编剧/导演（作者侧全知）。永不进任何 Actor 切片与玩家视角。
+    """
     lines = []
+    player = ledger.save.player
+    if player.private_note or player.personal_secrets:
+        notes = []
+        if player.private_note:
+            notes.append(player.private_note)
+        if player.personal_secrets:
+            notes.append(f"[{player.name} 自知] {player.personal_secrets}")
+        lines.append(
+            f"幕后注（仅你可读，绝不写进正文，也不得让任何角色知道）：[主角·{player.name}] {'；'.join(notes)}"
+        )
     for pid in present_ids:
         npc = world.npcs.get(pid)
         if npc and (npc.private_note or npc.personal_secrets):
@@ -275,7 +290,7 @@ def build_director_chat_system(
     parts += hooks_block(ledger)
     parts += npc_history_block(ledger, present_ids)
     parts += active_lore_block(ledger)
-    parts += private_notes_block(world, present_ids)
+    parts += private_notes_block(world, ledger, present_ids)
     parts += character_block(world, ledger, present_ids, include_ids=True)
 
     parts += [
@@ -372,7 +387,7 @@ def build_work_order(
         # D 玩家资料 + 在场 NPC（含 id 标注，编剧须用规范 id）
         parts += character_block(world, ledger, present_ids, include_ids=True)
         # H 幕后注（机密，与金科玉律呼应双保险）
-        parts += private_notes_block(world, present_ids)
+        parts += private_notes_block(world, ledger, present_ids)
         # F 场景快照（此刻环境：当前时间/在场/场景/可感知）
         parts += scene_snapshot_block(world, ledger, scene_id)
         # G 在场 NPC 近况

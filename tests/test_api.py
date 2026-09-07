@@ -180,13 +180,20 @@ def test_player_profile_update(tmp_path):
 
         put = client.put(
             f"/api/sessions/{sid}/player",
-            json={"name": "林晓", "appearance": "黑发", "persona": "冷静", "background": "转学生"},
+            json={
+                "name": "林晓",
+                "appearance": "黑发",
+                "persona": "冷静",
+                "private_note": "其实是镇长的私生子",
+                "personal_secrets": "欠了赌债",
+            },
         )
         assert put.status_code == 200
 
         player = client.get(f"/api/sessions/{sid}/player").json()
         assert player["name"] == "林晓"
-        assert player["background"] == "转学生"
+        assert player["private_note"] == "其实是镇长的私生子"
+        assert player["personal_secrets"] == "欠了赌债"
 
 
 def test_debug_trace_available_after_turn(tmp_path):
