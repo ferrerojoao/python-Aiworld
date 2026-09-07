@@ -440,7 +440,6 @@ async def update_system_settings(request: Request, body: SettingsBody):
     if body.reasoning_effort is not None:
         effort = body.reasoning_effort.lower()
         s.reasoning_effort = "" if effort in {"auto", "none", ""} else effort
-
     from app.core.llm import LLMGateway
 
     request.app.state.llm = LLMGateway(

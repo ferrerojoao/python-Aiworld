@@ -462,7 +462,7 @@ function updateUsageStatus(data) {
   const c = data.cache || {};
   const total = (c.hits || 0) + (c.misses || 0);
   const rate = total ? Math.round(((c.hits || 0) / total) * 100) : 0;
-  const effLabel = { low: "低", medium: "中", high: "高" }[data.reasoning_effort] || "自动";
+  const effLabel = { low: "低", high: "高", max: "最高" }[data.reasoning_effort] || "自动";
   el.textContent =
     `本轮：输入 ${u.prompt_tokens || 0} · 输出 ${u.completion_tokens || 0} token` +
     ` · ${u.calls || 0} 次调用 · 缓存命中 ${rate}%（${c.hits || 0}/${total}）` +
