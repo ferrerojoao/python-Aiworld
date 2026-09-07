@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from app.core.llm import FakeLLM
+from app.rules.lorebook import merge_active_lore
 from app.runtime.turn import NeedChooseCandidate, TurnRunner
 
 
@@ -256,3 +257,122 @@ def test_discard_removes_all_candidates(session, fake_llm, settings):
 
     runner.discard(first.turn_id)
     assert session.candidates.list_for_turn(first.turn_id) == []
+
+
+def test_lore_trigger_input_merges_then_adopt_rebuilds(session, settings):
+    """World book v2: player input hits keywords at pre-solve (merged into
+    the active list), and adopt clears + rebuilds from the adopted prose."""
+    writer_out = {
+        "prose": "你走进网吧，看见朱明正在跟老周说话。",
+        "summary": "网吧遇见朱明。",
+        "actor_questions": [],
+    }
+    qc_out = {"status": "pass", "prose": writer_out["prose"], "issues": []}
+    audit_out = {
+        "location": "net_bar",
+        "scene_name": "网吧",
+        "register_scene": False,
+        "participants": ["player", "npc_zhuming"],
+        "private": False,
+        "delta_minutes": 0,
+        "hook_texts": [],
+        "closed_hook_ids": [],
+        "lifecycle": [],
+    }
+    llm = PrefixKeyLLM(
+        {
+            "玩家输入：": writer_out,
+            "正文：": qc_out,
+            "已采纳正文": audit_out,
+        }
+    )
+    runner = _runner(session, llm, settings)
+
+    # Pre-solve: player input hits the net_bar_fire entry ("网吧").
+    candidate = asyncio.run(runner.run_turn("去网吧找朱明"))
+    assert session.ledger.save.active_lore_ids == ["net_bar_fire"]
+
+    # The writer's first call saw the triggered entry's body in the work order.
+    writer_call = llm.calls[0]
+    system = writer_call["messages"][0]["content"]
+    assert "net_bar_fire" in system
+    assert "包夜十块钱" in system
+
+    # Adopt: the active list is rebuilt from the adopted prose, which also
+    # mentions 网吧 — the entry survives by content, not by the input.
+    asyncio.run(runner.adopt(candidate.candidate_id))
+    assert session.ledger.save.active_lore_ids == ["net_bar_fire"]
+
+    # A turn whose input and prose mention nothing in the book clears it.
+    llm2 = PrefixKeyLLM(
+        {
+            "玩家输入：": {
+                "prose": "你坐在海边石头上发呆。",
+                "summary": "海边发呆。",
+                "actor_questions": [],
+            },
+            "正文：": {"status": "pass", "prose": "你坐在海边石头上发呆。", "issues": []},
+            "已采纳正文": {
+                "location": "main_street",
+                "scene_name": "主街",
+                "register_scene": False,
+                "participants": ["player"],
+                "private": False,
+                "delta_minutes": 0,
+                "hook_texts": [],
+                "closed_hook_ids": [],
+                "lifecycle": [],
+            },
+        }
+    )
+    runner2 = _runner(session, llm2, settings)
+    candidate2 = asyncio.run(runner2.run_turn("发呆"))
+    # 输入未命中：上一轮的事实命中保留（列表 = 上轮回复 + 本轮输入）。
+    assert session.ledger.save.active_lore_ids == ["net_bar_fire"]
+    asyncio.run(runner2.adopt(candidate2.candidate_id))
+    assert session.ledger.save.active_lore_ids == []
+
+
+def test_lore_merge_dedup_and_cap(session, settings):
+    """Input hits merge deduped with existing entries, capped at 5."""
+    writer_out = {
+        "prose": "你路过鱼市，打算买条鱼。",
+        "summary": "路过鱼市。",
+        "actor_questions": [],
+    }
+    qc_out = {"status": "pass", "prose": writer_out["prose"], "issues": []}
+    audit_out = {
+        "location": "fish_market",
+        "scene_name": "鱼市",
+        "register_scene": False,
+        "participants": ["player"],
+        "private": False,
+        "delta_minutes": 0,
+        "hook_texts": [],
+        "closed_hook_ids": [],
+        "lifecycle": [],
+    }
+    llm = PrefixKeyLLM(
+        {
+            "玩家输入：": writer_out,
+            "正文：": qc_out,
+            "已采纳正文": audit_out,
+        }
+    )
+    runner = _runner(session, llm, settings)
+
+    # Seed a prior prose hit on 网吧 → active = [net_bar_fire].
+    session.ledger.save.active_lore_ids = ["net_bar_fire"]
+    candidate = asyncio.run(runner.run_turn("去鱼市买条鱼"))
+    active = session.ledger.save.active_lore_ids
+    assert active[0] == "net_bar_fire"  # 上轮事实优先
+    assert active == ["net_bar_fire", "fish_market"]
+
+    # 已有条目不重复追加，且超出上限被截断。
+    hits = ["fish_market", "zhang_grievance", "fishback", "net_bar_fire", "net_bar_fire", "fish_market"]
+    session.ledger.save.active_lore_ids = []
+    merged = merge_active_lore(session.ledger.save.active_lore_ids, hits)
+    assert merged == ["fish_market", "zhang_grievance", "fishback", "net_bar_fire"]
+
+    asyncio.run(runner.adopt(candidate.candidate_id))
+    assert session.ledger.save.active_lore_ids == ["fish_market"]

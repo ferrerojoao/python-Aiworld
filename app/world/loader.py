@@ -72,6 +72,11 @@ def check_world(root: str | Path) -> list[str]:
     for npc_id in world.npcs:
         if not npc_id.startswith("npc_"):
             problems.append(f"npc id should start with 'npc_': {npc_id}")
+    for entry in world.lorebook:
+        if not any(kw.strip() for kw in entry.keywords):
+            problems.append(
+                f"lore {entry.id}: 至少需要一个关键词（无关键词的条目永远不会被命中）"
+            )
     return problems
 
 

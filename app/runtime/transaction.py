@@ -203,6 +203,14 @@ class Transaction:
                     entity = self.ledger.save.entities.setdefault(npc_id, EntityRuntime())
                     entity.lifecycle = "retired"
 
+        # World book: adopt rebuilds the active list from the adopted prose
+        # (采纳阶段：清空 → 命中已采纳正文 → 列表 = 上轮事实优先)。
+        from app.rules.lorebook import rebuild_active_lore
+
+        self.ledger.save.active_lore_ids = rebuild_active_lore(
+            self.ledger.world, candidate.prose
+        )
+
         self.ledger.persist_save()
         # Clean this turn's candidate files only after a successful commit.
         self.candidates.delete_turn(candidate.turn_id)

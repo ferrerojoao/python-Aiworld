@@ -12,9 +12,14 @@ class WorldInfo(BaseModel):
 
 
 class LoreEntry(BaseModel):
+    """World book entry: a background concept triggered by keyword hits.
+
+    世界书 = 概念化背景条目：keywords 命中玩家输入/已采纳正文时进入
+    本回合装配；body 是命中后发给编剧的全文（无摘要层）。
+    """
+
     id: str
-    tags: list[str] = Field(default_factory=list)
-    summary: str = ""
+    keywords: list[str] = Field(default_factory=list)
     body: str = ""
 
 
@@ -22,7 +27,6 @@ class Scene(BaseModel):
     id: str
     name: str
     aliases: list[str] = Field(default_factory=list)
-    tags: list[str] = Field(default_factory=list)
     perceivable: str = ""
     open_hours: str = "全天"
     adjacent: list[str] = Field(default_factory=list)

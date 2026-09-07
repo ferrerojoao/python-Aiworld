@@ -180,15 +180,3 @@ class Ledger:
             summary = ev.get("summary") or (ev.get("body") or "")[:40]
             lines.append(f"{ev.get('at', '')} {summary}")
         return lines[-limit:] if lines else []
-
-    def lore_candidates(self, scene_id: str, npc_ids: list[str]) -> list[dict[str, Any]]:
-        tags = set()
-        for scene in self.world.scenes:
-            if scene.id == scene_id:
-                tags.update(scene.tags)
-        tags.update(npc_ids)
-        candidates = []
-        for entry in self.world.lorebook:
-            if tags.intersection(entry.tags):
-                candidates.append({"id": entry.id, "summary": entry.summary})
-        return candidates[:12]

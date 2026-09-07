@@ -130,13 +130,21 @@ def private_notes_block(world: WorldContent, present_ids: list[str]) -> list[str
     return lines
 
 
-def lore_candidates_block(ledger: Ledger, scene_id: str, present_ids: list[str]) -> list[str]:
-    cands = ledger.lore_candidates(scene_id, present_ids)
-    if not cands:
+def active_lore_block(ledger: Ledger) -> list[str]:
+    """World book entries triggered for this turn (save.active_lore_ids).
+
+    The engine maintains the active list (keyword hits on player input at
+    pre-solve; rebuild from adopted prose at commit); this block only renders
+    the full body of each triggered entry into the work order.
+    """
+    if not ledger.save.active_lore_ids:
         return []
-    lines = ["世界书候选（本场可能相关，只有摘要；要用就按此设定写）："]
-    for c in cands:
-        lines.append(f"- [{c['id']}] {c['summary']}")
+    by_id = {entry.id: entry for entry in ledger.world.lorebook}
+    lines = ["世界书（本场可能相关的背景设定，按此设定写）："]
+    for entry_id in ledger.save.active_lore_ids:
+        entry = by_id.get(entry_id)
+        if entry:
+            lines.append(f"- [{entry.id}] {entry.body}")
     return lines
 
 
@@ -266,7 +274,7 @@ def build_director_chat_system(
     parts += event_log_block(ledger, include_ids=True)
     parts += hooks_block(ledger)
     parts += npc_history_block(ledger, present_ids)
-    parts += lore_candidates_block(ledger, scene_id, present_ids)
+    parts += active_lore_block(ledger)
     parts += private_notes_block(world, present_ids)
     parts += character_block(world, ledger, present_ids, include_ids=True)
 
@@ -369,8 +377,8 @@ def build_work_order(
         parts += scene_snapshot_block(world, ledger, scene_id)
         # G 在场 NPC 近况
         parts += npc_history_block(ledger, present_ids)
-        # I 可选素材（候选/钩子，未来 token 超支时最先可裁）
-        parts += lore_candidates_block(ledger, scene_id, present_ids)
+        # I 可选素材（世界书命中/钩子，未来 token 超支时最先可裁）
+        parts += active_lore_block(ledger)
         parts += hooks_block(ledger)
         # K 输出格式（指令，近因区）
         parts += writer_output_format()

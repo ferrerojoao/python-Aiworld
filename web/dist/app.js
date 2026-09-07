@@ -730,7 +730,7 @@ async function loadWorldBrowser() {
   for (const entry of data.lorebook || []) {
     const div = document.createElement("div");
     div.className = "item";
-    div.innerHTML = `<strong>${entry.summary || entry.id}</strong><br>${entry.body || ""}`;
+    div.innerHTML = `<strong>${entry.id}</strong><br>${entry.body || ""}<br><small>关键词：${escapeHtml((entry.keywords || []).join("、"))}</small>`;
     lore.appendChild(div);
   }
 
@@ -881,16 +881,12 @@ function loreCard(item, i) {
           <input class="edit-field" data-field="id" value="${escapeHtml(item.id || "")}" />
         </div>
         <div class="field">
-          <label>标签（逗号分隔）</label>
-          <input class="edit-field" data-field="tags" value="${escapeHtml((item.tags || []).join(", "))}" />
+          <label>关键词（逗号分隔，命中玩家输入/已采纳正文时触发本条）</label>
+          <input class="edit-field" data-field="keywords" value="${escapeHtml((item.keywords || []).join(", "))}" />
         </div>
       </div>
       <div class="field full">
-        <label>摘要</label>
-        <input class="edit-field" data-field="summary" value="${escapeHtml(item.summary || "")}" />
-      </div>
-      <div class="field full">
-        <label>正文</label>
+        <label>正文（命中后全量注入编剧提示词）</label>
         <textarea class="edit-field" data-field="body" rows="3">${escapeHtml(item.body || "")}</textarea>
       </div>
       <button class="danger remove-item">删除</button>
@@ -928,23 +924,17 @@ function sceneCard(item, i) {
           <input class="edit-field" data-field="aliases" value="${escapeHtml((item.aliases || []).join(", "))}" />
         </div>
         <div class="field">
-          <label>标签（逗号分隔）</label>
-          <input class="edit-field" data-field="tags" value="${escapeHtml((item.tags || []).join(", "))}" />
+          <label>开放时段</label>
+          <input class="edit-field" data-field="open_hours" value="${escapeHtml(item.open_hours || "全天")}" />
         </div>
       </div>
       <div class="field full">
         <label>可感知描述</label>
         <textarea class="edit-field" data-field="perceivable" rows="2">${escapeHtml(item.perceivable || "")}</textarea>
       </div>
-      <div class="form-grid">
-        <div class="field">
-          <label>开放时段</label>
-          <input class="edit-field" data-field="open_hours" value="${escapeHtml(item.open_hours || "全天")}" />
-        </div>
-        <div class="field">
-          <label>邻接（逗号分隔）</label>
-          <input class="edit-field" data-field="adjacent" value="${escapeHtml((item.adjacent || []).join(", "))}" />
-        </div>
+      <div class="field full">
+        <label>邻接（逗号分隔）</label>
+        <input class="edit-field" data-field="adjacent" value="${escapeHtml((item.adjacent || []).join(", "))}" />
       </div>
       <button class="danger remove-item">删除</button>
     </div>
@@ -1108,8 +1098,7 @@ function readOverview() {
 function readLore() {
   return Array.from(document.querySelectorAll("#edit-lore-list .edit-card")).map((card) => ({
     id: card.querySelector('[data-field="id"]')?.value ?? "",
-    tags: splitList(card.querySelector('[data-field="tags"]')?.value),
-    summary: card.querySelector('[data-field="summary"]')?.value ?? "",
+    keywords: splitList(card.querySelector('[data-field="keywords"]')?.value),
     body: card.querySelector('[data-field="body"]')?.value ?? "",
   }));
 }
@@ -1119,7 +1108,6 @@ function readScenes() {
     id: card.querySelector('[data-field="id"]')?.value ?? "",
     name: card.querySelector('[data-field="name"]')?.value ?? "",
     aliases: splitList(card.querySelector('[data-field="aliases"]')?.value),
-    tags: splitList(card.querySelector('[data-field="tags"]')?.value),
     perceivable: card.querySelector('[data-field="perceivable"]')?.value ?? "",
     open_hours: card.querySelector('[data-field="open_hours"]')?.value ?? "全天",
     adjacent: splitList(card.querySelector('[data-field="adjacent"]')?.value),

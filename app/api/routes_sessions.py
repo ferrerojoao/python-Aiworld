@@ -383,6 +383,8 @@ async def reset_session(request: Request, sid: str):
     save.axes = {}
     save.hooks = []
     save.access_overrides = {}
+    save.audit_last_error = None
+    save.active_lore_ids = []
     session.ledger.events = []
     session.ledger.narratives = []
     session.ledger.by_id = {}

@@ -48,3 +48,4 @@ class SaveData(BaseModel):
     hooks: list[Hook] = Field(default_factory=list)
     access_overrides: dict[str, list[str] | None] = Field(default_factory=dict)
     audit_last_error: str | None = None  # 最近一次审计失败记录（不再静默）
+    active_lore_ids: list[str] = Field(default_factory=list)  # 本轮装配的世界书命中列表

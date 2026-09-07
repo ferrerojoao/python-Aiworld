@@ -4,6 +4,7 @@ import datetime as dt
 
 from app.config import Settings
 from app.core.store import new_id
+from app.rules.lorebook import hit_entry_ids, merge_active_lore
 from app.rules.movement import resolve_destination, travel_minutes
 from app.rules.route import classify_input
 from app.rules.scenes import scene_description
@@ -170,6 +171,14 @@ class TurnRunner:
             else:
                 delta = 60
             rule_bundle["delta_minutes"] = delta
+
+        # World book pre-solve: this turn's player input triggers concepts
+        # (merge into the active list previous prose facts still hold slots).
+        hits = hit_entry_ids(self.session.world, player_input)
+        if hits:
+            self.session.ledger.save.active_lore_ids = merge_active_lore(
+                self.session.ledger.save.active_lore_ids, hits
+            )
 
         out = await self._write_turn(
             player_input, scene=scene, rule_bundle=rule_bundle
