@@ -40,10 +40,10 @@ async def main() -> None:
                 "source": "turn",
             }
         )
-    # an open hook (conflict machinery was removed: 矛盾归玩家自决)
-    from app.ledger.save import Hook
+    # an active goal for the director to see
+    from app.ledger.save import Goal
 
-    session.ledger.save.hooks.append(Hook(id="hk_1", text="朱明答应明天教刘星打游戏", status="open"))
+    session.ledger.save.goals.append(Goal(id="goal_1", text="查明朱明打架的真相", kind="big", npc_id="npc_zhuming"))
     session.ledger.persist_save()
 
     fake = FakeLLM(

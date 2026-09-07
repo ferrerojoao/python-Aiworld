@@ -1,5 +1,5 @@
 """Verify the actor's physical isolation: its work order must never contain
-private notes, other NPCs' private events, hooks, conflicts or lore
+private notes, other NPCs' private events, goals, conflicts or lore
 candidates — only its own persona, the scene and its own memory slice."""
 import asyncio
 import shutil
@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.workorder import build_work_order
-from app.ledger.save import Hook
+from app.ledger.save import Goal
 from app.runtime.session import create_session
 
 WORLD = Path(__file__).resolve().parent.parent / "content" / "qinghsi"
@@ -52,8 +52,8 @@ async def main() -> None:
             "source": "turn",
         }
     )
-    # hook exists but must never reach the actor
-    ledger.save.hooks.append(Hook(id="hk_1", text="朱明答应教刘星打游戏", status="open"))
+    # a big goal exists but must never reach the actor
+    ledger.save.goals.append(Goal(id="goal_1", text="查明朱明打架的真相", kind="big"))
     # 王蓉也有一件自知隐秘——朱明绝不能知道它
     session.world.npcs["npc_wangrong"].personal_secrets = "王蓉暗恋市里来的实习老师。"
     ledger.persist_save()
@@ -61,7 +61,7 @@ async def main() -> None:
     order = build_work_order("actor_npc_zhuming", session.world, ledger, "net_bar")
 
     # 本人自知的隐秘必须出现（他是朱明，他爸欠债是他的心结）
-    # 他人私密/作者底牌/钩子/矛盾/编剧视角一律不得出现
+    # 他人私密/作者底牌/目标/矛盾/编剧视角一律不得出现
     must_have = [
         "你正在扮演：朱明",
         "人格：",
@@ -73,11 +73,11 @@ async def main() -> None:
     must_not = [
         "王蓉暗恋市里来的实习老师",
         "修车铺要关门",
-        "教刘星打游戏",
+        "查明朱明打架的真相",
         "世界书候选",
         "事件日志（世界近期",
         "编剧准则",
-        "开放钩子",
+        "剧情目标",
     ]
 
     ok = True

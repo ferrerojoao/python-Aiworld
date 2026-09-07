@@ -4,17 +4,19 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AIWorld</title>
-  <link rel="stylesheet" href="style.css?v=41" />
+  <link rel="stylesheet" href="style.css?v=42" />
 </head>
 <body>
   <div id="app">
-    <!-- 左侧窄栏：场景导航 + 在场 NPC -->
+    <!-- 左侧窄栏：场景导航 + 在场 NPC + 剧情目标 -->
     <aside id="left-rail">
       <h1>AIWorld</h1>
       <h2>场景导航</h2>
       <div id="scene-nav"></div>
       <h2>在场</h2>
       <div id="present-npcs"></div>
+      <h2>剧情目标</h2>
+      <ul id="state-goals"></ul>
     </aside>
 
     <!-- 主区域：顶栏 + 聊天 + 输入 -->
@@ -62,7 +64,7 @@
 
       <div id="tab-director" class="tab-panel active">
         <h3>导演对话</h3>
-        <div class="director-hint">可以跟导演说：<br>· 给点建议 / 我该干嘛<br>· 答疑：问 NPC、承诺、事件（如"王蓉喜欢什么？"）<br>· 幕后操作（会弹确认）：<br>&nbsp;&nbsp;给某 NPC 配 / 取消 Actor<br>&nbsp;&nbsp;某 NPC 在某地（静默覆写，如"朱明在网吧"）<br>&nbsp;&nbsp;给某 NPC 私下注入一段记忆<br>&nbsp;&nbsp;某事件改公开或私密<br>&nbsp;&nbsp;给某 NPC 补人物卡资料</div>
+        <div class="director-hint">可以跟导演说：<br>· 给点建议 / 我该干嘛<br>· 答疑：问 NPC、承诺、事件（如"王蓉喜欢什么？"）<br>· 设立/废弃剧情目标（大目标=主线，小目标=支线）<br>· 幕后操作（会弹确认）：<br>&nbsp;&nbsp;某 NPC 在某地（静默覆写，如"朱明在网吧"）<br>&nbsp;&nbsp;给某 NPC 私下注入一段记忆<br>&nbsp;&nbsp;某事件改公开或私密<br>（人物卡/场景/Actor 档位编辑请用世界工作台）</div>
         <div id="director-chat"></div>
         <form id="director-form">
           <input id="director-input" type="text" placeholder="和导演讨论剧情…" autocomplete="off" />
@@ -180,6 +182,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=41"></script>
+  <script src="app.js?v=42"></script>
 </body>
 </html>

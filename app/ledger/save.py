@@ -17,15 +17,24 @@ class EntityRuntime(BaseModel):
     # has_actor / persona 全部在存档的世界实例（world/）人物卡里，运行时只有一个开关
 
 
-class Hook(BaseModel):
+class Goal(BaseModel):
+    """剧情目标（M14 主线载体）：导演窗口设立、审计按正文判定完成、
+    编剧写作时向目标引导。钩子台账已废弃（2026-09-07）。
+
+    kind: big=大目标（主线）/ small=小目标（支线/节点）
+    status: active | done | abandoned
+    big_goal_id: 小目标挂靠的大目标（仅展示层级，不参与判定）
+    npc_id: 关联 NPC（编剧引导/主动登门素材）
+    """
+
     id: str
     text: str
-    level: str = "npc"  # 主线钩子（world 级）预留：导演窗口阶段启用
-    status: str = "open"  # open | closed（兑现）| expired（上限淘汰）
-    opened_at: str = ""
-    closed_at: str | None = None
-    due: str | None = None  # 不解析到期（2026-09-05 拍板：避免时间解析的不可控问题）
-    related: list[str] = Field(default_factory=list)
+    kind: str = "small"  # big | small
+    status: str = "active"  # active | done | abandoned
+    big_goal_id: str | None = None
+    npc_id: str | None = None
+    created_at: str = ""
+    done_at: str | None = None
 
 
 class PlayerProfile(BaseModel):
@@ -52,7 +61,7 @@ class SaveData(BaseModel):
     narrative_preset: NarrativePreset = Field(default_factory=NarrativePreset)
     entities: dict[str, EntityRuntime] = Field(default_factory=dict)
     axes: dict[str, int] = Field(default_factory=dict)  # 二期预留
-    hooks: list[Hook] = Field(default_factory=list)
     access_overrides: dict[str, list[str] | None] = Field(default_factory=dict)
     audit_last_error: str | None = None  # 最近一次审计失败记录（不再静默）
     active_lore_ids: list[str] = Field(default_factory=list)  # 本轮装配的世界书命中列表
+    goals: list[Goal] = Field(default_factory=list)  # 剧情目标（M14，替代钩子台账）

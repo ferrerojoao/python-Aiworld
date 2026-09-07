@@ -245,6 +245,20 @@ function renderLeftRail(data) {
       present.appendChild(item);
     }
   }
+
+  const goals = $("#state-goals");
+  goals.innerHTML = "";
+  const goalList = data.goals || [];
+  if (!goalList.length) {
+    goals.innerHTML = '<li class="muted">暂无（找导演设立）</li>';
+  } else {
+    for (const g of goalList) {
+      const li = document.createElement("li");
+      const big = g.kind === "big" ? "【主线】" : "【支线】";
+      li.textContent = `${big}${g.text}`;
+      goals.appendChild(li);
+    }
+  }
 }
 
 async function syncPendingFromServer() {

@@ -69,7 +69,8 @@ class ActorDecision(BaseModel):
 
 class AuditOutput(BaseModel):
     """Audit settlement: world side effects inferred from the prose, plus
-    hooks and lifecycle. Runs at adopt; returns what to write into the ledger."""
+    goal completion and lifecycle. Runs at adopt; returns what to write into
+    the ledger."""
 
     location: str | None = Field(default=None, validation_alias=AliasChoices("location", "地点", "场景"))
     scene_name: str = Field(default="", validation_alias=AliasChoices("scene_name", "地点名", "场景名"))
@@ -77,10 +78,9 @@ class AuditOutput(BaseModel):
     participants: list[str] = Field(default_factory=list, validation_alias=AliasChoices("participants", "在场者"))
     private: bool = Field(default=False, validation_alias=AliasChoices("private", "私密"))
     delta_minutes: int = Field(default=0, validation_alias=AliasChoices("delta_minutes", "推进分钟", "时间推进"))
-    hook_texts: list[str] = Field(default_factory=list, validation_alias=AliasChoices("hook_texts", "hooks", "钩子"))
-    closed_hook_ids: list[str] = Field(
+    completed_goal_ids: list[str] = Field(
         default_factory=list,
-        validation_alias=AliasChoices("closed_hook_ids", "closed_hooks", "兑现钩子", "闭合钩子"),
+        validation_alias=AliasChoices("completed_goal_ids", "completed_goals", "完成目标"),
     )
     lifecycle: list[dict] = Field(
         default_factory=list,

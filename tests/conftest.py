@@ -24,7 +24,6 @@ GENERIC_LLM_RESPONSE = {
     "decision": "打哈哈",
     "action_hint": "拉你去吃面",
     "tone": "随意",
-    "hook_texts": [],
     "conflicts": [],
     "reply": "好的，我会帮你安排。",
 }

@@ -79,7 +79,6 @@ class Settings:
     )
     candidate_ttl_days: int = field(default_factory=lambda: _env_int("CANDIDATE_TTL_DAYS", 7))
     audit_enabled: bool = field(default_factory=lambda: _env_bool("AUDIT_ENABLED", True))
-    hook_limit: int = field(default_factory=lambda: _env_int("HOOK_LIMIT", 5))
     reasoning_effort: str = field(
         default_factory=lambda: _env("REASONING_EFFORT", "").lower()
     )  # ""=不传(自动) | low | medium | high

@@ -17,11 +17,11 @@ async def run_audit(
     temperature: float = 0.2,
 ) -> AuditOutput:
     """Audit worker: infers world side effects from an adopted prose and
-    proposes hook/lifecycle settlement.
+    judges goal completion / lifecycle.
 
     This is a pure inference step — it writes nothing; the transaction
     applies the returned AuditOutput (clock, narrative, scene registration,
-    hooks, lifecycle).
+    goals, lifecycle).
     """
     system = build_audit_work_order(world, ledger, ledger.save.player_scene)
     messages = [

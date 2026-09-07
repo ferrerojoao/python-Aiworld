@@ -195,7 +195,7 @@ async def get_state(request: Request, sid: str):
         session.world.npcs.get(pid).name if pid in session.world.npcs else pid
         for pid in present_ids
     ]
-    hooks = [h.model_dump() for h in session.ledger.save.hooks if h.status == "open"]
+    goals = [g.model_dump() for g in session.ledger.save.goals if g.status == "active"]
     return {
         "clock": session.ledger.save.clock,
         "scene": session.scene_description(),
@@ -204,7 +204,7 @@ async def get_state(request: Request, sid: str):
         "adjacent": adjacent,
         "present": present_ids,
         "present_names": present_names,
-        "hooks": hooks,
+        "goals": goals,
         "preset": request.app.state.global_preset.model_dump(),
         "pending": [
             {"candidate_id": c.candidate_id, "turn_id": c.turn_id, "mode": c.mode, "prose": c.prose}
@@ -384,7 +384,7 @@ async def reset_session(request: Request, sid: str):
     save.narrative_preset = session.world.presets
     save.entities = {}
     save.axes = {}
-    save.hooks = []
+    save.goals = []
     save.access_overrides = {}
     save.audit_last_error = None
     save.active_lore_ids = []

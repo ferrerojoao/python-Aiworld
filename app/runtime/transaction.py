@@ -111,7 +111,7 @@ class Transaction:
 
         Rule-solved effects (move/jump delta, destination) come from the
         candidate; prose-semantic effects (time/location/presence/privacy,
-        scene registration, hooks, lifecycle) come from the audit inference
+        scene registration, goals, lifecycle) come from the audit inference
         — the audit runs here as the single settlement point and writes
         nothing itself; this method applies its result.
         """
@@ -183,17 +183,11 @@ class Transaction:
         for key, value in candidate.side_effects.axes.items():
             self.ledger.save.axes[key] = value
 
-        # Apply the audit's hook/lifecycle settlement.
+        # Apply the audit's goal/lifecycle settlement.
         if audit_out is not None:
-            from app.ledger.hooks import add_hooks, close_hooks
+            from app.ledger.goals import complete_goals
 
-            add_hooks(
-                self.ledger,
-                audit_out.hook_texts,
-                event=narrative,
-                limit=getattr(self, "hook_limit", 5),
-            )
-            close_hooks(self.ledger, audit_out.closed_hook_ids)
+            complete_goals(self.ledger, audit_out.completed_goal_ids)
             for item in audit_out.lifecycle or []:
                 npc_id = str(item.get("npc_id") or item.get("id") or "")
                 status = str(item.get("status") or "")

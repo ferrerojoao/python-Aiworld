@@ -46,10 +46,10 @@ async def main() -> None:
 
         # Adopt so the audit runs, then inspect what it settled.
         await runner.adopt(candidate.candidate_id)
-        hooks = session.ledger.save.hooks
+        goals = session.ledger.save.goals
         print()
         print("审计后事件数:", len(session.ledger.narratives))
-        print("钩子台账:", [(h.text[:30], h.status) for h in hooks] or "（空）")
+        print("剧情目标:", [(g.text[:30], g.status) for g in goals] or "（空）")
         print("TURN SMOKE PASSED")
 
 

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 
@@ -183,8 +183,6 @@ def test_audit_settles_side_effects_and_one_shot_scene(session, settings):
         "participants": ["player", "npc_wangrong"],
         "private": True,
         "delta_minutes": 240,
-        "hook_texts": [],
-        "closed_hook_ids": [],
         "lifecycle": [],
     }
     llm = PrefixKeyLLM(
@@ -218,8 +216,6 @@ def test_audit_registers_reusable_scene(session, settings):
         "participants": ["player"],
         "private": False,
         "delta_minutes": 0,
-        "hook_texts": [],
-        "closed_hook_ids": [],
         "lifecycle": [],
     }
     llm = PrefixKeyLLM(
@@ -275,8 +271,6 @@ def test_lore_trigger_input_merges_then_adopt_rebuilds(session, settings):
         "participants": ["player", "npc_zhuming"],
         "private": False,
         "delta_minutes": 0,
-        "hook_texts": [],
-        "closed_hook_ids": [],
         "lifecycle": [],
     }
     llm = PrefixKeyLLM(
@@ -319,9 +313,7 @@ def test_lore_trigger_input_merges_then_adopt_rebuilds(session, settings):
                 "participants": ["player"],
                 "private": False,
                 "delta_minutes": 0,
-                "hook_texts": [],
-                "closed_hook_ids": [],
-                "lifecycle": [],
+                    "lifecycle": [],
             },
         }
     )
@@ -348,8 +340,6 @@ def test_lore_merge_dedup_and_cap(session, settings):
         "participants": ["player"],
         "private": False,
         "delta_minutes": 0,
-        "hook_texts": [],
-        "closed_hook_ids": [],
         "lifecycle": [],
     }
     llm = PrefixKeyLLM(

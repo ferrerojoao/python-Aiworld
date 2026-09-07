@@ -39,7 +39,7 @@ async def run_actor(
     ``build_work_order(viewer="actor_<id>")``: the actor sees only its own
     card (incl. persona patch), the current scene's perceptible area, and its
     own memory slice (already filtered by known_by visibility). It never sees
-    private notes, other NPCs' secrets, hooks, or the writer's motivation.
+    private notes, other NPCs' secrets, goals, or the writer's motivation.
     """
     system = build_work_order(f"actor_{npc.id}", world, ledger, scene_id or "")
     scene = normalize_context(context, npc.name)

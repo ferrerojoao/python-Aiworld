@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   --app-bg: #1e1f24;
   --panel: #141519;
   --panel-2: #191a1f;
@@ -721,7 +721,7 @@ button:hover {
 
 /* ---------- 通用小元素 ---------- */
 #ledger,
-#state-hooks {
+#state-goals {
   list-style: none;
   padding: 0;
   margin: 0;
@@ -730,7 +730,7 @@ button:hover {
 }
 
 #ledger li,
-#state-hooks li {
+#state-goals li {
   margin-bottom: 6px;
   border-left: 2px solid var(--border);
   padding-left: 8px;

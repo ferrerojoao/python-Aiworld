@@ -40,8 +40,8 @@ async def director(request: Request, sid: str, body: DirectorBody):
         return await _director_chat(request, session, body.message)
     # legacy topics kept for API compatibility (frontend uses chat only)
     if body.topic == "advice":
-        hooks = [h.model_dump() for h in session.ledger.save.hooks if h.status == "open"]
-        return {"suggestions": [{"text": h["text"], "kind": "closing"} for h in hooks[:3]]}
+        goals = [g.model_dump() for g in session.ledger.save.goals if g.status == "active"]
+        return {"suggestions": [{"text": g["text"], "kind": "goal"} for g in goals[:3]]}
     if body.topic == "qa":
         return {"answer": f"当前时间：{session.ledger.save.clock}"}
     if body.topic in {"discuss"}:
@@ -102,16 +102,6 @@ def _resolve_npc_ref(session, ref: str) -> str | None:
     return None
 
 
-def _write_npc_card(session, npc_id: str) -> None:
-    """Persist one NPC card in the save's world instance and reload."""
-    from app.core.store import write_json_atomic
-
-    npc = session.world.npcs[npc_id]
-    card_path = session.world_dir / "npcs" / f"{npc_id}.json"
-    write_json_atomic(card_path, npc.model_dump())
-    session.reload_world()
-
-
 def _execute_action(session, action_type: str, payload: dict) -> dict:
     """Execute a confirmed backstage action (player already confirmed it)."""
     ledger = session.ledger
@@ -158,6 +148,40 @@ def _execute_action(session, action_type: str, payload: dict) -> dict:
         ledger.persist_save()
         return {"ok": True, "action": action_type, "event": event, "npc": npc.name if npc else npc_id}
 
+    if action_type == "set_goal":
+        # 剧情目标（M14）：设立 / 废弃（玩家确认后落账）。
+        from app.ledger.goals import abandon_goal, add_goal
+
+        if payload.get("status") == "abandoned":
+            goal_id = payload.get("goal_id", "")
+            if not goal_id:
+                raise HTTPException(status_code=400, detail="goal_id is required")
+            goal = abandon_goal(ledger, goal_id)
+            if goal is None:
+                raise HTTPException(status_code=404, detail=f"active goal not found: {goal_id}")
+            ledger.persist_save()
+            return {"ok": True, "action": action_type, "goal_id": goal_id}
+        text = (payload.get("text") or "").strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="text is required")
+        npc_id = payload.get("npc_id") or None
+        if npc_id:
+            npc_id = _resolve_npc_ref(session, npc_id)
+            if npc_id is None:
+                raise HTTPException(status_code=404, detail=f"npc not found: {payload.get('npc_id')}")
+        try:
+            goal = add_goal(
+                ledger,
+                text=text,
+                kind=payload.get("kind") or "small",
+                big_goal_id=payload.get("big_goal_id") or None,
+                npc_id=npc_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        ledger.persist_save()
+        return {"ok": True, "action": action_type, "goal": goal.model_dump()}
+
     if action_type == "override":
         subject = _resolve_npc_ref(session, payload.get("subject", ""))
         location = payload.get("location", "")
@@ -180,72 +204,5 @@ def _execute_action(session, action_type: str, payload: dict) -> dict:
         ledger.append(event)
         ledger.persist_save()
         return {"ok": True, "action": action_type, "event": event}
-
-    if action_type == "amend_card":
-        # 补卡事务：把增补内容写入存档世界实例的人物卡（人格增厚，玩家确认后）。
-        npc_id = _resolve_npc_ref(session, payload.get("npc_id", ""))
-        amendment = (payload.get("amendment") or "").strip()
-        if npc_id is None:
-            raise HTTPException(status_code=404, detail=f"npc not found: {payload.get('npc_id')}")
-        if not amendment:
-            raise HTTPException(status_code=400, detail="amendment is required")
-        npc = session.world.npcs[npc_id]
-        npc.persona = f"{npc.persona}\n{amendment}".strip()
-        _write_npc_card(session, npc_id)
-        return {"ok": True, "action": action_type}
-
-    if action_type == "create_npc":
-        # 角色转正：AI 现场捏的角色 → 玩家深聊 → 建档为实例 NPC 卡。
-        name = (payload.get("name") or "").strip()
-        if not name:
-            raise HTTPException(status_code=400, detail="name is required")
-        from app.world.models import NpcCard
-
-        npc_id = f"npc_{payload.get('npc_id') or name[:8]}"
-        while npc_id in session.world.npcs:
-            npc_id += "_x"
-        card = NpcCard(
-            id=npc_id,
-            name=name,
-            appearance=(payload.get("appearance") or "").strip(),
-            persona=(payload.get("persona") or "").strip() or f"名字：{name}。（作者尚未细写）",
-            private_note=(payload.get("private_note") or "").strip() or None,
-            personal_secrets=(payload.get("personal_secrets") or "").strip() or None,
-            has_actor=bool(payload.get("has_actor", False)),
-        )
-        from app.core.store import write_json_atomic
-
-        npcs_dir = session.world_dir / "npcs"
-        npcs_dir.mkdir(exist_ok=True)
-        write_json_atomic(npcs_dir / f"{npc_id}.json", card.model_dump())
-        session.reload_world()
-        return {"ok": True, "action": action_type, "npc_id": npc_id}
-
-    if action_type == "add_scene":
-        # 场景转正：玩家走进/提及包外地点 → 注册为实例场景节点，可复用。
-        name = (payload.get("name") or "").strip()
-        if not name:
-            raise HTTPException(status_code=400, detail="name is required")
-        from app.world.models import Scene
-
-        scene_id = payload.get("scene_id") or f"scene_{name[:8]}"
-        while scene_id in {s.id for s in session.world.scenes}:
-            scene_id += "_x"
-        scene = Scene(
-            id=scene_id,
-            name=name,
-            aliases=payload.get("aliases") or [name],
-            tags=payload.get("tags") or [],
-            perceivable=payload.get("perceivable") or "这里看起来是个还没仔细描述的地方。",
-            open_hours=payload.get("open_hours") or "全天",
-            adjacent=payload.get("adjacent") or [session.ledger.save.player_scene],
-        )
-        from app.core.store import write_json_atomic
-
-        scenes_path = session.world_dir / "scenes.json"
-        scenes = [s.model_dump() for s in session.world.scenes] + [scene.model_dump()]
-        write_json_atomic(scenes_path, scenes)
-        session.reload_world()
-        return {"ok": True, "action": action_type, "scene_id": scene_id}
 
     raise HTTPException(status_code=400, detail=f"unknown action: {action_type}")

@@ -328,9 +328,9 @@ def test_director_chat_pending_action_confirm(tmp_path):
 
     llm = PrefixKeyLLM(
         {
-            "让王蓉配 Agent": {
-                "reply": "好的，王蓉将配 Actor。",
-                "action": {"type": "set_actor", "payload": {"npc_id": "npc_wangrong", "has_actor": True}},
+            "设立一个主线目标": {
+                "reply": "好的，我来设立这个目标。",
+                "action": {"type": "set_goal", "payload": {"text": "查明朱明打架的真相", "kind": "big", "npc_id": "npc_zhuming"}},
             }
         }
     )
@@ -341,35 +341,32 @@ def test_director_chat_pending_action_confirm(tmp_path):
         # The chat proposes the action but does not apply it yet.
         chat = client.post(
             f"/api/sessions/{sid}/director",
-            json={"topic": "chat", "message": "让王蓉配 Agent"},
+            json={"topic": "chat", "message": "设立一个主线目标"},
         ).json()
-        assert chat["pending_action"]["type"] == "set_actor"
+        assert chat["pending_action"]["type"] == "set_goal"
 
-        # Nothing applied before confirmation: instance card still has_actor=False.
-        import json
+        # Nothing applied before confirmation: state has no goals yet.
+        state = client.get(f"/api/sessions/{sid}/state").json()
+        assert state["goals"] == []
 
-        card = json.loads(
-            (tmp_path / "qinghsi" / "saves" / "main" / "world" / "npcs" / "npc_wangrong.json").read_text(encoding="utf-8")
-        )
-        assert card["has_actor"] is False
-
-        # Confirm executes it on the instance card.
+        # Confirm executes it.
         confirm = client.post(
             f"/api/sessions/{sid}/director",
             json={"topic": "confirm", "action": chat["pending_action"]},
         )
         assert confirm.status_code == 200
-        assert confirm.json()["has_actor"] is True
+        goal = confirm.json()["goal"]
+        assert goal["status"] == "active"
+        assert goal["kind"] == "big"
+        assert goal["npc_id"] == "npc_zhuming"
 
-        card = json.loads(
-            (tmp_path / "qinghsi" / "saves" / "main" / "world" / "npcs" / "npc_wangrong.json").read_text(encoding="utf-8")
-        )
-        assert card["has_actor"] is True
+        state = client.get(f"/api/sessions/{sid}/state").json()
+        assert [g["text"] for g in state["goals"]] == ["查明朱明打架的真相"]
 
 
-def test_director_confirm_set_actor_and_inject_memory(tmp_path):
-    """set_actor writes the runtime has_actor; inject_memory lays a private
-    event visible only to that NPC."""
+def test_director_confirm_set_goal_and_inject_memory(tmp_path):
+    """set_goal creates the goal; inject_memory lays a private
+    event visible only to that NPC. Goal cap rejects overflow."""
     from app.core.llm import FakeLLM
 
     class PrefixKeyLLM(FakeLLM):
@@ -384,9 +381,12 @@ def test_director_confirm_set_actor_and_inject_memory(tmp_path):
 
     llm = PrefixKeyLLM(
         {
-            "给王蓉配 Agent": {
-                "reply": "好的，王蓉将配给 Actor。",
-                "action": {"type": "set_actor", "payload": {"npc_id": "npc_wangrong", "has_actor": True}},
+            "设立支线目标帮王蓉修船": {
+                "reply": "好的，记下这个支线目标。",
+                "action": {
+                    "type": "set_goal",
+                    "payload": {"text": "帮王蓉修好渔船", "kind": "small", "npc_id": "npc_wangrong"},
+                },
             },
             "给朱明注入一段记忆": {
                 "reply": "好的，我会私下记下这条。",
@@ -403,23 +403,28 @@ def test_director_confirm_set_actor_and_inject_memory(tmp_path):
 
         chat = client.post(
             f"/api/sessions/{sid}/director",
-            json={"topic": "chat", "message": "给王蓉配 Agent"},
+            json={"topic": "chat", "message": "设立支线目标帮王蓉修船"},
         ).json()
-        assert chat["pending_action"]["type"] == "set_actor"
         confirm = client.post(
             f"/api/sessions/{sid}/director",
             json={"topic": "confirm", "action": chat["pending_action"]},
         )
         assert confirm.status_code == 200
-        assert confirm.json()["has_actor"] is True
+        goal = confirm.json()["goal"]
+        assert goal["kind"] == "small"
+        assert goal["status"] == "active"
 
-        # Promotion survives reload and lives on the world-instance card.
-        import json
-
-        card = json.loads(
-            (tmp_path / "qinghsi" / "saves" / "main" / "world" / "npcs" / "npc_wangrong.json").read_text(encoding="utf-8")
+        # Goal cap is enforced (6 active).
+        for i in range(6):
+            client.post(
+                f"/api/sessions/{sid}/director",
+                json={"topic": "confirm", "action": {"type": "set_goal", "payload": {"text": f"目标{i}", "kind": "small"}}},
+            )
+        over = client.post(
+            f"/api/sessions/{sid}/director",
+            json={"topic": "confirm", "action": {"type": "set_goal", "payload": {"text": "超限目标", "kind": "small"}}},
         )
-        assert card["has_actor"] is True
+        assert over.status_code == 400
 
         chat2 = client.post(
             f"/api/sessions/{sid}/director",
@@ -439,9 +444,8 @@ def test_director_confirm_set_actor_and_inject_memory(tmp_path):
         assert injected["known_by"] == ["npc_zhuming"]
 
 
-def test_director_confirm_create_npc_and_add_scene(tmp_path):
-    """Player-driven promotion: a grabbed character becomes an instance NPC
-    card; a new place becomes a navigable instance scene."""
+def test_director_confirm_abandon_goal(tmp_path):
+    """A player can abandon an active goal via the director window."""
     from app.core.llm import FakeLLM
 
     class PrefixKeyLLM(FakeLLM):
@@ -456,16 +460,13 @@ def test_director_confirm_create_npc_and_add_scene(tmp_path):
 
     llm = PrefixKeyLLM(
         {
-            "给那个老乞丐建档": {
-                "reply": "好的，我来给老乞丐建档。",
-                "action": {
-                    "type": "create_npc",
-                    "payload": {"name": "老乞丐", "appearance": "破棉袄，走路一瘸一拐。", "has_actor": False},
-                },
+            "不再追查打架的事了": {
+                "reply": "好的，我废弃这个目标。",
+                "action": {"type": "set_goal", "payload": {"text": "查明朱明打架的真相", "kind": "big"}},
             },
-            "街角新开了家奶茶店": {
-                "reply": "好的，我把它注册为新地点。",
-                "action": {"type": "add_scene", "payload": {"name": "街角奶茶店", "perceivable": "门脸不大，招牌是手写的。"}},
+            "废弃那个目标": {
+                "reply": "好，废弃。",
+                "action": None,
             },
         }
     )
@@ -475,30 +476,23 @@ def test_director_confirm_create_npc_and_add_scene(tmp_path):
 
         chat = client.post(
             f"/api/sessions/{sid}/director",
-            json={"topic": "chat", "message": "给那个老乞丐建档"},
+            json={"topic": "chat", "message": "不再追查打架的事了"},
         ).json()
         confirm = client.post(
             f"/api/sessions/{sid}/director",
             json={"topic": "confirm", "action": chat["pending_action"]},
         )
         assert confirm.status_code == 200
-        npc_id = confirm.json()["npc_id"]
-        world = client.get(f"/api/sessions/{sid}/world").json()
-        assert npc_id in world["npcs"]
-        assert world["npcs"][npc_id]["name"] == "老乞丐"
+        goal_id = confirm.json()["goal"]["id"]
 
-        chat2 = client.post(
+        # Abandon it directly (the engineer-level path; chat may also propose).
+        abandon = client.post(
             f"/api/sessions/{sid}/director",
-            json={"topic": "chat", "message": "街角新开了家奶茶店"},
-        ).json()
-        confirm2 = client.post(
-            f"/api/sessions/{sid}/director",
-            json={"topic": "confirm", "action": chat2["pending_action"]},
+            json={"topic": "confirm", "action": {"type": "set_goal", "payload": {"goal_id": goal_id, "status": "abandoned"}}},
         )
-        assert confirm2.status_code == 200
-        scene_id = confirm2.json()["scene_id"]
-        world = client.get(f"/api/sessions/{sid}/world").json()
-        assert any(s["id"] == scene_id and s["name"] == "街角奶茶店" for s in world["scenes"])
+        assert abandon.status_code == 200
+        state = client.get(f"/api/sessions/{sid}/state").json()
+        assert state["goals"] == []  # abandoned goals drop out of active
 
 
 def test_settings_and_director_chat(tmp_path):
