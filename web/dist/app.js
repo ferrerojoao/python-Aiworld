@@ -996,11 +996,11 @@ function npcCard(id, card) {
         <textarea class="edit-field" data-field="persona" rows="3">${escapeHtml(c.persona || "")}</textarea>
       </div>
       <div class="field full">
-        <label>幕后注（作者底牌：无人知道的真相，仅编剧可读，永不进任何切片）</label>
+        <label>幕后注</label>
         <textarea class="edit-field" data-field="private_note" rows="2">${escapeHtml(c.private_note || "")}</textarea>
       </div>
       <div class="field full">
-        <label>自知隐秘（该角色自己知道的秘密，进他自己的 Actor 切片，如"他爸欠了赌债，最不愿提"）</label>
+        <label>自知隐秘</label>
         <textarea class="edit-field" data-field="personal_secrets" rows="2">${escapeHtml(c.personal_secrets || "")}</textarea>
       </div>
       <div class="form-grid">
