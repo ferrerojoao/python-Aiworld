@@ -184,19 +184,26 @@ class TurnRunner:
             player_input, scene=scene, rule_bundle=rule_bundle
         )
 
-        await self._progress("qc", "质检员审校中")
-        qc_participants = ["player"] + [q.npc_id for q in out.actor_questions]
-        qc = await run_qc(
-            self.llm,
-            self.session.world,
-            self.session.ledger,
-            out.prose,
-            participants=qc_participants,
-            preset=self.preset,
-            reference=build_qc_reference(self.session.world, self.session.ledger, qc_participants),
-            model=self.settings.resolved_model("qc"),
-            temperature=self.settings.temp_qc,
-        )
+        if self.settings.qc_enabled:
+            await self._progress("qc", "质检员审校中")
+            qc_participants = ["player"] + [q.npc_id for q in out.actor_questions]
+            qc = await run_qc(
+                self.llm,
+                self.session.world,
+                self.session.ledger,
+                out.prose,
+                participants=qc_participants,
+                preset=self.preset,
+                reference=build_qc_reference(self.session.world, self.session.ledger, qc_participants),
+                model=self.settings.resolved_model("qc"),
+                temperature=self.settings.temp_qc,
+            )
+            prose = qc.prose
+            issues = qc.issues
+        else:
+            # 跳过质检：编剧初稿直接进候选（设置项，玩家自担文风/泄漏风险）。
+            prose = out.prose
+            issues = []
 
         # Build one candidate version.
         summary = out.summary or (out.prose or "")[:40]
@@ -209,7 +216,7 @@ class TurnRunner:
             trace_id=new_id("tr"),
             mode="initial",
             player_input=player_input,
-            prose=qc.prose,
+            prose=prose,
             side_effects=SideEffects(
                 delta_minutes=rule_bundle.get("delta_minutes", 0),
                 # 规则段可定移动目的地；正文语义副作用（时间/在场/私密）由采纳时审计推断。
@@ -219,7 +226,7 @@ class TurnRunner:
                 },
                 events=[],
             ),
-            conflicts=qc.issues + self._deferred_actor_notes(out),
+            conflicts=issues + self._deferred_actor_notes(out),
             created_at=now,
             updated_at=now,
         )
@@ -250,17 +257,23 @@ class TurnRunner:
             rewrite_note=rewrite_note,
         )
 
-        await self._progress("qc", "质检员审校中")
-        qc = await run_qc(
-            self.llm,
-            self.session.world,
-            self.session.ledger,
-            out.prose,
-            preset=self.preset,
-            reference=build_qc_reference(self.session.world, self.session.ledger, []),
-            model=self.settings.resolved_model("qc"),
-            temperature=self.settings.temp_qc,
-        )
+        if self.settings.qc_enabled:
+            await self._progress("qc", "质检员审校中")
+            qc = await run_qc(
+                self.llm,
+                self.session.world,
+                self.session.ledger,
+                out.prose,
+                preset=self.preset,
+                reference=build_qc_reference(self.session.world, self.session.ledger, []),
+                model=self.settings.resolved_model("qc"),
+                temperature=self.settings.temp_qc,
+            )
+            prose = qc.prose
+            issues = qc.issues
+        else:
+            prose = out.prose
+            issues = []
 
         side_effects = latest.side_effects.model_copy(deep=True)
         if side_effects.narrative is not None:
@@ -273,9 +286,9 @@ class TurnRunner:
             trace_id=latest.trace_id,
             mode=mode,
             player_input=latest.player_input,
-            prose=qc.prose,
+            prose=prose,
             side_effects=side_effects,
-            conflicts=qc.issues + self._deferred_actor_notes(out),
+            conflicts=issues + self._deferred_actor_notes(out),
             created_at=now,
             updated_at=now,
         )

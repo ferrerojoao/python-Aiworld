@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AIWorld</title>
-  <link rel="stylesheet" href="style.css?v=45" />
+  <link rel="stylesheet" href="style.css?v=46" />
 </head>
 <body>
   <div id="app">
@@ -119,6 +119,7 @@
           <option value="high">高（high）</option>
           <option value="max">最高（max）</option>
         </select>
+        <label><input id="setting-qc-enabled" type="checkbox" checked /> 启用质检环节（关闭后编剧初稿直接进候选）</label>
         <label>字体大小</label>
         <select id="setting-font-size">
           <option value="13">小</option>
@@ -172,6 +173,7 @@
           <button id="save-world-edit" style="display:none">保存修改</button>
           <button id="save-as-world" style="display:none">另存为新世界</button>
           <button id="export-world">导出资产包</button>
+          <button id="export-save">导出存档（含事件日志）</button>
           <label class="import-label">
             导入资产包
             <input id="import-world" type="file" accept=".zip" hidden />
@@ -182,6 +184,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=45"></script>
+  <script src="app.js?v=46"></script>
 </body>
 </html>

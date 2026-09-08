@@ -334,6 +334,34 @@ async def export_world(request: Request, sid: str):
     )
 
 
+@router.get("/sessions/{sid}/export")
+async def export_save(request: Request, sid: str):
+    """Export the whole save: save.json + events.jsonl + world instance.
+
+    与「导出资产包」不同：这里连事件日志（世界全部历史）与运行态一起打包，
+    用于备份/换机/复盘；解包后放回 saves/<name>/ 即可继续。
+    """
+    session = _get_session(request, sid)
+    save_dir = session.save_dir
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(save_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(save_dir)
+            # 候选是临时态（未采纳的提案），不入备份。
+            if rel.parts and rel.parts[0] == "candidates":
+                continue
+            zf.write(path, rel.as_posix())
+    buffer.seek(0)
+    name = f"{session.world.meta.id}_{session.ledger.save.meta.save_name}.zip"
+    return StreamingResponse(
+        buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={name}"},
+    )
+
+
 @router.post("/sessions/{sid}/world/import")
 async def import_world(request: Request, sid: str, body: ImportWorldBody):
     session = _get_session(request, sid)
@@ -420,6 +448,7 @@ class SettingsBody(BaseModel):
     model_main: str | None = None
     model_cheap: str | None = None
     reasoning_effort: str | None = None
+    qc_enabled: bool | None = None
 
 
 @router.get("/settings")
@@ -431,6 +460,7 @@ async def get_system_settings(request: Request):
         "model_main": s.model_main,
         "model_cheap": s.model_cheap,
         "reasoning_effort": s.reasoning_effort or "auto",
+        "qc_enabled": s.qc_enabled,
     }
 
 
@@ -456,6 +486,8 @@ async def update_system_settings(request: Request, body: SettingsBody):
     if body.reasoning_effort is not None:
         effort = body.reasoning_effort.lower()
         s.reasoning_effort = "" if effort in {"auto", "none", ""} else effort
+    if body.qc_enabled is not None:
+        s.qc_enabled = body.qc_enabled
     from app.core.llm import LLMGateway
 
     request.app.state.llm = LLMGateway(

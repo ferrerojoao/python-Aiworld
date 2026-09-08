@@ -584,6 +584,7 @@ async function loadSettings() {
   $("#setting-model-main").value = data.model_main || "";
   $("#setting-model-cheap").value = data.model_cheap || "";
   $("#setting-reasoning").value = data.reasoning_effort || "auto";
+  $("#setting-qc-enabled").checked = data.qc_enabled !== false;
 
   const fontSize = localStorage.getItem("aiworld_font_size") || "14";
   const theme = localStorage.getItem("aiworld_theme") || "dark";
@@ -611,6 +612,7 @@ async function saveSettings() {
       model_main: $("#setting-model-main").value,
       model_cheap: $("#setting-model-cheap").value,
       reasoning_effort: $("#setting-reasoning").value,
+      qc_enabled: $("#setting-qc-enabled").checked,
     }),
   });
 
@@ -1250,6 +1252,16 @@ async function exportWorld() {
   a.remove();
 }
 
+function exportSave() {
+  const url = `/api/sessions/${state.sid}/export`;
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 async function importWorld(file) {
   if (!file) return;
   const content = await readFileAsBase64(file);
@@ -1340,6 +1352,7 @@ async function init() {
     btn.addEventListener("click", () => switchWorldTab(btn.dataset.tab));
   });
   $("#export-world").addEventListener("click", exportWorld);
+  $("#export-save").addEventListener("click", exportSave);
   $("#refresh-world").addEventListener("click", refreshWorldModal);
   $("#toggle-edit").addEventListener("click", toggleEditMode);
   $("#save-world-edit").addEventListener("click", saveWorldEdit);
