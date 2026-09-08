@@ -8,7 +8,8 @@ from app.config import Settings
 from app.core.llm import FakeLLM
 from app.runtime.session import create_session
 
-WORLD_ROOT = Path(__file__).resolve().parent.parent / "content" / "qinghsi"
+# 测试夹具世界包：独立于 content/（用户可自由增删世界，测试不受影响）。
+WORLD_ROOT = Path(__file__).resolve().parent / "fixtures" / "qinghsi"
 
 GENERIC_LLM_RESPONSE = {
     "prose": "朱明从网吧出来，看见你愣了一下，把烟头踩灭。",
@@ -51,4 +52,4 @@ def fake_llm() -> FakeLLM:
 
 @pytest.fixture
 def settings() -> Settings:
-    return Settings(content_root=Path("content"), candidate_ttl_days=7)
+    return Settings(content_root=WORLD_ROOT.parent, candidate_ttl_days=7)

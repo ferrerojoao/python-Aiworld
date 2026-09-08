@@ -128,15 +128,16 @@ content/<world>/
 [ { "id": "favor", "label": "好感", "tags": ["relation"], "target": "npc_zhuming",
     "range": [-100, 100], "init": 0, "visible": true, "track_cause": true } ]
 
-// data/presets.json —— 全局叙述预设（不在世界包内）
+// data/presets.json —— 全局叙述预设（不在世界包内；2026-09-05 导演准则+说书人预设合并单框）
 {
-  "director_guidelines": "不要主动揭穿秘密；优先让 NPC 主动制造冲突…",
-  "storyteller_preset": "克制写实，白描为主，少用形容词堆砌…",
-  "style": "克制写实，白描为主，少用形容词堆砌。",
-  "description_style": "以玩家五官可感知为限写景，心理描写只写玩家自己的。",
-  "banned_words": [], "pace": "slow"
+  "writer_guidelines": "不要主动揭穿秘密；优先让 NPC 主动制造冲突；克制写实，白描为主…",
+  "banned_words": ["一丝", "不易察觉"]
 }
 ```
+
+### 2.1.1 world.json 新增字段（2026-09-08）
+
+`start_time`（ISO 时间，可选）：该世界的世界钟起点。新建存档与重置存档都回到此时刻；缺省回退引擎默认 `2026-07-14T08:00:00`。`check_world` 校验 ISO 格式。
 
 ### 2.2 存档 = 账本（`content/<world>/saves/<name>/`）
 
@@ -171,23 +172,23 @@ saves/<name>/
 {
   "meta": { "world_id": "qinghsi", "save_name": "main", "created_at": "…", "next_event_id": 44 },
   "clock": "2026-07-14T14:32",                    // 世界钟：只执行不逐笔记账
-  "narrative_preset": {                           // 全局预设镜像（实际读写 data/presets.json）
-    "director_guidelines": "…",
-    "storyteller_preset": "…",
-    "style": "…", "description_style": "…", "pace": "fast",
-    "banned_words_display_only": [] },            // 禁用词只读展示
-  "entities": {
-    "npc_zhuming": {
-      "lifecycle": "active",                      // active | retired（〇章生命周期）
-      "has_actor": true,                          // 运行时档位：只升不降（升格通道）
-      "has_actor": false,                          // 运行时档位（set_actor，玩家判断）
-      "persona_patch": null                       // 补卡事务产物（叙述时 内容包卡 ⊕ patch）
-    } },
-  "axes": { "favor@player->npc_zhuming": 15 },    // ③ 轴当前值（二期启用；v1 预留字段，不结算）
+  "player_scene": "net_bar",                      // 玩家当前场景 id
+  "scene_name": "网吧",                           // 当前场景显示名（注册场景取场景表；
+                                                  //   一次性场景取审计中文名，防 UI 显示英文 id）
+  "player": {                                     // 主角资料（与 NPC 人物卡同构，无 has_actor）
+    "name": "刘星", "appearance": "…", "persona": "…",
+    "private_note": "…",                          // 作者底牌：无人知道，仅编剧可读
+    "personal_secrets": "…" },                    // 主角自知隐秘：防 NPC 提及（质检禁区）
+  "narrative_preset": { "writer_guidelines": "…", "banned_words": [] },  // 全局预设镜像
+  "entities": { "npc_zhuming": { "lifecycle": "active" } },  // active | retired
+  "axes": { },                                    // ③ 轴当前值（二期；v1 预留不结算）
+  "access_overrides": { },                        // 事件访问改判（§7）
+  "audit_last_error": null,                       // 最近一次审计失败记录
+  "active_lore_ids": ["net_bar_fire"],            // 本轮世界书命中列表（§6 世界书 v2）
   "goals": [ { "id": "goal_01", "text": "查明朱明打架的真相", "kind": "big",
-               "level": "npc", "status": "open", "opened_at": "…", "due": null,
-               "related": ["npc_wangrong"] } ],   // M14 台账
-  "scene_addons": { }                             // M17 现场转正注册的节点（包外地点）
+               "subject": "player",               // 归属者：player | npc_id（NPC 目标）
+               "status": "active", "big_goal_id": null, "npc_id": "npc_zhuming",
+               "created_at": "…", "done_at": null } ]   // M14 剧情目标
 }
 ```
 
@@ -287,7 +288,7 @@ PendingTurn（内存事务上下文）
   3. 编剧一次调用：脑中排节拍 → 直接成文（WriterOutput，§5.3）
   4. 若输出带 actor_questions（深抉择）→ 逐 NPC 装配其隔离工作单（viewer=npc）
      → Actor 决策块回流 → 编剧二次调用按决策成文（正常回合仅此 1 次，深抉择 2 次）
-  5. （合并后无独立说书人调用；adopt_player_body 时正文=玩家原文）
+  5. （合并后无独立说书人调用；正文一律由编剧成文）
   6. 质检（必经）：文风（局部改写）/泄漏（参照区比对）/禁用词 → 成品正文 + 修改记录
   7. SSE 交付候选区 → 玩家选择采纳某一候选 / 唯一候选自动采纳（commit，§4）→ 提交后结算（§5.7）
 
@@ -326,11 +327,7 @@ PendingTurn（内存事务上下文）
 
 ```jsonc
 { "prose": "正文全文（必填，按叙述预设直接成稿）",
-  "time_hint": null | { "desc": "天黑了", "advance_to": "night" },
   "summary": "一句话剧情摘要（事件日志用）",
-  "location": "net_bar", "participants": ["player", "npc_zhuming"],
-  "private": false,
-  "adopt_player_body": false,
   "actor_questions": [
     { "npc_id": "npc_zhuming",
       "question": "被追问打架的事，朱明是含糊带过还是翻脸？",
@@ -338,10 +335,10 @@ PendingTurn（内存事务上下文）
 }
 ```
 
-- `adopt_player_body=true`：玩家输入本身已是完整成文叙述 → 正文 = 玩家原文，编剧不扩写。
+- **编剧只写正文（2026-09-07 拍板）**：`WriterOutput` 仅 `prose / summary / actor_questions` 三字段——时间推进、地点、在场者、私密情境等世界副作用**不再由编剧上报**，一律由采纳时的世界审计从正文语义推断（§5.7）。
 - **深抉择不替 NPC 决定**：在场"配 Actor"的 NPC 撞深抉择（内心判断 / 涉密反应 / 是否信任）时，编剧**不得猜其心思**，必须在 `actor_questions` 里上缴问题；引擎派该 NPC 的隔离 Actor 决定后，编剧二次调用按决策成文（§5.4）。档位由玩家经导演窗口 set_actor 管理（2026-09-05 合并：原"点名强制档"取消，浅反应一律编剧代笔）。
 - `actor_questions[].context` 只写该 NPC 本人会知道的情境——禁止写幕后注等只有编剧知道的秘密（防止经 Actor 回流泄漏）。
-- `time_hint` = M20 ③"AI 正文写了时间流逝 → 该次输出顺带推钟"的落点；计入回合 Δt（与规则段 Δt 汇总）。
+- M20 ③"正文写了时间流逝 → 同步推钟"由审计的 `delta_minutes` 落地（编剧不输出 time_hint）；与规则段 Δt 汇总后计入回合。
 - **机密纪律**：编剧读幕后注是安全的（全知），但幕后注绝不允许出现在正文里——这是质检参照区比对的反向检查项（§5.6）。
 
 ### 5.4 NPC Actor（workers/actor.py）
@@ -363,6 +360,7 @@ PendingTurn（内存事务上下文）
   - **泄漏比对**：某角色台词呈现的知识超出其参照区 → **脱敏改写**（模糊化）。泄漏 = 剧情错误，每个 LLM 都知道它会被查。
   - **秘密禁区**：幕后注与 NPC 自知隐秘（personal_secrets）绝不允许出现在正文或任何角色口中，命中即改稿。
 - 输出 `{ status: pass|fixed, prose, issues: [{desc}] }`。
+- **可跳过（2026-09-08）**：`Settings.qc_enabled`（系统设置面板复选框 / env `QC_ENABLED`，默认开）。关闭后 `run_turn` 与 `reroll` 跳过质检调用，编剧初稿直接进候选——省一次 LLM 调用与等待，代价是文风/泄漏/禁用词无人把关。
 - **引擎不做矛盾仲裁（2026-09-05 拍板）**：剧情走向与既定设定的一致性归玩家自决——质检不设矛盾分级、不挂队列、不提示（玩家看不出矛盾说明其不重要）。
 - **预留增强（2026-09-05 记录，暂不实施）**：① 决策忠实性——Actor 决策块进质检参照，编剧二稿不得违背决策；② 秘密禁区——幕后注与 personal_secrets 作为"绝不可进正文"清单交质检比对。
 - 质检无幕后注输入（防质检自身泄漏与代答）——秘密禁区原文例外：仅作比对参照，与成品分轨。
@@ -374,7 +372,7 @@ v1 的审计/记账在玩家“采纳”（含下一次输入自动采纳）时�
 2. **关系结算复核**：M5 关系系统暂缓设计，v1 不执行关系轴结算；此处只保留接口位，待二期实现。
 3. **生命周期扫描（〇章）**：终态事件（死亡/永久离开）→ 实体置 `retired`（数据全保留；目标留玩家定夺）。
 
-**失败/恢复**：审计任务带 `run_id`；若中途失败，正文已落账不回滚，但该 run 标记为 `failed`，并在下次采纳/启动时幂等补跑。所有审计写入必须可重入：hooks 按 `id` 覆盖。未来若改成真正后台异步，必须引入写锁/单写者队列并保留本恢复机制。
+**失败/恢复（2026-09-08 与实现对齐）**：审计在采纳时同步执行；若失败，正文照常落账不回滚，错误记入 `save.json.audit_last_error`（不再静默），当轮副作用不补跑。当前同步模式下每次采纳只跑一次审计，无补跑场景；**若将来改成后台异步**，必须引入 run_id + 幂等补跑 + 写锁/单写者队列。
 
 ### 5.8 导演窗口（OOC 旁路，routes_director.py）
 
@@ -382,13 +380,13 @@ v1 的审计/记账在玩家“采纳”（含下一次输入自动采纳）时�
 
 | 请求 | 实现 | 账本 |
 |---|---|---|
-| 求建议 | 扫 hooks + 当前张力 → 2~3 条建议（收尾型 + 推动型） | 只读 |
+| 求建议 | 扫剧情目标 + 当前张力 → 2~3 条建议（收尾型 + 推动型） | 只读 |
 | 答疑 | 查账本简略答（档案/事件/目标） | 只读 |
 | 剧情讨论 | 多轮磋商 → 产出简略输入建议 → 玩家复制进正文框 | 只读 |
-| 幕后事务 | 静默覆写 / 角色档位（set_actor）/ 记忆注入 / 事件访问改判（§7）/ 补卡事务 | **玩家确认后落账** |
+| 幕后事务 | 静默覆写 / 记忆注入 / 事件访问改判（§7）/ 剧情目标 set_goal（设立·废弃） | **玩家确认后落账** |
 
 - 幕后事务与候选区同闸门：玩家提出 → 确认 → 落账。静默覆写 = 写一条统一 narrative 事件（如“朱明在网吧。”，source=director）+ 给该时段排戏，正文以"已发生"为基演。
-- **补卡事务**：玩家口述 → 导演拟稿 + 与事件流一致性核对 → 玩家确认 → 写入 `entities[npc].persona_patch`（只增补 ①，不开放裸编辑）。
+- **人物卡 / Actor 档位 / 转正 / 场景注册（2026-09-07 改判）**：不再走导演窗口，改由**世界工作台直接编辑**存档的世界实例（设计 C：人物卡人格/幕后注/自知隐秘、has_actor 勾选、添加人物、添加场景）。导演窗口只保留事件流写操作（覆写/注入记忆/改判）与剧情目标。
 - 观察/打量等描写请求在**正文窗**输入，走正常正文流水线，不进窗口。
 
 ---
@@ -452,18 +450,18 @@ scope  = 当前场景可感知 ∪ 在场实体 ∪ 对话对象 ∪ 关键历�
 
 ### 8.1 世界钟（core/clock.py）
 
-- 变量：save.json `clock`（datetime），只执行不记账。
+- 变量：save.json `clock`（datetime），只执行不记账。**起点** = `world.json.start_time`（内容包资产，`world_start_time()` 统一读取；新建存档与重置都回到该值）。
 - 推进来源三层（规则直落，无专门 agent）：
   ① 玩家声明时刻（"等到中午"/"第二天"）→ 认字直接推进 Δt；
   ② 干实事未提时间 → `world.json.default_durations` 取默认耗时，缺失用引擎兜底常量；
-  ③ 正文写了时间流逝 → 说书人 `time_hint` 推 Δt（§5.5）。
+  ③ 正文写了时间流逝 → 采纳时审计从正文推断 `delta_minutes` 推 Δt（§5.7；编剧不输出 time_hint）。
 - 对话回合时钟冻结（纯闲聊 Δt=0）；回合 Δt 汇总在 PendingTurn，commit 才落盘。
 - 离线 = 存档搁置，时钟停留在最后推进时刻，重开从该刻续走。
 
 ### 8.2 M17 场景双轨（rules/scenes.py）
 
 - 预置 = 内容包 `scenes.json` 节点（名字/别名/标签/可感知区/开放时段/邻接点）。别名表与邻接图在启动时建索引。
-- 现场补建（转正）：走进包外地点 → 引擎生成节点挂邻接图、写入 `save.json.scene_addons`，之后可复用可被提及。初态由来源定：玩家声明 → 当场注册；导演排戏默认临时；说书人写景顺笔 → 装饰性文字不入图。
+- 现场补建（转正）：走进包外地点 → 引擎把节点写入存档世界实例 `world/scenes.json`（设计 C），之后可复用可被提及；一次性布景（register_scene=false）只记事件条目的 `location_name` 显示名、不进导航集。初态由来源定：玩家声明/审计判定可复用 → 当场注册；导演排戏默认临时；编剧写景顺笔 → 装饰性文字不入图。
 - 转正信号（引擎被动核对）：玩家回访/指代（指代消解依赖已注册）→ 剧情目标指向 → 导演/NPC 复用；任一出现即补注册。导演可预注册。
 - 一次性布景：剧情用完即从可导航集退场（事件流仍可回溯）。
 
@@ -522,10 +520,17 @@ class LLMGateway:
 ```
 GET    /api/worlds                          # 可用内容包列表
 POST   /api/sessions                        # 新建存档 {world_id, save_name}
-GET    /api/sessions/{sid}                  # 会话详情（时钟/场景/在场/预设/角标）
+GET    /api/sessions/{sid}                  # 会话详情（时钟/场景/在场/预设/目标）
 GET    /api/sessions/{sid}/state            # 右栏面板：时钟/场景/在场/可见轴（二期）/目标列表
 GET    /api/sessions/{sid}/ledger/events?cursor=   # 事件日志（玩家视角全量叙述 + 访问状态标注，只读）
-GET/PUT /api/presets                 # 全局预设（导演准则 + 说书人预设）
+GET    /api/sessions/{sid}/world            # 世界工作台（概览/世界书/场景/NPC/轴/事件）
+PUT    /api/sessions/{sid}/world            # 编辑存档的世界实例（设计 C）
+POST   /api/sessions/{sid}/world/save-as    # 另存为新世界资产包
+GET    /api/sessions/{sid}/world/export     # 导出资产包（仅世界资产）
+GET    /api/sessions/{sid}/export           # 导出存档（save.json + events.jsonl + world/，2026-09-08）
+POST   /api/saves/import                    # 导入存档（同名自动改名、缺世界则建档，2026-09-08）
+GET/PUT /api/settings                        # 系统设置（含 qc_enabled 质检开关）
+GET/PUT /api/presets                 # 全局预设（编剧准则 + 禁用词）
 ```
 
 ### 10.2 SSE（回合交付流）
@@ -557,8 +562,8 @@ POST /api/sessions/{sid}/director
   {"topic": "advice"}                 → {"suggestions": [{"text": "…", "kind": "closing|driving"}]}
   {"topic": "qa", "question": "…"}    → {"answer": "…"}        # 只读
   {"topic": "discuss", "message": "…"}→ {"reply": "…"}         # 多轮，可产出输入建议
-  {"topic": "backstage", "action": "override|remedy|force_actor|access_rejudge|amend_card",
-   "payload": {…}}                    → 玩家确认后落账（两段式确认）
+  {"topic": "confirm", "action": {"type": "override|inject_memory|access_rejudge|set_goal",
+   "payload": {…}}}                   → 玩家确认后落账（两段式确认）
 ```
 
 ---
@@ -616,7 +621,7 @@ AUDIT_ENABLED=true      # v1 为采纳时同步结算；未来改异步需另加
 |---|---|
 | LLM 角色说出域外知识 | 视图物理隔离（Actor 输入无导演区）+ 质检泄漏比对（参照区只读）+ 泄漏 = 剧情错误 |
 | 本地模型结构化输出不稳定 | JSON schema + 重试 + 文本降级解析 + Pydantic 校验 + 失败给用户可见错误并记录原始输出 |
-| 正文与时钟/账本不一致 | time_hint 报账进 Δt（规则段 Δt 与 time_hint 汇总为回合 Δt）；正文与时钟的叙事落差留玩家自决 |
+| 正文与时钟/账本不一致 | 审计从正文推断 Δt（规则段 Δt 与审计 delta_minutes 汇总为回合 Δt）；正文与时钟的叙事落差留玩家自决 |
 | 时间线分叉（重掷留痕） | 回合事务：副作用与正文同包回滚，commit 前账本零写入 |
 | 候选区进程崩溃 | 候选未 commit = 未落盘 = 未发生；`candidates/` 持久化，启动后经 `GET candidates/pending` 恢复多份候选列表；正常操作即时清理 |
 | 检索式收权不精确 | 近似检索 + 导演勾选裁决（改判当下无需一次求全） |
