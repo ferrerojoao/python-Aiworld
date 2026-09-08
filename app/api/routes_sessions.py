@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.core.presets import save_global_preset
+from app.core.store import write_json_atomic
 from app.runtime.session import create_session, open_session
 from app.world.loader import save_world_assets
 
@@ -360,6 +361,91 @@ async def export_save(request: Request, sid: str):
         media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename={name}"},
     )
+
+
+@router.post("/saves/import")
+async def import_save(request: Request, body: ImportWorldBody):
+    """Import a save zip produced by GET /sessions/{sid}/export.
+
+    落点 = content/<world_id>/saves/<save_name>/（含 save.json + events.jsonl
+    + world/ 实例）。同名存档已存在时自动改名（绝不覆盖现有存档）；
+    目标世界不存在时用 zip 内的 world/ 资产建立世界目录。
+    """
+    data = base64.b64decode(body.content)
+    if not data:
+        raise HTTPException(status_code=400, detail="empty upload")
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(status_code=400, detail="not a zip file") from exc
+
+    names = zf.namelist()
+    if "save.json" not in names:
+        raise HTTPException(status_code=400, detail="zip must contain save.json (导出存档包)")
+    try:
+        raw_save = json.loads(zf.read("save.json"))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"bad save.json: {exc}") from exc
+    meta = raw_save.get("meta") or {}
+    world_id = str(meta.get("world_id") or "").strip()
+    save_name = str(meta.get("save_name") or "").strip()
+    if not world_id or not save_name:
+        raise HTTPException(status_code=400, detail="save.json meta must contain world_id and save_name")
+
+    content_root = Path(request.app.state.settings.content_root)
+    world_root = content_root / world_id
+    # 世界不存在：用包内 world/ 资产建档（换机场景）。
+    if not (world_root / "world.json").exists():
+        if "world/world.json" not in names:
+            raise HTTPException(
+                status_code=400,
+                detail=f"world not found: {world_id}，且包内缺少 world/world.json",
+            )
+        world_root.mkdir(parents=True, exist_ok=True)
+        for member in names:
+            if not member.startswith("world/") or member.endswith("/"):
+                continue
+            target = (world_root / member[len("world/"):]).resolve()
+            if not target.is_relative_to(world_root.resolve()):
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(zf.read(member))
+
+    save_root = world_root / "saves"
+    save_root.mkdir(parents=True, exist_ok=True)
+    final_name = save_name
+    if (save_root / save_name).exists():
+        import datetime as _dt
+
+        final_name = f"{save_name}_{_dt.datetime.now().strftime('%Y%m%d%H%M%S')}"
+    dest = save_root / final_name
+    dest.mkdir(parents=True, exist_ok=True)
+
+    for member in names:
+        if member.endswith("/"):
+            continue
+        if member == "save.json":
+            continue
+        target = (dest / member).resolve()
+        if not target.is_relative_to(dest.resolve()):
+            continue  # 防 zip 路径穿越
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(zf.read(member))
+
+    # 改名时同步 save.json 内的 save_name，保持 sid 与目录一致。
+    if final_name != save_name:
+        meta["save_name"] = final_name
+        raw_save["meta"] = meta
+    write_json_atomic(dest / "save.json", raw_save)
+
+    session = open_session(save_root, final_name)
+    request.app.state.sessions[session.sid] = session
+    return {
+        "ok": True,
+        "sid": session.sid,
+        "world_id": world_id,
+        "save_name": final_name,
+    }
 
 
 @router.post("/sessions/{sid}/world/import")

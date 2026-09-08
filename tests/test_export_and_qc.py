@@ -40,6 +40,83 @@ def test_export_save_includes_events(tmp_path):
         assert save["meta"]["save_name"] == "main"
 
 
+def test_import_save_roundtrip(tmp_path):
+    """Export then import: the save lands under content/<world>/saves/ with its
+    event log intact; a name clash gets renamed instead of overwriting."""
+    import base64
+
+    from tests.test_api import _make_client
+
+    with _make_client(tmp_path) as client:
+        r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
+        sid = r.json()["sid"]
+        client.put(
+            f"/api/sessions/{sid}/player",
+            json={"name": "刘星", "persona": "18岁高中生", "private_note": "底牌"},
+        )
+        client.post(f"/api/sessions/{sid}/turn", json={"input": "问朱明"})
+        client.post(f"/api/sessions/{sid}/turn", json={"input": "继续问"})
+
+        blob = client.get(f"/api/sessions/{sid}/export").content
+
+        # 导入同一份存档：已存在同名 → 自动改名，不覆盖原存档。
+        resp = client.post(
+            "/api/saves/import",
+            json={"filename": "save.zip", "content": base64.b64encode(blob).decode()},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["world_id"] == "qinghsi"
+        assert data["save_name"].startswith("main_")  # 改名后的新存档
+        assert data["sid"] == f"qinghsi:{data['save_name']}"
+
+        # 导入的存档可打开：主角资料与事件日志都在。
+        player = client.get(f"/api/sessions/{data['sid']}/player").json()
+        assert player["name"] == "刘星"
+        assert player["private_note"] == "底牌"
+        events = client.get(f"/api/sessions/{data['sid']}/ledger/events").json()["events"]
+        assert len(events) >= 2
+        assert events[0]["source"] == "opening"
+
+        # 坏包被拒绝。
+        bad = client.post(
+            "/api/saves/import",
+            json={"filename": "bad.zip", "content": base64.b64encode(b"not a zip").decode()},
+        )
+        assert bad.status_code == 400
+
+
+def test_import_save_creates_missing_world(tmp_path):
+    """导入的存档若指向本机不存在的世界，用包内 world/ 资产建档。"""
+    import base64
+
+    from tests.test_api import _make_client
+
+    with _make_client(tmp_path) as client:
+        r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
+        sid = r.json()["sid"]
+        blob = client.get(f"/api/sessions/{sid}/export").content
+
+        # 删掉世界目录，模拟换机（只有存档包）。
+        import shutil as _shutil
+
+        _shutil.rmtree(tmp_path / "qinghsi")
+        assert not (tmp_path / "qinghsi").exists()
+
+        resp = client.post(
+            "/api/saves/import",
+            json={"filename": "save.zip", "content": base64.b64encode(blob).decode()},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["world_id"] == "qinghsi"
+        assert (tmp_path / "qinghsi" / "world.json").exists()
+        assert (tmp_path / "qinghsi" / "saves" / data["save_name"] / "events.jsonl").exists()
+        # 世界资产从包内恢复（NPC 卡可读）
+        world = client.get(f"/api/sessions/{data['sid']}/world").json()
+        assert world["npcs"]
+
+
 def test_qc_can_be_skipped(tmp_path):
     """qc_enabled=False → no QC call; writer prose goes straight to candidate."""
     from tests.test_api import _make_client

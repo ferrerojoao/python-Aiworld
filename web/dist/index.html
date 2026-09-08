@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AIWorld</title>
-  <link rel="stylesheet" href="style.css?v=46" />
+  <link rel="stylesheet" href="style.css?v=47" />
 </head>
 <body>
   <div id="app">
@@ -173,10 +173,14 @@
           <button id="save-world-edit" style="display:none">保存修改</button>
           <button id="save-as-world" style="display:none">另存为新世界</button>
           <button id="export-world">导出资产包</button>
-          <button id="export-save">导出存档（含事件日志）</button>
           <label class="import-label">
             导入资产包
             <input id="import-world" type="file" accept=".zip" hidden />
+          </label>
+          <button id="export-save">导出存档（含事件日志）</button>
+          <label class="import-label">
+            导入存档
+            <input id="import-save" type="file" accept=".zip" hidden />
           </label>
           <button id="reset-world" class="danger">重置当前世界</button>
         </div>
@@ -184,6 +188,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=46"></script>
+  <script src="app.js?v=47"></script>
 </body>
 </html>

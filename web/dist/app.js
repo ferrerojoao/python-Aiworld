@@ -1279,6 +1279,39 @@ async function importWorld(file) {
   alert(`已导入世界：${data.world_id}`);
 }
 
+async function importSave(file) {
+  if (!file) return;
+  const content = await readFileAsBase64(file);
+  const res = await fetch(`/api/saves/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename: file.name, content }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    alert(`导入存档失败：${text}`);
+    return;
+  }
+  const data = await res.json();
+  alert(`已导入存档：${data.world_id} / ${data.save_name}\n将切换到该存档。`);
+  // 切换过去：同一世界则换存档名，跨世界则换世界。
+  state.worldId = data.world_id;
+  state.saveName = data.save_name;
+  state.worldName = null;
+  state.worldData = null;
+  setEditModeUI(false);
+  await ensureSession();
+  const info = await api(`/api/sessions/${state.sid}`);
+  state.worldName = info.world;
+  $("#world-name").textContent = info.world;
+  await loadEventHistory();
+  await refreshState();
+  await syncPendingFromServer();
+  await loadDirectorHistory();
+  await loadWorldBrowser();
+  switchWorldTab("overview");
+}
+
 function readFileAsBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1358,6 +1391,7 @@ async function init() {
   $("#save-world-edit").addEventListener("click", saveWorldEdit);
   $("#save-as-world").addEventListener("click", saveAsWorld);
   $("#import-world").addEventListener("change", (e) => importWorld(e.target.files[0]));
+  $("#import-save").addEventListener("change", (e) => importSave(e.target.files[0]));
   $("#reset-world").addEventListener("click", resetWorld);
 }
 
