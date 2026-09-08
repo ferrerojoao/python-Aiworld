@@ -77,6 +77,15 @@ def check_world(root: str | Path) -> list[str]:
             problems.append(
                 f"lore {entry.id}: 至少需要一个关键词（无关键词的条目永远不会被命中）"
             )
+    if world.meta.start_time:
+        import datetime as dt
+
+        try:
+            dt.datetime.fromisoformat(world.meta.start_time)
+        except ValueError:
+            problems.append(
+                f"start_time should be ISO datetime (e.g. 2026-07-14T08:00:00): {world.meta.start_time}"
+            )
     return problems
 
 
@@ -93,6 +102,7 @@ def save_world_assets(root: str | Path, data: dict) -> None:
         "name": overview.get("name", root.name),
         "summary": overview.get("summary", []),
         "opening": overview.get("opening", ""),
+        "start_time": overview.get("start_time", ""),
         "default_durations": overview.get("default_durations", {}),
     }
     write_json_atomic(root / "world.json", world_info)

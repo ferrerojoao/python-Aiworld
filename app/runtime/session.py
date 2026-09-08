@@ -42,6 +42,14 @@ class GameSession:
         return scene_description(self.ledger.save.player_scene, self.world, self.ledger)
 
 
+DEFAULT_START_TIME = "2026-07-14T08:00:00"
+
+
+def world_start_time(world: WorldContent) -> str:
+    """世界钟起点：内容包 start_time 优先，空则回退引擎默认。"""
+    return world.meta.start_time or DEFAULT_START_TIME
+
+
 def write_opening_event(session: GameSession) -> bool:
     """Write the content pack's opening prose as the first ledger event.
 
@@ -56,7 +64,7 @@ def write_opening_event(session: GameSession) -> bool:
     event = {
         "id": ledger.allocate_event_id(),
         "kind": "narrative",
-        "at": ledger.save.clock or "2026-07-14T08:00:00",
+        "at": ledger.save.clock or world_start_time(world),
         "location": None,
         "participants": ["player"],
         "known_by": None,
@@ -100,7 +108,7 @@ def create_session(template_root: str | Path, save_root: str | Path, save_name: 
                 "created_at": "",
                 "next_event_id": 1,
             },
-            clock="2026-07-14T08:00:00",
+            clock=world_start_time(world),
             player_scene="main_street",
             narrative_preset=world.presets,
         )

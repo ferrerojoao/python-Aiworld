@@ -311,6 +311,39 @@ def test_world_browser_and_reset(tmp_path):
         assert events[0]["source"] == "opening"
 
 
+def test_world_start_time_roundtrip(tmp_path):
+    """world.json start_time seeds save clock, and reset returns to it."""
+    import json as _json
+
+    from pathlib import Path as _Path
+
+    # The qinghsi fixture has start_time 2026-07-14T08:00:00.
+    with _make_client(tmp_path) as client:
+        r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
+        sid = r.json()["sid"]
+        state = client.get(f"/api/sessions/{sid}/state").json()
+        assert state["clock"] == "2026-07-14T08:00:00"  # 内容包 start_time
+
+        # 推钟后 reset 应回到起点（第二次输入自动采纳第一回合的候选）。
+        client.post(f"/api/sessions/{sid}/turn", json={"input": "等到中午"})
+        client.post(f"/api/sessions/{sid}/turn", json={"input": "然后呢"})
+        state = client.get(f"/api/sessions/{sid}/state").json()
+        assert state["clock"] != "2026-07-14T08:00:00"
+        client.post(f"/api/sessions/{sid}/reset")
+        state = client.get(f"/api/sessions/{sid}/state").json()
+        assert state["clock"] == "2026-07-14T08:00:00"
+
+        # 空 start_time 回退引擎默认：直接改内容包再建新存档。
+        world_json = _Path(tmp_path / "qinghsi" / "world.json")
+        data = _json.loads(world_json.read_text(encoding="utf-8"))
+        data.pop("start_time", None)
+        world_json.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        r2 = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main2"})
+        sid2 = r2.json()["sid"]
+        state2 = client.get(f"/api/sessions/{sid2}/state").json()
+        assert state2["clock"] == "2026-07-14T08:00:00"
+
+
 def test_director_chat_pending_action_confirm(tmp_path):
     """Director chat may return a pending backstage action; it must NOT take
     effect until the player confirms (two-stage gate)."""

@@ -128,7 +128,9 @@ class Transaction:
                 self.ledger.save.audit_last_error = f"{type(exc).__name__}: {exc}"
 
         # World clock: rule delta (move/jump) + prose-semantic delta.
-        clock = self.ledger.save.clock or "2026-07-14T08:00:00"
+        from app.runtime.session import world_start_time
+
+        clock = self.ledger.save.clock or world_start_time(self.ledger.world)
         delta = candidate.side_effects.delta_minutes or 0
         if audit_out is not None:
             delta += audit_out.delta_minutes or 0

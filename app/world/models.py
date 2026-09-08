@@ -8,6 +8,7 @@ class WorldInfo(BaseModel):
     name: str
     summary: list[str] = Field(default_factory=list)
     opening: str = ""  # opening prose: becomes the first ledger event of a save
+    start_time: str = ""  # 世界钟起点（ISO 时间）；空=回退引擎默认 2026-07-14T08:00:00
     default_durations: dict[str, int] = Field(default_factory=dict)
 
 

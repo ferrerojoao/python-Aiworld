@@ -861,6 +861,10 @@ function renderEditOverview(data) {
             <label>普通行动耗时（分钟）</label>
             <input class="edit-field" data-field="action" type="number" value="${ov.default_durations?.action_default_min ?? 30}" />
           </div>
+          <div class="field">
+            <label>世界钟起点（ISO 时间，空=引擎默认 2026-07-14T08:00:00；新建存档/重置后回到此时刻）</label>
+            <input class="edit-field" data-field="start_time" type="text" placeholder="2026-07-14T08:00:00" value="${escapeHtml(ov.start_time || "")}" />
+          </div>
         </div>
       </div>
 
@@ -1105,6 +1109,7 @@ function readOverview() {
     name: val("name"),
     opening: val("opening"),
     summary: splitLines(val("summary")),
+    start_time: val("start_time"),
     default_durations: {
       move_per_edge_min: Number(val("move")) || 10,
       action_default_min: Number(val("action")) || 30,
