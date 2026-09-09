@@ -90,3 +90,7 @@ class AuditOutput(BaseModel):
         default_factory=list,
         validation_alias=AliasChoices("lifecycle", "lifecycle_changes", "生命周期"),
     )
+    npc_moves: list[dict] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("npc_moves", "npc移动", "角色去向"),
+    )

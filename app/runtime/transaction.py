@@ -155,6 +155,25 @@ class Transaction:
         private = bool(audit_out.private) if audit_out else False
         known_by = participants if private else None
 
+        def _resolve_scene(loc: str, *aliases: str) -> str:
+            """审计 id 纠偏：id 命中注册场景直接用；否则按中文名/别名反查
+            （审计拿不到 id 时会自造拼音 id，如鱼市→yushi；scene_name 通常
+            恰是注册场景的中文名，可机械救回）。都未命中 → 原样（一次性布景）。"""
+            if loc and loc in {s.id for s in self.ledger.world.scenes}:
+                return loc
+            for alias in aliases:
+                if not alias:
+                    continue
+                for s in self.ledger.world.scenes:
+                    if alias == s.name or alias in s.aliases:
+                        return s.id
+            return loc
+
+        audit_alias = audit_out.scene_name if audit_out else ""
+        location = _resolve_scene(
+            location, audit_alias, (narrated.get("location_name") or "")
+        )
+
         event_id = self.ledger.allocate_event_id()
         narrative = {
             "id": event_id,
@@ -193,6 +212,35 @@ class Transaction:
             event.setdefault("kind", "narrative")
             event.setdefault("at", clock)
             self.ledger.append(event, flush=False)
+
+        # NPC 离场落账：正文明确写出某人离开去了别处 → 轻量位置事件，快照随之更新。
+        # （离场者不是主事件的参与者之外的更新渠道——快照只能被事件改变；去向未注册
+        # 也无妨：present_at 永远匹配不上它，即"不在任何已注册场景"的机械表达。）
+        for mv in (audit_out.npc_moves if audit_out else []):
+            mv = mv or {}
+            npc_id = mv.get("npc_id") or ""
+            dest = mv.get("location") or ""
+            if not dest or npc_id == "player" or npc_id not in self.ledger.world.npcs:
+                continue
+            dest = _resolve_scene(dest, mv.get("scene_name") or "")
+            npc_name = self.ledger.world.npcs[npc_id].name
+            dest_name = mv.get("scene_name") or next(
+                (s.name for s in self.ledger.world.scenes if s.id == dest), dest
+            )
+            self.ledger.append(
+                {
+                    "id": self.ledger.allocate_event_id(),
+                    "kind": "narrative",
+                    "at": clock,
+                    "location": dest,
+                    "participants": [npc_id],
+                    "known_by": sorted({npc_id, "player"}),
+                    "body": "",
+                    "summary": f"{npc_name}前往{dest_name}",
+                    "source": "turn",
+                },
+                flush=False,
+            )
 
         # v1 relation axes are reserved; just copy values if provided.
         for key, value in candidate.side_effects.axes.items():

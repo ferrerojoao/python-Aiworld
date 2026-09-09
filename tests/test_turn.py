@@ -420,3 +420,80 @@ def test_player_notes_reach_writer_work_order(session, settings):
     assert "雅典娜" in reference
     assert "只有玩家自己知道" in reference
     assert "连玩家也不知道" in reference
+
+def test_audit_npc_moves_updates_snapshot(session, settings):
+    """npc_moves 离场落账：正文明确写出某 NPC 离开去别处 → 轻量位置事件
+    更新其快照（从当前场景名单消失）；去向是私密名单制（NPC 本人 + 玩家）。"""
+    writer_out = {
+        "prose": "刘星在网吧找到通宵的朱明，聊了几句，朱明先回家了。",
+        "summary": "刘星在网吧找到朱明，聊几句后朱明回家。",
+        "actor_questions": [],
+    }
+    qc_out = {"status": "pass", "prose": writer_out["prose"], "issues": []}
+    audit_out = {
+        "location": "net_bar",
+        "participants": ["player", "npc_zhuming"],
+        "private": False,
+        "delta_minutes": 15,
+        "npc_moves": [
+            {"npc_id": "npc_zhuming", "location": "zhuming_home", "scene_name": "朱明家"},
+            {"npc_id": "npc_ghost", "location": "somewhere"},  # 未知 npc → 静默跳过
+        ],
+        "lifecycle": [],
+    }
+    llm = PrefixKeyLLM({"玩家输入：": writer_out, "正文：": qc_out, "已采纳正文": audit_out})
+    runner = _runner(session, llm, settings)
+    candidate = asyncio.run(runner.run_turn("去网吧看看，朱明是否在"))
+    asyncio.run(runner.adopt(candidate.candidate_id))
+
+    evs = session.ledger.narratives
+    main, move = evs[-2], evs[-1]
+    # 主事件：朱明是被找到的互动对象 → 参与者
+    assert "npc_zhuming" in main["participants"]
+    # 离场事件：轻量位置账目，去向私密（本人 + 目击玩家）
+    assert move["participants"] == ["npc_zhuming"]
+    assert move["known_by"] == ["npc_zhuming", "player"]
+    assert move["location"] == "zhuming_home"
+    assert "朱明前往" in move["summary"]
+    # 快照更新：朱明从网吧在场名单消失（快照已随离场事件走到未注册的"朱明家"）
+    assert "npc_zhuming" not in session.ledger.present_at("net_bar")
+    # 他的已知集含亲历：主事件（被找到聊天）+ 自己的移动
+    got = "\n".join(session.ledger.known_set("npc_zhuming", "net_bar"))
+    assert "朱明前往" in got
+    # 非法条目静默跳过：未知 npc_id 不落账
+    assert not any(e["location"] == "somewhere" for e in evs)
+
+def test_audit_invented_id_rescued_by_alias(session, settings):
+    """审计自造拼音 id（鱼市→yushi）的机械纠偏：location 不在场景表但
+    scene_name 命中注册场景的中文名/别名 → 改写为注册 id（npc_moves 同）。"""
+    writer_out = {
+        "prose": "刘星和朱明去鱼市拿了货，朱明拎着货先回家了。",
+        "summary": "刘星和朱明在鱼市拿货，朱明携货回家。",
+        "actor_questions": [],
+    }
+    qc_out = {"status": "pass", "prose": writer_out["prose"], "issues": []}
+    audit_out = {
+        "location": "yushi",  # 审计自造的拼音 id，场景表里没有
+        "scene_name": "鱼市",
+        "participants": ["player", "npc_zhuming"],
+        "private": False,
+        "delta_minutes": 40,
+        "npc_moves": [
+            {"npc_id": "npc_zhuming", "location": "zhuming_jia", "scene_name": "朱明家"}
+        ],
+        "lifecycle": [],
+    }
+    llm = PrefixKeyLLM({"玩家输入：": writer_out, "正文：": qc_out, "已采纳正文": audit_out})
+    runner = _runner(session, llm, settings)
+    candidate = asyncio.run(runner.run_turn("去鱼市拿货"))
+    asyncio.run(runner.adopt(candidate.candidate_id))
+
+    evs = session.ledger.narratives
+    main, move = evs[-2], evs[-1]
+    # 主事件 location 被别名救回注册 id，不再是幻影
+    assert main["location"] == "fish_market"
+    assert "location_name" not in main  # 注册场景不需要显示名兜底
+    assert session.ledger.save.player_scene == "fish_market"
+    # 离场事件：目的地未注册且 scene_name 也不命中 → 原样保留（一次性布景）
+    assert move["location"] == "zhuming_jia"
+    assert "npc_zhuming" not in session.ledger.present_at("fish_market")

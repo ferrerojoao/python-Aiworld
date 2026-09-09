@@ -262,13 +262,13 @@ def writer_golden_rules() -> list[str]:
     return [
         "金科玉律（绝对不可违背）：",
         "角色不是你（知情总纲）：事件日志、幕后注、世界书都是你案头的编剧资料，角色本人并不知道。"
-        "每个角色开口前，核对台词里的信息是否在他自己的已知范围内——他亲历的事（日志行标注的在场者）、"
-        "他来历该知道的事（人物卡）、剧情里有人当场告诉过他的事。不在范围内：公开旧事只能以「听说的」口吻或不提"
-        "（异地角色的外地旧事默认不知，轰动的大事可作风闻，鸡毛小事传不出远门）；"
+        "每个角色开口前，核对台词是否在他自己的已知范围内——他亲历的事（日志行标注的在场者）、"
+        "他来历该知道的事（人物卡）、剧情里有人当场告诉过他的事。"
+        "在场 NPC 以工作单「已知集」清单为准：清单里没有的事一律不知道——包括其他区域的旧事，"
+        "哪怕主角就是眼前这位玩家；清单外的公开旧事只能以「听说的」口吻或不提"
+        "（轰动大事可作风闻，鸡毛小事传不出远门）；"
         "幕后注与私密事件的真相绝不能从不该知道的人嘴里说出（知情者当场坦白除外，那是新戏）；"
         "无人物卡的即兴角色只知道眼前可见的东西。",
-        "在场 NPC 的知识以工作单「在场 NPC 已知集」清单为准：清单里没有的事，这些角色一律不知道——"
-        "尤其是事件日志里发生在本区域之外的事，哪怕主角就是眼前这位玩家，本地角色也只当他是初次见面的外乡人。",
         "位置是快照不是事实：NPC 的最后位置/在场名单是最近一次记录的快照，可能已过期。"
         "在场名单标注了每人最后被目击的时刻——刚目击的可放心写他在场；隔了半天的，"
         "依据此人的人物卡与最近经历合理推断他此刻可能在何处——找到、扑空、他挪了地方都是合理的叙事，"
@@ -277,10 +277,9 @@ def writer_golden_rules() -> list[str]:
         "直接接续当下的戏，只处理本回合的输入；不要再交代一遍已经写过的剧情。",
         "深抉择纪律：标（配 Actor）的 NPC 撞上深抉择（内心判断 / 涉密反应 / 是否信任）时，"
         "你**不得替他决定**，必须在输出里填 actor_questions（npc_id / question / context），引擎会派他的 Actor 决定后回来再成文；"
-        "标（导演代笔）的 NPC 或普通对话由你直接写出即可，不填 actor_questions。",
-        "actor_questions 的 context 只写该 NPC 本人会知道的情境，禁止写只有你知道的动机、私密或幕后注。",
-        "不要提到 AIWorld、系统、编剧、剧本指令、玩家输入等元信息。",
-        "不要打破第四面墙，只写玩家在故事里能感知到的内容。",
+        "标（导演代笔）的 NPC 或普通对话由你直接写出即可。context 只写该 NPC 本人会知道的情境，"
+        "禁止写只有你知道的动机、私密或幕后注。",
+        "不要提到 AIWorld、系统、编剧、玩家输入等元信息，不要打破第四面墙——只写玩家在故事里能感知到的内容。",
     ]
 
 
@@ -406,7 +405,7 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
     scene = next((s for s in world.scenes if s.id == scene_id), None)
     present_ids = ledger.present_at(scene_id)
     names = [world.npcs[pid].name if pid in world.npcs else pid for pid in present_ids]
-    scene_list = "、".join(s.name for s in world.scenes)
+    scene_list = "、".join(f"{s.id}（{s.name}）" for s in world.scenes)
     goals = [g for g in ledger.save.goals if g.status == "active"]
     goal_lines = "；".join(f"[{g.id}]（{'主线' if g.kind == 'big' else '支线'}）{g.text}" for g in goals) or "（无）"
     return "\n".join(
@@ -415,6 +414,7 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
             "只返回 JSON，格式如下：",
             '{"location": "场景id", "scene_name": "地点名（新地点给中文名）", "register_scene": false,'
             ' "participants": ["player", "npc_zhuming"], "private": false, "delta_minutes": 0,'
+            ' "npc_moves": [{"npc_id": "npc_zhuming", "location": "zhuming_home", "scene_name": "朱明家"}],'
             ' "completed_goal_ids": ["达成目标id"], "lifecycle": [{"npc_id": "npc_zhuming", "status": "retired"}]}',
             "判定规则：",
             "- location：正文里玩家此刻所在之处。玩家在正文中明确移动（离开/去别处/回家）时更新，否则保持当前场景。",
@@ -424,12 +424,19 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
             "正文用\"她/他\"等代词指代的在场者视为仍在场（代词指代不清时保守保留原名单）；"
             "摊主、路人等叙事背景人物不进名单——他们只是舞台布景，不是这段史实的参与者。"
             "location 与 participants 都不要凭空改动。",
-            "  · 玩家**移动了**：participants 重置为只有玩家，除非正文明确写出有人同行（\"我和朱明一起去了网吧\"）。"
-            "留在原地的人不要带上——没参与新场景事件的人，他们的位置自然停在原地，不需要你输出\"某人留在原处\"。",
+            "  · 玩家**移动了**：留在原地的人不进名单（他们的位置自然停在原地，不需要你输出\"某人留在原处\"）；"
+            "正文里在**新场景出现并互动**的角色——无论同行、被玩家找到、还是主动搭话——都计入 participants"
+            "（他们亲身参与了这段史实）。",
+            "- npc_moves：正文明确写出某个 NPC **离开去了别处**（回家/回店/告辞离去）时输出，"
+            "每项 {\"npc_id\": \"...\", \"location\": \"英文id\", \"scene_name\": \"中文名（新地点给）\"}。"
+            "没写去向就不要输出（\"走了\"没说去哪 → 不猜，宁可不记不错记）；"
+            "玩家自己的移动不用输出（location 已覆盖）。多数回合为空数组。",
             "- 场景若已在场景表里，用其 id；正文进入未注册的新地点时，location 给一个英文 id，scene_name 给中文名。"
             "register_scene：玩家声明要去/回访/会复用该地点时为 true（注册为可导航场景）；"
             "剧情顺笔的一次性舞台（如今晚的草地、密室）为 false（不进导航集，显示名仍可用）。",
-            "- private：四下无人/密室/隐蔽情境为 true，否则 false。",
+            "- private：按正文内容判定这场戏是否只限在场者知道——判据是\"外人会不会知道这事发生过\"，不单看地点。"
+            "私下交底、咬耳朵只让对方听见、无人看见的交易、隐蔽处行事 → true；"
+            "当众冲突、大庭广众下的对话、旁人可见可闻的活动 → false。",
             "- delta_minutes：你估计\"这场戏实际经过了多少分钟\"——以正文结束那一刻故事内的时钟为准。"
             "判定依据是玩家经历了什么，不是文本里出现了什么时间词："
             "对话/商量/闲聊 → 5~15；一顿饭 → 30~60；顺笔赶路 → 按路程；"
@@ -444,7 +451,7 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
             "当前时间：" + (ledger.save.clock or "-"),
             "当前场景：" + (scene.name if scene else scene_id),
             "在场：" + ("、".join(names) or "暂无"),
-            "已注册场景：" + (scene_list or "（无）"),
+            "已注册场景（格式 = id（名），location 必须从这里选 id，新地点才自造英文 id）：" + (scene_list or "（无）"),
             "活动目标：" + goal_lines,
             *world.meta.summary,
         ]
