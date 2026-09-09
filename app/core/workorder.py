@@ -14,6 +14,8 @@ dynamic, forbidden rules upfront, output format last:
 
 from __future__ import annotations
 
+import datetime as dt
+
 from app.ledger.queries import Ledger
 from app.world.models import NarrativePreset, WorldContent
 
@@ -115,30 +117,62 @@ def event_log_block(world: WorldContent, ledger: Ledger, limit: int = 10, recent
     return lines
 
 
+def _rel_seen(clock: str, at: str) -> str:
+    """快照新鲜度：最后目击时刻相对当前时钟的人类表述；任一侧解析失败返回空。"""
+    try:
+        now = dt.datetime.fromisoformat(clock)
+        seen = dt.datetime.fromisoformat(at)
+    except (TypeError, ValueError):
+        return ""
+    minutes = int((now - seen).total_seconds() // 60)
+    if minutes < 60:
+        return "刚刚" if minutes < 10 else f"{minutes} 分钟前"
+    if minutes < 1440:
+        return f"{minutes // 60} 小时前"
+    return f"{minutes // 1440} 天前"
+
+
 def scene_snapshot_block(world: WorldContent, ledger: Ledger, scene_id: str) -> list[str]:
     scene = next((s for s in world.scenes if s.id == scene_id), None)
     present_ids = ledger.present_at(scene_id)
-    names = [world.npcs[pid].name if pid in world.npcs else pid for pid in present_ids]
+    clock = ledger.save.clock or ""
+    parts = []
+    for pid in present_ids:
+        name = world.npcs[pid].name if pid in world.npcs else pid
+        ev = ledger.where_is(pid)
+        seen = _rel_seen(clock, ev.get("at", "")) if ev else ""
+        parts.append(f"{name}（最后目击：{seen}）" if seen else name)
     return [
-        "当前时间：" + (ledger.save.clock or "-"),
-        "在场：" + ("、".join(names) or "暂无"),
+        "当前时间：" + (clock or "-"),
+        "在场（括号内 = 该角色最后被记录在此的时刻，久未见面的要考虑他是否还在）："
+        + ("、".join(parts) or "暂无"),
         "当前场景：" + (scene.name if scene else "主街"),
         scene.perceivable if scene else "未知场景",
     ]
 
 
-def npc_history_block(ledger: Ledger, present_ids: list[str], per_npc: int = 2) -> list[str]:
-    near_lines = []
+def known_set_block(world: WorldContent, ledger: Ledger, present_ids: list[str], scene_id: str, per_npc: int = 5) -> list[str]:
+    """在场 NPC 已知集：机械计算的知识边界（亲历 ∪ known_by ∪ 同区域公开）。
+
+    取代旧"近况块"——写手与 QC 共用同一份清单，单一事实源。
+    """
+    lines = []
     for pid in present_ids:
         npc = ledger.world.npcs.get(pid)
         if npc is None:
             continue
-        mem = ledger.experiences(npc.id, npc.id)[-per_npc:]
+        mem = ledger.known_set(pid, scene_id, per_npc)
         if mem:
-            near_lines.append(f"[{npc.name}] 最近经历：{'；'.join(mem)}")
-    if not near_lines:
+            lines.append(f"[{npc.name}] 知道的事：{'；'.join(mem)}")
+        else:
+            lines.append(f"[{npc.name}] 知道的事：（无——该角色的知识从眼前开始）")
+    if not lines:
         return []
-    return ["在场 NPC 近况：", *near_lines]
+    return [
+        "在场 NPC 已知集（每个角色的知识边界，表述以其为准；清单外的事件这些角色一律不知道，"
+        "包括事件日志里发生在别处的事）：",
+        *lines,
+    ]
 
 
 def private_notes_block(world: WorldContent, ledger: Ledger, present_ids: list[str]) -> list[str]:
@@ -233,8 +267,11 @@ def writer_golden_rules() -> list[str]:
         "（异地角色的外地旧事默认不知，轰动的大事可作风闻，鸡毛小事传不出远门）；"
         "幕后注与私密事件的真相绝不能从不该知道的人嘴里说出（知情者当场坦白除外，那是新戏）；"
         "无人物卡的即兴角色只知道眼前可见的东西。",
+        "在场 NPC 的知识以工作单「在场 NPC 已知集」清单为准：清单里没有的事，这些角色一律不知道——"
+        "尤其是事件日志里发生在本区域之外的事，哪怕主角就是眼前这位玩家，本地角色也只当他是初次见面的外乡人。",
         "位置是快照不是事实：NPC 的最后位置/在场名单是最近一次记录的快照，可能已过期。"
-        "编排「去找某人」的戏时，依据此人的人物卡与最近经历合理推断他此刻可能在何处——找到、扑空、他挪了地方都是合理的叙事，"
+        "在场名单标注了每人最后被目击的时刻——刚目击的可放心写他在场；隔了半天的，"
+        "依据此人的人物卡与最近经历合理推断他此刻可能在何处——找到、扑空、他挪了地方都是合理的叙事，"
         "不要机械地把快照位置当作他此刻的所在。",
         "前情已在世界里发生（事件日志是它的记录）：玩家已经历过的事不需要你复述或回顾，"
         "直接接续当下的戏，只处理本回合的输入；不要再交代一遍已经写过的剧情。",
@@ -333,7 +370,7 @@ def build_director_chat_system(
     ]
     parts += event_log_block(world, ledger, include_ids=True)
     parts += goals_block(ledger)
-    parts += npc_history_block(ledger, present_ids)
+    parts += known_set_block(world, ledger, present_ids, ledger.save.player_scene)
     parts += active_lore_block(ledger)
     parts += private_notes_block(world, ledger, present_ids)
     parts += character_block(world, ledger, present_ids, include_ids=True)
@@ -380,14 +417,25 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
             ' "participants": ["player", "npc_zhuming"], "private": false, "delta_minutes": 0,'
             ' "completed_goal_ids": ["达成目标id"], "lifecycle": [{"npc_id": "npc_zhuming", "status": "retired"}]}',
             "判定规则：",
-            "- location / participants：正文里玩家与他人此刻所在之处。玩家在正文中明确移动（离开/去别处/回家）时更新；"
-            "人员进出场同步更新 participants（离开者不保留）。",
+            "- location：正文里玩家此刻所在之处。玩家在正文中明确移动（离开/去别处/回家）时更新，否则保持当前场景。",
+            "- participants（与 location 联动，二选一）：",
+            "  · 玩家**没移动**：以工作单给出的在场名单为**默认基线**——正文没有明确的进出场就原样继承整份名单；"
+            "只有正文明确写出某人离开（走掉/告辞）才移除，明确写出新人到场并需记入史实才添加。"
+            "正文用\"她/他\"等代词指代的在场者视为仍在场（代词指代不清时保守保留原名单）；"
+            "摊主、路人等叙事背景人物不进名单——他们只是舞台布景，不是这段史实的参与者。"
+            "location 与 participants 都不要凭空改动。",
+            "  · 玩家**移动了**：participants 重置为只有玩家，除非正文明确写出有人同行（\"我和朱明一起去了网吧\"）。"
+            "留在原地的人不要带上——没参与新场景事件的人，他们的位置自然停在原地，不需要你输出\"某人留在原处\"。",
             "- 场景若已在场景表里，用其 id；正文进入未注册的新地点时，location 给一个英文 id，scene_name 给中文名。"
             "register_scene：玩家声明要去/回访/会复用该地点时为 true（注册为可导航场景）；"
             "剧情顺笔的一次性舞台（如今晚的草地、密室）为 false（不进导航集，显示名仍可用）。",
             "- private：四下无人/密室/隐蔽情境为 true，否则 false。",
-            "- delta_minutes：正文明确推进了时间（天黑了/第二天/过了一会/到了晚上）时，给出推进的分钟数；"
-            "没有明确时间流逝给 0。",
+            "- delta_minutes：你估计\"这场戏实际经过了多少分钟\"——以正文结束那一刻故事内的时钟为准。"
+            "判定依据是玩家经历了什么，不是文本里出现了什么时间词："
+            "对话/商量/闲聊 → 5~15；一顿饭 → 30~60；顺笔赶路 → 按路程；"
+            "干活/训练一个下午 → 120~240；睡觉 → 480。"
+            "给 0 的情况：只是说到时间（\"明天见\"\"你昨天答应的\"\"三点在那碰面\"——被说的不是被经历的），"
+            "以及没有新的经历性事件（原地续聊）。",
             "- completed_goal_ids：正文已达到目标文本所述（小目标=当事达成；大目标=关键真相/冲突已解决）。"
             "只推进未达成的不填——推进由编剧纪律负责，审计只判终点。"
             "注意：目标归属者为 NPC 时，该目标 NPC 提及/推进目标只是推进（如王蓉提起接货），"
@@ -443,8 +491,8 @@ def build_work_order(
         parts += private_notes_block(world, ledger, present_ids)
         # F 场景快照（此刻环境：当前时间/在场/场景/可感知）
         parts += scene_snapshot_block(world, ledger, scene_id)
-        # G 在场 NPC 近况
-        parts += npc_history_block(ledger, present_ids)
+        # G 在场 NPC 已知集（机械知识边界，取代旧近况块）
+        parts += known_set_block(world, ledger, present_ids, scene_id)
         # I 可选素材（世界书命中，未来 token 超支时最先可裁）
         parts += active_lore_block(ledger)
         # K 输出格式（指令，近因区）

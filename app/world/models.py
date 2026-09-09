@@ -31,6 +31,7 @@ class Scene(BaseModel):
     perceivable: str = ""
     open_hours: str = "全天"
     adjacent: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)  # 自由标签；`region:xxx` = 地理归属（跨区域知识边界用，无标签=全域公共区）
 
 
 class NpcCard(BaseModel):
@@ -41,6 +42,7 @@ class NpcCard(BaseModel):
     private_note: str | None = None  # 作者底牌：无人（含 NPC 自己）知道的真相，仅编剧可读
     personal_secrets: str | None = None  # 该 NPC 自知的隐秘（心结/往事/把柄），进他自己的 Actor 切片
     has_actor: bool = False
+    tags: list[str] = Field(default_factory=list)  # `region:xxx` = 来属地/听域（已知集公开事件筛选）；缺省=按亲历事件推导
 
 
 class Axis(BaseModel):

@@ -8,6 +8,8 @@ from app.core.store import append_event, read_events, read_json, write_json_atom
 from app.ledger.save import SaveData
 from app.world.models import WorldContent
 
+ADHOC_REGION = "adhoc"  # 一次性布景的归属哨兵：不进任何听域的风闻通道
+
 
 class Ledger:
     """Event stream + save.json in-memory facade.
@@ -260,4 +262,95 @@ class Ledger:
                 continue
             summary = ev.get("summary") or (ev.get("body") or "")[:40]
             lines.append(f"{ev.get('at', '')} {summary}")
+        return lines[-limit:] if lines else []
+
+    def _scene_region(self, scene_id: str) -> str | None:
+        """Extract the `region:xxx` tag of a scene; untagged = 全域公共区（None）."""
+        scene = next((s for s in self.world.scenes if s.id == scene_id), None)
+        if scene is None:
+            return None
+        for tag in scene.tags:
+            if tag.startswith("region:"):
+                return tag.split(":", 1)[1].strip()
+        return None
+
+    def _event_region(self, event: dict[str, Any]) -> str | None:
+        """事件发生地归属：注册场景取其 `region:xxx`（无标签 = 全域公共区）；
+        location 指向场景表查不到的一次性布景 → 哨兵 `adhoc`（不进任何听域的
+        风闻通道——宁可不闻，不错闻；在场者走亲历通道不受影响）。"""
+        loc = event.get("location") or ""
+        if not loc:
+            return None
+        scene = next((s for s in self.world.scenes if s.id == loc), None)
+        if scene is None:
+            return ADHOC_REGION
+        for tag in scene.tags:
+            if tag.startswith("region:"):
+                return tag.split(":", 1)[1].strip()
+        return None
+
+    def _npc_hearing_regions(self, npc_id: str) -> set[str]:
+        """NPC 的听域（公开事件的地域耳闻范围）。
+
+        优先取人物卡 `region:xxx` 标签（来属地，作者/转正时声明——出差外地人
+        卡上打原属地，就不该耳闻本地旧事）；卡上无标签 → 按亲历事件的发生地
+        region 推导（本地老 NPC 天然正确；跟玩家旅行过的 NPC 听域随之扩大）；
+        推导为空（刚出场的无历史 NPC）→ 听域为空，保守地什么区域的公开旧事
+        都不闻（宁可不闻，不错闻）。哨兵 `adhoc` 永不进听域——一次性布景的
+        公开事件对任何人不风闻。
+        """
+        npc = self.world.npcs.get(npc_id)
+        card_regions: set[str] = set()
+        if npc is not None:
+            for tag in getattr(npc, "tags", None) or []:
+                if tag.startswith("region:"):
+                    val = tag.split(":", 1)[1].strip()
+                    if val != ADHOC_REGION:
+                        card_regions.add(val)
+        if card_regions:
+            return card_regions
+        derived: set[str] = set()
+        for ev in self.by_participant.get(npc_id, []):
+            r = self._event_region(ev)
+            if r is not None and r != ADHOC_REGION:
+                derived.add(r)
+        return derived
+
+    def known_set(self, npc_id: str, scene_id: str, limit: int = 6) -> list[str]:
+        """Mechanical knowledge boundary for one NPC (装配层单一事实源).
+
+        已知集 = 亲历（全量 by_participant，不随滑窗） ∪ known_by 含己（含改判）
+        ∪ 听域内公开事件。听域 = NPC 卡 `region:xxx` 标签，缺省按亲历事件推导
+        （`_npc_hearing_regions`）。场景/事件无 region 标签 = 全域公共区（单区域
+        内容包行为与旧口径兼容）。按事件时间排序，取最近 limit 条。
+        """
+        current_region = self._scene_region(scene_id)
+        hearing = self._npc_hearing_regions(npc_id)
+        seen: set[str] = set()
+        picked: list[dict[str, Any]] = []
+        for ev in self.by_participant.get(npc_id, []) + self.by_knower.get(npc_id, []):
+            ev_id = ev["id"]
+            if ev_id in seen:
+                continue
+            seen.add(ev_id)
+            known_by = self.save.access_overrides.get(ev_id, ev.get("known_by"))
+            if known_by is not None and npc_id not in known_by:
+                continue
+            picked.append(ev)
+        for ev in self.narratives:
+            ev_id = ev["id"]
+            if ev_id in seen:
+                continue
+            known_by = self.save.access_overrides.get(ev_id, ev.get("known_by"))
+            if known_by is not None:
+                continue  # 已知集第三来源只收公开事件
+            ev_region = self._event_region(ev)
+            # 全域公共区（无标签）人人可闻；有归属的事件须落在该 NPC 听域内。
+            # 注意用听域而非当前场景 region——刚出差到本地的外乡人不应耳闻本地旧事。
+            if ev_region is not None and ev_region not in hearing:
+                continue
+            seen.add(ev_id)
+            picked.append(ev)
+        picked.sort(key=lambda e: e.get("at", ""))
+        lines = [f"{e.get('at', '')} {e.get('summary') or (e.get('body') or '')[:40]}" for e in picked]
         return lines[-limit:] if lines else []

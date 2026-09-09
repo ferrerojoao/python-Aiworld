@@ -38,9 +38,12 @@ def build_qc_reference(world: WorldContent, ledger: Ledger, participants: list[s
         npc = world.npcs.get(pid)
         if npc is None:
             continue
-        mem = ledger.experiences(npc.id, npc.id)[-5:]
-        memo = "；".join(mem) if mem else "（无）"
-        blocks.append(f"{npc.name}（{npc.id}）知道的事：{memo}")
+        mem = ledger.known_set(pid, scene_id, 5)
+        memo = "；".join(mem) if mem else "（无——该角色的知识从眼前开始）"
+        blocks.append(
+            f"{npc.name}（{npc.id}）知道的事：{memo}（另：本区域公开旧事该角色均有耳闻；"
+            f"发生在本区域之外的旧事该角色一概不知道）"
+        )
     return "\n".join(blocks)
 
 

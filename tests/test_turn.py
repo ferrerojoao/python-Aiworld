@@ -199,7 +199,7 @@ def test_audit_settles_side_effects_and_one_shot_scene(session, settings):
     assert session.ledger.save.clock == "2026-07-14T12:00:00"  # 08:00 + 240min
     ev = session.ledger.narratives[-1]
     assert ev["location"] == "weicao_deep"
-    assert ev["known_by"] == ["player", "npc_wangrong"]  # private
+    assert ev["known_by"] == ["npc_wangrong", "player"]  # private（名单确定性排序）
     assert ev["location_name"] == "苇草深处"
     # One-shot scene is NOT registered in the world instance.
     assert not any(s.id == "weicao_deep" for s in session.world.scenes)

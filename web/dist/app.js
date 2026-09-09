@@ -1002,6 +1002,10 @@ function sceneCard(item, i) {
         </div>
       </div>
       <div class="field full">
+        <label>标签（逗号分隔；region:xxx = 地理归属，同区域场景用同一个标签；不填 = 全域公开）</label>
+        <input class="edit-field" data-field="tags" value="${escapeHtml((item.tags || []).join(", "))}" />
+      </div>
+      <div class="field full">
         <label>可感知描述</label>
         <textarea class="edit-field" data-field="perceivable" rows="2">${escapeHtml(item.perceivable || "")}</textarea>
       </div>
@@ -1046,6 +1050,10 @@ function npcCard(id, card) {
       <div class="field full">
         <label>人格</label>
         <textarea class="edit-field" data-field="persona" rows="3">${escapeHtml(c.persona || "")}</textarea>
+      </div>
+      <div class="field full">
+        <label>标签（逗号分隔；region:xxx = 来属地/听域，决定该 NPC 听说过哪些区域的公开旧事；缺省=按其亲历事件推导）</label>
+        <input class="edit-field" data-field="tags" value="${escapeHtml((c.tags || []).join(", "))}" />
       </div>
       <div class="field full">
         <label>幕后注</label>
@@ -1182,6 +1190,7 @@ function readScenes() {
     id: card.querySelector('[data-field="id"]')?.value ?? "",
     name: card.querySelector('[data-field="name"]')?.value ?? "",
     aliases: splitList(card.querySelector('[data-field="aliases"]')?.value),
+    tags: splitList(card.querySelector('[data-field="tags"]')?.value),
     perceivable: card.querySelector('[data-field="perceivable"]')?.value ?? "",
     open_hours: card.querySelector('[data-field="open_hours"]')?.value ?? "全天",
     adjacent: splitList(card.querySelector('[data-field="adjacent"]')?.value),
@@ -1198,6 +1207,7 @@ function readNpcs() {
       name: card.querySelector('[data-field="name"]')?.value ?? "",
       appearance: card.querySelector('[data-field="appearance"]')?.value ?? "",
       persona: card.querySelector('[data-field="persona"]')?.value ?? "",
+      tags: splitList(card.querySelector('[data-field="tags"]')?.value),
       private_note: card.querySelector('[data-field="private_note"]')?.value ?? "",
       personal_secrets: card.querySelector('[data-field="personal_secrets"]')?.value ?? "",
       has_actor: !!card.querySelector('[data-field="has_actor"]')?.checked,

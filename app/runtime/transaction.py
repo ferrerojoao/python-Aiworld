@@ -134,7 +134,9 @@ class Transaction:
         clock = self.ledger.save.clock or world_start_time(self.ledger.world)
         delta = candidate.side_effects.delta_minutes or 0
         if audit_out is not None:
-            delta += audit_out.delta_minutes or 0
+            # 保险丝：审计估时长抽风（如把聊天提时间当流逝）时截断，防静默漂移；
+            # 规则 delta（move/jump 玩家意图）不受限。单回合审计上限 = 16 小时。
+            delta += min(audit_out.delta_minutes or 0, 960)
         if delta:
             try:
                 parsed = dt.datetime.fromisoformat(clock)
@@ -148,6 +150,8 @@ class Transaction:
         narrated = candidate.side_effects.narrative or {}
         location = narrated.get("location") or (audit_out.location if audit_out else None) or self.ledger.save.player_scene
         participants = (audit_out.participants if audit_out and audit_out.participants else None) or ["player"]
+        # 玩家是每条事件的产生者，恒在参与者名单（审计漏报时兜底）。
+        participants = sorted(set(participants) | {"player"})
         private = bool(audit_out.private) if audit_out else False
         known_by = participants if private else None
 
