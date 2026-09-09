@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 
 from app.config import Settings
 from app.core.store import new_id
@@ -19,6 +20,24 @@ from app.workers.writer import run_writer
 
 class NeedChooseCandidate(Exception):
     """Raised when a new turn is submitted while multiple candidates are pending."""
+
+
+_OOC_RE = re.compile(r"\(\((.+?)\)\)", re.S)
+
+
+def _extract_directive(text: str) -> tuple[str, str]:
+    """Peel ``((...))`` director directives out of the raw input.
+
+    Directives are per-turn writing requirements for the writer (style,
+    emphasis). They never enter the story: the remaining text is what gets
+    routed and recorded as the player input; directives ride a separate
+    writer message and are stored on the candidate so rerolls keep them.
+    """
+    parts = [m.strip() for m in _OOC_RE.findall(text) if m.strip()]
+    clean = _OOC_RE.sub(" ", text)
+    clean = re.sub(r"\s+", " ", clean).strip()
+    directive = "\n".join(f"- {p}" for p in parts)
+    return clean, directive
 
 
 class TurnRunner:
@@ -56,6 +75,7 @@ class TurnRunner:
         scene: str,
         rule_bundle: dict | None = None,
         rewrite_note: str = "",
+        writer_directive: str = "",
     ):
         """Single-agent write pass, with the deep-choice two-stage loop.
 
@@ -74,6 +94,7 @@ class TurnRunner:
             scene_id=scene,
             preset=self.preset,
             rewrite_note=rewrite_note,
+            writer_directive=writer_directive,
             model=self.settings.resolved_model("story"),
             temperature=0.8,
         )
@@ -110,6 +131,7 @@ class TurnRunner:
                 preset=self.preset,
                 actor_decisions="\n".join(decisions),
                 rewrite_note=rewrite_note,
+                writer_directive=writer_directive,
                 model=self.settings.resolved_model("story"),
                 temperature=0.8,
             )
@@ -148,6 +170,9 @@ class TurnRunner:
                     "当前回合有多份候选，请先选择采纳哪一份或放弃当前回合。"
                 )
 
+        # 本回合导演指令：((...)) 行内语法，剥离后不进路由/不进账本。
+        player_input, writer_directive = _extract_directive(player_input)
+
         route = classify_input(player_input, self.session.world)
         scene = self.session.ledger.save.player_scene
         rule_bundle: dict = {"route": route, "scene": scene}
@@ -181,7 +206,10 @@ class TurnRunner:
             )
 
         out = await self._write_turn(
-            player_input, scene=scene, rule_bundle=rule_bundle
+            player_input,
+            scene=scene,
+            rule_bundle=rule_bundle,
+            writer_directive=writer_directive,
         )
 
         if self.settings.qc_enabled:
@@ -195,18 +223,23 @@ class TurnRunner:
                 participants=qc_participants,
                 preset=self.preset,
                 reference=build_qc_reference(self.session.world, self.session.ledger, qc_participants),
+                summary_hint=out.summary,
                 model=self.settings.resolved_model("qc"),
                 temperature=self.settings.temp_qc,
             )
             prose = qc.prose
             issues = qc.issues
+            # 摘要随正文一同过质检：正文被脱敏/改写而摘要未同步时，以质检修正版为准
+            # （防泄漏经事件日志摘要侧门回归——summary 会长期反复装配）。
+            summary_hint = qc.summary or out.summary
         else:
             # 跳过质检：编剧初稿直接进候选（设置项，玩家自担文风/泄漏风险）。
             prose = out.prose
             issues = []
+            summary_hint = out.summary
 
         # Build one candidate version.
-        summary = out.summary or (out.prose or "")[:40]
+        summary = summary_hint or (prose or "")[:40]
         turn_id = new_id("turn")
         candidate_id = new_id("cand")
         now = dt.datetime.now().isoformat(timespec="seconds")
@@ -216,6 +249,7 @@ class TurnRunner:
             trace_id=new_id("tr"),
             mode="initial",
             player_input=player_input,
+            writer_directive=writer_directive,
             prose=prose,
             side_effects=SideEffects(
                 delta_minutes=rule_bundle.get("delta_minutes", 0),
@@ -255,6 +289,7 @@ class TurnRunner:
             latest.player_input,
             scene=scene,
             rewrite_note=rewrite_note,
+            writer_directive=latest.writer_directive,
         )
 
         if self.settings.qc_enabled:
@@ -266,18 +301,21 @@ class TurnRunner:
                 out.prose,
                 preset=self.preset,
                 reference=build_qc_reference(self.session.world, self.session.ledger, []),
+                summary_hint=out.summary,
                 model=self.settings.resolved_model("qc"),
                 temperature=self.settings.temp_qc,
             )
             prose = qc.prose
             issues = qc.issues
+            summary_hint = qc.summary or out.summary
         else:
             prose = out.prose
             issues = []
+            summary_hint = out.summary
 
         side_effects = latest.side_effects.model_copy(deep=True)
         if side_effects.narrative is not None:
-            side_effects.narrative["summary"] = out.summary or (out.prose or "")[:40]
+            side_effects.narrative["summary"] = summary_hint or (prose or "")[:40]
 
         now = dt.datetime.now().isoformat(timespec="seconds")
         candidate = Candidate(
@@ -286,6 +324,7 @@ class TurnRunner:
             trace_id=latest.trace_id,
             mode=mode,
             player_input=latest.player_input,
+            writer_directive=latest.writer_directive,
             prose=prose,
             side_effects=side_effects,
             conflicts=issues + self._deferred_actor_notes(out),

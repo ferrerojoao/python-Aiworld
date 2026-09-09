@@ -57,21 +57,47 @@ def character_block(world: WorldContent, ledger: Ledger, present_ids: list[str],
     return lines
 
 
-def event_log_block(ledger: Ledger, limit: int = 10, recent_full: int = 3, summary_len: int = 60, input_len: int = 30, include_ids: bool = False) -> list[str]:
+def event_log_block(world: WorldContent, ledger: Ledger, limit: int = 10, recent_full: int = 3, summary_len: int = 60, input_len: int = 30, include_ids: bool = False) -> list[str]:
     """Event log for the writer: older ones as summaries, the newest 3 as
-    full prose (so the writer can "continue" straight after them)."""
+    full prose (so the writer can "continue" straight after them).
+
+    每行标注发生地、在场者与时间——写手据此执行「角色不是你」知情总纲
+    （公开事件 ≠ 人人皆知、异地不知、即兴角色只知眼前）。
+    """
 
     def _id_tag(ev: dict) -> str:
         return f"[{ev['id']}] " if include_ids and ev.get("id") else ""
+
+    def _where(ev: dict) -> str:
+        loc = ev.get("location") or ""
+        if not loc:
+            return ""
+        scene = next((s for s in world.scenes if s.id == loc), None)
+        return scene.name if scene else (ev.get("location_name") or loc)
+
+    def _ctx_tag(ev: dict) -> str:
+        parts = []
+        where = _where(ev)
+        if where:
+            parts.append(where)
+        pids = ev.get("participants", [])
+        if pids:
+            names = [
+                ledger.save.player.name if pid == "player"
+                else (world.npcs[pid].name if pid in world.npcs else pid)
+                for pid in pids
+            ]
+            parts.append("在场者：" + "、".join(names))
+        return f"（{' · '.join(parts)}）" if parts else ""
 
     def _summary_line(ev: dict) -> str:
         summary = (ev.get("summary") or (ev.get("body") or ""))[:summary_len]
         at = ev.get("at", "")
         pinput = ev.get("player_input")
         if pinput:
-            line = f"- {_id_tag(ev)}{at} 玩家：「{pinput[:input_len]}」 {summary}"
+            line = f"- {_id_tag(ev)}{at} {_ctx_tag(ev)} 玩家：「{pinput[:input_len]}」 {summary}"
         else:
-            line = f"- {_id_tag(ev)}{at} {summary}"
+            line = f"- {_id_tag(ev)}{at} {_ctx_tag(ev)} {summary}"
         return line
 
     recent = ledger.narratives[-limit:]
@@ -85,7 +111,7 @@ def event_log_block(ledger: Ledger, limit: int = 10, recent_full: int = 3, summa
     newest = recent[-recent_full:]
     lines.append("最近剧情（原文）：")
     for ev in newest:
-        lines.append(f"- {_id_tag(ev)}{ev.get('at', '')}：{ev.get('body', '')}")
+        lines.append(f"- {_id_tag(ev)}{ev.get('at', '')} {_ctx_tag(ev)}：{ev.get('body', '')}")
     return lines
 
 
@@ -201,9 +227,12 @@ def writer_golden_rules() -> list[str]:
     """不可违背的禁忌，置于高注意力区（prompt 前部）。"""
     return [
         "金科玉律（绝对不可违背）：",
-        "秘密是未叙述的真相：你读到的幕后注、私密事件、秘密只能当作你排戏的参考，绝不能当作人人都知道的背景或旁白写进正文；"
-        "知情者可以在戏里揭示自己知道的秘密（坦白 / 撞破 / 对质，作为新戏自然发生，揭示后落新事件），"
-        "但**不该知道的人**绝不能说出——边界是「他知道不知道」。",
+        "角色不是你（知情总纲）：事件日志、幕后注、世界书都是你案头的编剧资料，角色本人并不知道。"
+        "每个角色开口前，核对台词里的信息是否在他自己的已知范围内——他亲历的事（日志行标注的在场者）、"
+        "他来历该知道的事（人物卡）、剧情里有人当场告诉过他的事。不在范围内：公开旧事只能以「听说的」口吻或不提"
+        "（异地角色的外地旧事默认不知，轰动的大事可作风闻，鸡毛小事传不出远门）；"
+        "幕后注与私密事件的真相绝不能从不该知道的人嘴里说出（知情者当场坦白除外，那是新戏）；"
+        "无人物卡的即兴角色只知道眼前可见的东西。",
         "位置是快照不是事实：NPC 的最后位置/在场名单是最近一次记录的快照，可能已过期。"
         "编排「去找某人」的戏时，依据此人的人物卡与最近经历合理推断他此刻可能在何处——找到、扑空、他挪了地方都是合理的叙事，"
         "不要机械地把快照位置当作他此刻的所在。",
@@ -302,7 +331,7 @@ def build_director_chat_system(
         "当前场景：" + (scene.name if scene else scene_id),
         "在场：" + ("、".join(names) or "暂无"),
     ]
-    parts += event_log_block(ledger, include_ids=True)
+    parts += event_log_block(world, ledger, include_ids=True)
     parts += goals_block(ledger)
     parts += npc_history_block(ledger, present_ids)
     parts += active_lore_block(ledger)
@@ -421,7 +450,7 @@ def build_work_order(
         # K 输出格式（指令，近因区）
         parts += writer_output_format()
         # E 事件日志（更早摘要在前 → 最近原文在后，收尾紧贴玩家输入以便续写）
-        parts += event_log_block(ledger)
+        parts += event_log_block(world, ledger)
         return "\n".join(parts)
 
     if viewer.startswith("actor_"):

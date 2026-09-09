@@ -353,11 +353,108 @@ button:hover {
   padding: 10px;
   font-size: 12px;
   line-height: 1.5;
-  white-space: pre-wrap;
+  white-space: normal;
   word-break: break-word;
   max-height: 70vh;
   overflow-y: auto;
   color: var(--text);
+}
+
+/* 调试卡片：一次 LLM 调用一张卡 */
+.dbg-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 8px;
+  background: var(--panel-2);
+}
+.dbg-card summary {
+  cursor: pointer;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+}
+.dbg-card summary:hover {
+  background: var(--hover);
+}
+.dbg-card[open] summary {
+  border-bottom: 1px solid var(--border);
+}
+.dbg-card > *:not(summary) {
+  padding: 0 10px 10px;
+}
+.dbg-seq {
+  color: var(--muted);
+  font-size: 11px;
+}
+.dbg-label {
+  font-weight: 600;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 4px;
+  padding: 1px 8px;
+  font-size: 12px;
+}
+.dbg-meta {
+  color: var(--muted);
+  font-size: 11px;
+}
+.dbg-err-badge {
+  background: var(--danger);
+  color: #fff;
+  border-radius: 4px;
+  padding: 1px 8px;
+  font-size: 11px;
+}
+.dbg-msg {
+  margin-bottom: 8px;
+}
+.dbg-role {
+  display: inline-block;
+  font-size: 11px;
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-bottom: 3px;
+  background: var(--npc-bg);
+  color: var(--text);
+}
+.dbg-role-system {
+  background: var(--accent);
+  color: #fff;
+}
+.dbg-role-user {
+  background: var(--player-bg);
+  color: #fff;
+}
+.dbg-role-assistant {
+  background: var(--success);
+  color: #fff;
+}
+.dbg-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--panel-4);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.dbg-json {
+  font-family: Consolas, monospace;
+  font-size: 11px;
+}
+.dbg-sub {
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 11px;
+  margin: 8px 0 3px;
+}
+.dbg-err,
+.dbg-err.dbg-content {
+  color: #ff9c9c;
+  border-color: var(--danger);
 }
 
 .tab-panel label {

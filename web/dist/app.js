@@ -1,6 +1,6 @@
 const state = {
   sid: null,
-  worldId: "qinghsi",
+  worldId: null,
   saveName: "main",
   worldName: null,
   candidates: [],
@@ -415,6 +415,8 @@ function switchDrawerTab(tabName) {
     loadDebugTrace();
   } else if (tabName === "player") {
     loadPlayer();
+  } else if (tabName === "settings") {
+    loadSettings();
   }
 }
 
@@ -422,9 +424,58 @@ async function loadDebugTrace() {
   if (!state.sid) return;
   const data = await api(`/api/sessions/${state.sid}/debug/latest`);
   const trace = data.trace || [];
-  $("#debug-output").textContent = trace.length
-    ? JSON.stringify(trace, null, 2)
-    : "暂无调试数据";
+  const box = $("#debug-output");
+  if (!trace.length) {
+    box.textContent = "暂无调试数据";
+    return;
+  }
+  box.innerHTML = trace
+    .map((entry, i) => debugEntryCard(entry, trace.length - i))
+    .join("");
+}
+
+function esc(s) {
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function debugEntryCard(entry, seq) {
+  const label = entry.label || "未标注调用";
+  const meta = [entry.type, entry.model, `temp ${entry.temperature}`]
+    .filter(Boolean)
+    .map(esc)
+    .join(" · ");
+  const errBadge = entry.error ? `<span class="dbg-err-badge">出错</span>` : "";
+  const head = `<span class="dbg-seq">#${seq}</span><span class="dbg-label">${esc(label)}</span><span class="dbg-meta">${meta}</span>${errBadge}`;
+
+  const msgs = (entry.messages || [])
+    .map((m) => {
+      const role = esc(m.role || "?");
+      return `<div class="dbg-msg"><span class="dbg-role dbg-role-${esc(m.role)}">${role}</span><div class="dbg-content">${esc(m.content)}</div></div>`;
+    })
+    .join("");
+
+  let outHtml = "";
+  if (entry.output !== undefined) {
+    const out = entry.output;
+    if (out && typeof out === "object" && out.prose !== undefined) {
+      const questions = Array.isArray(out.actor_questions) && out.actor_questions.length
+        ? `<div class="dbg-sub">深抉择上缴</div><div class="dbg-content">${esc(JSON.stringify(out.actor_questions, null, 2))}</div>`
+        : "";
+      outHtml = `<div class="dbg-sub">输出</div>
+        <div class="dbg-sub">summary</div><div class="dbg-content">${esc(out.summary || "（无）")}</div>
+        <div class="dbg-sub">prose（正文）</div><div class="dbg-content">${esc(out.prose)}</div>${questions}`;
+    } else {
+      outHtml = `<div class="dbg-sub">输出</div><div class="dbg-content dbg-json">${esc(JSON.stringify(out, null, 2))}</div>`;
+    }
+  }
+  const errHtml = entry.error
+    ? `<div class="dbg-sub dbg-err">错误</div><div class="dbg-content dbg-err">${esc(entry.error)}</div>`
+    : "";
+
+  return `<details class="dbg-card"><summary>${head}</summary>${msgs}${outHtml}${errHtml}</details>`;
 }
 
 /* ---------- 主角资料 ---------- */
@@ -545,8 +596,6 @@ function describeAction(action) {
   switch (action.type) {
     case "override":
       return `静默覆写：${p.subject || "?"} 在 ${p.location || "?"}`;
-    case "set_actor":
-      return `角色档位：${p.npc_id || "?"} ${p.has_actor === false ? "取消配" : "配"} Actor`;
     case "inject_memory":
       return `记忆注入：给 ${p.npc_id || "?"} 注入记忆`;
     case "access_rejudge":
@@ -697,6 +746,7 @@ async function loadWorldList() {
 
 async function switchToWorld(worldId) {
   state.worldId = worldId;
+  localStorage.setItem("aiworld_world_id", worldId);
   state.worldName = null;
   state.worldData = null;
   setEditModeUI(false);
@@ -1296,6 +1346,7 @@ async function importSave(file) {
   alert(`已导入存档：${data.world_id} / ${data.save_name}\n将切换到该存档。`);
   // 切换过去：同一世界则换存档名，跨世界则换世界。
   state.worldId = data.world_id;
+  localStorage.setItem("aiworld_world_id", data.world_id);
   state.saveName = data.save_name;
   state.worldName = null;
   state.worldData = null;
@@ -1336,8 +1387,37 @@ async function resetWorld() {
 
 /* ---------- 初始化 ---------- */
 
-async function init() {
+async function pickWorld() {
+  // 启动选世界：localStorage 记忆优先，但必须仍存在；否则取列表第一个。
+  let worlds = [];
   try {
+    const data = await api(`/api/worlds`);
+    worlds = data.worlds || [];
+  } catch (e) {
+    return null;
+  }
+  if (!worlds.length) return null;
+  const remembered = localStorage.getItem("aiworld_world_id");
+  const rememberedValid = worlds.some((w) => w.id === remembered);
+  state.worldId = rememberedValid ? remembered : worlds[0].id;
+  localStorage.setItem("aiworld_world_id", state.worldId);
+  return state.worldId;
+}
+
+async function init() {
+  // 设置加载独立于游戏会话：会话初始化失败不再连坐设置页。
+  try {
+    await loadSettings();
+  } catch (e) {
+    /* 设置接口失败时保留输入框空白，主流程继续 */
+  }
+
+  try {
+    const picked = await pickWorld();
+    if (!picked) {
+      addMessage("npc", "暂无可用世界：请点右上角「世界」导入或新建一个世界。");
+      return;
+    }
     await ensureSession();
     const info = await api(`/api/sessions/${state.sid}`);
     state.worldName = info.world;
@@ -1346,7 +1426,6 @@ async function init() {
     await refreshState();
     await syncPendingFromServer();
     await loadDirectorHistory();
-    await loadSettings();
   } catch (e) {
     addMessage("npc", `初始化失败：${e.message}`);
   }

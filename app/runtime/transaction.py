@@ -25,6 +25,7 @@ class Candidate(BaseModel):
     mode: str = "initial"
     status: str = "pending"
     player_input: str = ""
+    writer_directive: str = ""  # 本回合 ((...)) 导演指令，重掷时沿用
     prose: str = ""
     side_effects: SideEffects = Field(default_factory=SideEffects)
     conflicts: list[dict] = Field(default_factory=list)
@@ -171,7 +172,7 @@ class Transaction:
                 narrative["location_name"] = scene_alias
             if audit_out and audit_out.register_scene and location:
                 self.ledger.register_scene(location, scene_alias or location)
-        self.ledger.append(narrative)
+        self.ledger.append(narrative, flush=False)
         self.ledger.save.player_scene = location
         # 显示名：注册场景=场景表 name；一次性场景=审计中文名（回退英文 id，避免 UI 出现英文）。
         registered = next((s for s in self.ledger.world.scenes if s.id == location), None)
@@ -187,7 +188,7 @@ class Transaction:
             event.setdefault("id", self.ledger.allocate_event_id())
             event.setdefault("kind", "narrative")
             event.setdefault("at", clock)
-            self.ledger.append(event)
+            self.ledger.append(event, flush=False)
 
         # v1 relation axes are reserved; just copy values if provided.
         for key, value in candidate.side_effects.axes.items():
@@ -215,6 +216,10 @@ class Transaction:
             self.ledger.world, candidate.prose
         )
 
+        # 一次提交落盘：本回合事件攒批与存档背靠背写入（先流水后存档，
+        # 存档为提交标记）。若仍崩在两笔之间，重开时 _calibrate_event_counter
+        # 按流水校准计数器，事件号不复用。
+        self.ledger.flush_events()
         self.ledger.persist_save()
         # Clean this turn's candidate files only after a successful commit.
         self.candidates.delete_turn(candidate.turn_id)

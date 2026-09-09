@@ -59,6 +59,10 @@ class QCOutput(BaseModel):
         ),
     )
     issues: list[dict] = Field(default_factory=list, validation_alias=AliasChoices("issues", "问题", "修改记录"))
+    summary: str = Field(
+        default="",
+        validation_alias=AliasChoices("summary", "摘要"),
+    )
 
 
 class ActorDecision(BaseModel):

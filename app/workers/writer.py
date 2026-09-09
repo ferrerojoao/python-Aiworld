@@ -17,6 +17,7 @@ async def run_writer(
     preset: NarrativePreset | None = None,
     actor_decisions: str = "",
     rewrite_note: str = "",
+    writer_directive: str = "",
     model: str = "fake",
     temperature: float = 0.8,
 ) -> WriterOutput:
@@ -28,10 +29,25 @@ async def run_writer(
     re-invokes with actor_decisions set.
     """
     system = build_work_order("writer", world, ledger, scene_id or "", preset=preset)
+    if player_input.strip():
+        player_msg = {"role": "user", "content": f"玩家输入：{player_input}"}
+    else:
+        player_msg = {
+            "role": "user",
+            "content": "玩家输入：（本轮无行动，按导演要求与当前情境自然推进）",
+        }
     messages = [
         {"role": "system", "content": system},
-        {"role": "user", "content": f"玩家输入：{player_input}"},
+        player_msg,
     ]
+    if writer_directive:
+        messages.append(
+            {
+                "role": "user",
+                "content": "本回合导演要求（必须执行，但不写进正文、不算玩家台词、不进事件日志）：\n"
+                + writer_directive,
+            }
+        )
     if rule_bundle:
         messages.append({"role": "user", "content": f"规则段预结算：{rule_bundle}"})
     if actor_decisions:

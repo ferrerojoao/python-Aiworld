@@ -113,16 +113,6 @@ def _execute_action(session, action_type: str, payload: dict) -> dict:
         apply_access_override(ledger, event_id, known_by)
         return {"ok": True, "action": action_type}
 
-    if action_type == "set_actor":
-        # 角色档位：直接写存档世界实例的人物卡（设计 C，玩家判断）。
-        npc_id = _resolve_npc_ref(session, payload.get("npc_id", ""))
-        if npc_id is None:
-            raise HTTPException(status_code=404, detail=f"npc not found: {payload.get('npc_id')}")
-        has = bool(payload.get("has_actor", True))
-        session.world.npcs[npc_id].has_actor = has
-        _write_npc_card(session, npc_id)
-        return {"ok": True, "action": action_type, "npc_id": npc_id, "has_actor": has}
-
     if action_type == "inject_memory":
         # 记忆注入（M16）：落一条私密事件 known_by=[该NPC]，只进他自己的切片。
         npc_id = _resolve_npc_ref(session, payload.get("npc_id", ""))

@@ -53,6 +53,7 @@ async def run_qc(
     participants: list[str] | None = None,
     preset: NarrativePreset | None = None,
     reference: str = "",
+    summary_hint: str = "",
     model: str = "fake",
     temperature: float = 0.2,
 ) -> QCOutput:
@@ -64,9 +65,11 @@ async def run_qc(
         [
             "你是 AIWorld 的质检员，负责文风、泄漏和禁用词检查。",
             "只返回 JSON，格式如下：",
-            '{"status": "pass|fixed", "prose": "质检后的正文（可修改，不得为空）", "issues": [{"desc": "修改记录"}]}',
+            '{"status": "pass|fixed", "prose": "质检后的正文（可修改，不得为空）", "issues": [{"desc": "修改记录"}], "summary": "修正后的一句话摘要（可选）"}',
             "status：pass=无需修改；fixed=已修改正文。",
             "issues：修改记录列表（改了什么/为什么改），没有则为空数组。",
+            "summary：仅当正文被修改且用户给的摘要与修改后正文语义不一致（尤其泄漏脱敏导致的变化）时才输出修正后的摘要；"
+            "正文未动或摘要本来一致就省略此字段。摘要同样不得含参照区外的信息——它是事件日志的长期记忆，泄漏会反复出现。",
             "具体检查项：",
             "1. 文风一致性：按编剧准则核对文风与描写方式，明显不符处局部改写——只动需要改的句子，其余部分保持原样透传。",
             "2. 泄漏比对（必须执行）：参照区列出每个出场角色「知道的事」。某角色台词呈现的知识超出其已知范围，"
@@ -85,6 +88,8 @@ async def run_qc(
     user_parts = [f"正文：\n{prose}"]
     if reference:
         user_parts.append(f"\n参照区（只读比对用，禁止出现在正文里）：\n{reference}")
+    if summary_hint:
+        user_parts.append(f"\n用户摘要（供一致性比对，必要时在输出 summary 字段给修正版）：{summary_hint}")
     user_parts.append("\n请给出质检结果。")
     messages.append({"role": "user", "content": "\n".join(user_parts)})
 
