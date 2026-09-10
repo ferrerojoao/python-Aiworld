@@ -20,7 +20,7 @@ def build_qc_reference(world: WorldContent, ledger: Ledger, participants: list[s
     scene_id = ledger.save.player_scene
     scene = next((s for s in world.scenes if s.id == scene_id), None)
     if scene:
-        blocks.append(f"当前场景（{scene.name}）：{scene.perceivable}")
+        blocks.append(f"当前场景（{scene.id}）：{scene.perceivable}")
 
     player = ledger.save.player
     if player.personal_secrets:
@@ -41,7 +41,7 @@ def build_qc_reference(world: WorldContent, ledger: Ledger, participants: list[s
         mem = ledger.known_set(pid, scene_id, 5)
         memo = "；".join(mem) if mem else "（无——该角色的知识从眼前开始）"
         blocks.append(
-            f"{npc.name}（{npc.id}）知道的事：{memo}（另：本区域公开旧事该角色均有耳闻；"
+            f"{npc.id} 知道的事：{memo}（另：本区域公开旧事该角色均有耳闻；"
             f"发生在本区域之外的旧事该角色一概不知道）"
         )
     return "\n".join(blocks)
@@ -74,12 +74,17 @@ async def run_qc(
             "summary：仅当正文被修改且用户给的摘要与修改后正文语义不一致（尤其泄漏脱敏导致的变化）时才输出修正后的摘要；"
             "正文未动或摘要本来一致就省略此字段。摘要同样不得含参照区外的信息——它是事件日志的长期记忆，泄漏会反复出现。",
             "具体检查项：",
-            "1. 文风一致性：按编剧准则核对文风与描写方式，明显不符处局部改写——只动需要改的句子，其余部分保持原样透传。",
-            "2. 泄漏比对（必须执行）：参照区列出每个出场角色「知道的事」。某角色台词呈现的知识超出其已知范围，"
+            "1. 文风一致性：按下方给出的编剧准则核对文风与描写方式，明显不符处局部改写——只动需要改的句子，其余部分保持原样透传。",
+            "2. 比喻与通感（必须执行）：检查有没有滥用比喻和通感——修辞连续堆砌、把情绪硬转成感官错位的通感比喻"
+            "（如情绪写成\"针扎\"\"石子\"式体感）、把不相关的事物强行拉来对比（喻体与本体毫无关联，为文艺而文艺）。"
+            "发现即局部改写为直陈其事，保持文意，记录进 issues。",
+            "3. 强行转折（必须执行）：检查有没有强行使用的平衡转折句——\"不是……而是……\"式硬造对仗、"
+            "\"他没躲\"式先抑后扬、为转折而转折。发现即改为自然直述，记录进 issues。",
+            "4. 泄漏比对（必须执行）：参照区列出每个出场角色「知道的事」。某角色台词呈现的知识超出其已知范围，"
             "就是泄漏（剧情错误），必须脱敏改写为模糊表述。"
             "参照区另有两条玩家边界：主角自知隐秘只有玩家自己知道——任何 NPC 说出或提及都算泄漏；"
             "主角幕后注连玩家都不知道——正文任何形式的揭示都算泄漏（可作暗示铺垫，不可说破）。",
-            "3. 禁用词（必须执行）：下面给出一份禁用词表。正文里出现这些词时，必须**局部改写**该处——"
+            "5. 禁用词（必须执行）：下面给出一份禁用词表。正文里出现这些词时，必须**局部改写**该处——"
             "换成不违禁的等价说法，保持句子通顺、文意不变，**绝不要**把词替换成省略号或删掉造成语句残缺；"
             "改写后记录到 issues。",
             "不要检查剧情走向是否合理、是否存在设定矛盾——那是玩家的判断，不是你的职责。",
@@ -89,6 +94,8 @@ async def run_qc(
     )
     messages = [{"role": "system", "content": system}]
     user_parts = [f"正文：\n{prose}"]
+    if preset.writer_guidelines:
+        user_parts.append(f"\n编剧准则（检查项 1-3 的文风比对基准）：\n{preset.writer_guidelines}")
     if reference:
         user_parts.append(f"\n参照区（只读比对用，禁止出现在正文里）：\n{reference}")
     if summary_hint:

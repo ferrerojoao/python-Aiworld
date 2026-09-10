@@ -208,7 +208,7 @@ async function refreshState() {
   const data = await api(`/api/sessions/${state.sid}/state`);
   $("#world-name").textContent = state.worldName || "-";
   $("#clock").textContent = data.clock || "-";
-  $("#scene").textContent = data.scene_name || data.scene || "-";
+  $("#scene").textContent = data.scene_id || data.scene || "-";
   if (data.preset) {
     const p = data.preset;
     $("#writer-guidelines-input").value = p.writer_guidelines || "";
@@ -222,13 +222,15 @@ function renderLeftRail(data) {
   nav.innerHTML = "";
   const current = document.createElement("div");
   current.className = "rail-item current";
-  current.textContent = `📍 ${data.scene_name || "-"}`;
+  current.textContent = `📍 ${data.scene_id || "-"}`;
   nav.appendChild(current);
 
-  for (const adj of data.adjacent || []) {
+  // 去过的最近 3 个场景（id 即中文名），不筛选邻接
+  for (const recent of data.recent_scenes || []) {
+    if (recent === data.scene_id) continue;
     const item = document.createElement("div");
     item.className = "rail-item";
-    item.textContent = adj.name;
+    item.textContent = recent;
     nav.appendChild(item);
   }
 
@@ -686,6 +688,7 @@ function applyTheme(theme) {
 
 function openWorldModal() {
   $("#world-modal").classList.add("open");
+  setEditModeUI(state.editMode);  // 同步按钮可见性（编辑态残留时导出/导入存档保持隐藏）
   switchWorldTab("list");
   loadWorldList();
 }
@@ -778,20 +781,14 @@ async function loadWorldBrowser() {
 
   const overview = $("#world-tab-overview");
   overview.innerHTML = "";
-  const durations = data.overview.default_durations || {};
-  const durationLabels = {
-    move_per_edge_min: "移动耗时（分钟/条相邻边）",
-    action_default_min: "普通行动耗时（分钟）",
-  };
-  const durationItems = Object.entries(durations)
-    .map(([key, value]) => `<li>${durationLabels[key] || key}：${value} 分钟</li>`)
-    .join("");
   overview.innerHTML = `
     <h3>${data.overview.name || data.overview.id}</h3>
     <pre>${(data.overview.summary || []).join("\n")}</pre>
     ${data.overview.opening ? `<p><strong>开场白</strong></p><pre>${escapeHtml(data.overview.opening)}</pre>` : ""}
-    <p><strong>默认耗时</strong></p>
-    <ul>${durationItems || "<li>无</li>"}</ul>
+    <p><strong>世界钟起点</strong></p>
+    <p>${escapeHtml(data.overview.start_time || "（引擎默认 2026-07-14T08:00:00）")}</p>
+    <p><strong>记忆回溯上限</strong></p>
+    <p>${data.overview.memory_limit ?? 50} 条（NPC Actor 的记忆窗口；0 = 不给记忆）</p>
   `;
 
   const lore = $("#world-tab-lore");
@@ -808,7 +805,7 @@ async function loadWorldBrowser() {
   for (const scene of data.scenes || []) {
     const div = document.createElement("div");
     div.className = "item";
-    div.innerHTML = `<strong>${scene.name}</strong> (${scene.id})<br>${scene.perceivable || ""}<br>邻接：${(scene.adjacent || []).join(", ")}`;
+    div.innerHTML = `<strong>${scene.id}</strong><br>${scene.perceivable || ""}<br>消息域：${scene.region || "全域公共区"}${(scene.aliases || []).length ? `<br>别名：${escapeHtml((scene.aliases || []).join(", "))}` : ""}`;
     scenes.appendChild(div);
   }
 
@@ -817,7 +814,7 @@ async function loadWorldBrowser() {
   for (const npc of Object.values(data.npcs || {})) {
     const div = document.createElement("div");
     div.className = "item";
-    div.innerHTML = `<strong>${npc.name}</strong> (${npc.id})<br>${npc.persona || ""}`;
+    div.innerHTML = `<strong>${npc.id}</strong><br>${npc.persona || ""}${(npc.region || []).length ? `<br>听域：${escapeHtml((npc.region || []).join(", "))}` : ""}`;
     npcs.appendChild(div);
   }
 
@@ -846,15 +843,16 @@ async function loadWorldBrowser() {
 }
 
 function formatEventSummary(ev, scenes, npcs) {
-  const scene = scenes.find((s) => s.id === ev.location);
-  const location = scene ? scene.name : ev.location || "";
-  const names = (ev.participants || [])
-    .map((id) => (id === "player" ? "你" : npcs[id]?.name || id))
-    .join("、");
+  const location = ev.location || "";
+  const displayName = (id) => (id === "player" ? "你" : id);
+  const names = (ev.participants || []).map(displayName).join("、");
   const locTag = location ? ` [${location}]` : "";
   const whoTag = names ? `（在场：${names}）` : "";
+  const privTag = ev.known_by
+    ? `【私密·仅${(ev.known_by || []).map(displayName).join("、")}】`
+    : "【公开】";
   const summary = ev.summary || (ev.body || "").replace(/\s+/g, " ").slice(0, 40);
-  return `${ev.at || ""}${locTag} ${summary}${whoTag}`;
+  return `${ev.at || ""}${locTag} ${summary}${whoTag} ${privTag}`;
 }
 
 function setEditModeUI(active) {
@@ -862,6 +860,9 @@ function setEditModeUI(active) {
   $("#toggle-edit").textContent = active ? "退出编辑" : "编辑模式";
   $("#save-world-edit").style.display = active ? "" : "none";
   $("#save-as-world").style.display = active ? "" : "none";
+  // 存档导出/导入只在浏览态提供（编辑模式隐藏，避免与世界资产包操作混淆）
+  $("#export-save").style.display = active ? "none" : "";
+  $("#import-save-label").style.display = active ? "none" : "";
 }
 
 function toggleEditMode() {
@@ -904,18 +905,14 @@ function renderEditOverview(data) {
         </div>
 
         <div class="form-section">
-          <h4>默认耗时</h4>
-          <div class="field">
-            <label>移动耗时（分钟/条相邻边）</label>
-            <input class="edit-field" data-field="move" type="number" value="${ov.default_durations?.move_per_edge_min ?? 10}" />
-          </div>
-          <div class="field">
-            <label>普通行动耗时（分钟）</label>
-            <input class="edit-field" data-field="action" type="number" value="${ov.default_durations?.action_default_min ?? 30}" />
-          </div>
+          <h4>世界钟与记忆</h4>
           <div class="field">
             <label>世界钟起点（ISO 时间，空=引擎默认 2026-07-14T08:00:00；新建存档/重置后回到此时刻）</label>
             <input class="edit-field" data-field="start_time" type="text" placeholder="2026-07-14T08:00:00" value="${escapeHtml(ov.start_time || "")}" />
+          </div>
+          <div class="field">
+            <label>记忆回溯条数上限（experiences 每次回看的最大事件条数）</label>
+            <input class="edit-field" data-field="memory_limit" type="number" value="${ov.memory_limit ?? 50}" />
           </div>
         </div>
       </div>
@@ -962,6 +959,9 @@ function loreCard(item, i) {
         <label>正文（命中后全量注入编剧提示词）</label>
         <textarea class="edit-field" data-field="body" rows="3">${escapeHtml(item.body || "")}</textarea>
       </div>
+      <div class="field full">
+        <label><input class="edit-field" data-field="always_on" type="checkbox" ${item.always_on ? "checked" : ""} /> 常驻（每轮必注入，不需要关键词触发，不占触发名额上限）</label>
+      </div>
       <button class="danger remove-item">删除</button>
     </div>
   `;
@@ -983,35 +983,23 @@ function sceneCard(item, i) {
     <div class="edit-card" data-index="${i}">
       <div class="form-grid">
         <div class="field">
-          <label>ID</label>
+          <label>名称（即 ID，中文名；事件 location 与显示名共用此键）</label>
           <input class="edit-field" data-field="id" value="${escapeHtml(item.id || "")}" />
         </div>
         <div class="field">
-          <label>名称</label>
-          <input class="edit-field" data-field="name" value="${escapeHtml(item.name || "")}" />
+          <label>别名（逗号分隔；变体名，供移动解析与 id 纠偏）</label>
+          <input class="edit-field" data-field="aliases" value="${escapeHtml((item.aliases || []).join(", "))}" />
         </div>
       </div>
       <div class="form-grid">
         <div class="field">
-          <label>别名（逗号分隔）</label>
-          <input class="edit-field" data-field="aliases" value="${escapeHtml((item.aliases || []).join(", "))}" />
+          <label>消息域 region（地域名，如"镇上"；该场景事件只被同域 NPC 听闻；空 = 全域公共区）</label>
+          <input class="edit-field" data-field="region" value="${escapeHtml(item.region || "")}" />
         </div>
-        <div class="field">
-          <label>开放时段</label>
-          <input class="edit-field" data-field="open_hours" value="${escapeHtml(item.open_hours || "全天")}" />
-        </div>
-      </div>
-      <div class="field full">
-        <label>标签（逗号分隔；region:xxx = 地理归属，同区域场景用同一个标签；不填 = 全域公开）</label>
-        <input class="edit-field" data-field="tags" value="${escapeHtml((item.tags || []).join(", "))}" />
       </div>
       <div class="field full">
         <label>可感知描述</label>
         <textarea class="edit-field" data-field="perceivable" rows="2">${escapeHtml(item.perceivable || "")}</textarea>
-      </div>
-      <div class="field full">
-        <label>邻接（逗号分隔）</label>
-        <input class="edit-field" data-field="adjacent" value="${escapeHtml((item.adjacent || []).join(", "))}" />
       </div>
       <button class="danger remove-item">删除</button>
     </div>
@@ -1035,12 +1023,12 @@ function npcCard(id, card) {
     <div class="edit-card">
       <div class="form-grid">
         <div class="field">
-          <label>ID</label>
+          <label>姓名（即 ID，中文名；participants 与显示名共用此键）</label>
           <input class="edit-field" data-field="id" value="${escapeHtml(id || "")}" />
         </div>
         <div class="field">
-          <label>名称</label>
-          <input class="edit-field" data-field="name" value="${escapeHtml(c.name || "")}" />
+          <label>听域（逗号分隔地域名；决定该 NPC 听说过哪些区域的公开旧事；空 = 按亲历事件推导）</label>
+          <input class="edit-field" data-field="region" value="${escapeHtml((c.region || []).join(", "))}" />
         </div>
       </div>
       <div class="field full">
@@ -1050,10 +1038,6 @@ function npcCard(id, card) {
       <div class="field full">
         <label>人格</label>
         <textarea class="edit-field" data-field="persona" rows="3">${escapeHtml(c.persona || "")}</textarea>
-      </div>
-      <div class="field full">
-        <label>标签（逗号分隔；region:xxx = 来属地/听域，决定该 NPC 听说过哪些区域的公开旧事；缺省=按其亲历事件推导）</label>
-        <input class="edit-field" data-field="tags" value="${escapeHtml((c.tags || []).join(", "))}" />
       </div>
       <div class="field full">
         <label>幕后注</label>
@@ -1164,16 +1148,14 @@ function splitLines(str) {
 function readOverview() {
   const tab = $("#world-tab-overview");
   const val = (field) => tab.querySelector(`[data-field="${field}"]`)?.value ?? "";
+  const rawMemory = val("memory_limit").trim();
   return {
     id: val("id"),
     name: val("name"),
     opening: val("opening"),
     summary: splitLines(val("summary")),
     start_time: val("start_time"),
-    default_durations: {
-      move_per_edge_min: Number(val("move")) || 10,
-      action_default_min: Number(val("action")) || 30,
-    },
+    memory_limit: rawMemory === "" ? 50 : Math.max(0, Number(rawMemory) || 0),
   };
 }
 
@@ -1182,18 +1164,16 @@ function readLore() {
     id: card.querySelector('[data-field="id"]')?.value ?? "",
     keywords: splitList(card.querySelector('[data-field="keywords"]')?.value),
     body: card.querySelector('[data-field="body"]')?.value ?? "",
+    always_on: !!card.querySelector('[data-field="always_on"]')?.checked,
   }));
 }
 
 function readScenes() {
   return Array.from(document.querySelectorAll("#edit-scene-list .edit-card")).map((card) => ({
     id: card.querySelector('[data-field="id"]')?.value ?? "",
-    name: card.querySelector('[data-field="name"]')?.value ?? "",
     aliases: splitList(card.querySelector('[data-field="aliases"]')?.value),
-    tags: splitList(card.querySelector('[data-field="tags"]')?.value),
     perceivable: card.querySelector('[data-field="perceivable"]')?.value ?? "",
-    open_hours: card.querySelector('[data-field="open_hours"]')?.value ?? "全天",
-    adjacent: splitList(card.querySelector('[data-field="adjacent"]')?.value),
+    region: card.querySelector('[data-field="region"]')?.value.trim() ?? "",
   }));
 }
 
@@ -1204,13 +1184,12 @@ function readNpcs() {
     if (!id) return;
     result[id] = {
       id,
-      name: card.querySelector('[data-field="name"]')?.value ?? "",
       appearance: card.querySelector('[data-field="appearance"]')?.value ?? "",
       persona: card.querySelector('[data-field="persona"]')?.value ?? "",
-      tags: splitList(card.querySelector('[data-field="tags"]')?.value),
       private_note: card.querySelector('[data-field="private_note"]')?.value ?? "",
       personal_secrets: card.querySelector('[data-field="personal_secrets"]')?.value ?? "",
       has_actor: !!card.querySelector('[data-field="has_actor"]')?.checked,
+      region: splitList(card.querySelector('[data-field="region"]')?.value),
     };
   });
   return result;

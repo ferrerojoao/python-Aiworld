@@ -3,13 +3,14 @@
 Objective blocks are pure data (facts queried from the ledger/content pack);
 subjective contracts are instructions (identity, discipline, output format).
 
-Assembly order (2026-09-05 design): primacy/recency first, then static →
-dynamic, forbidden rules upfront, output format last:
+Assembly order (2026-09-10 rework): forbidden rules upfront, static data
+cluster next, dynamic recency at tail, output format last:
 
-    A 身份与任务 → B 世界硬规则 → C 金科玉律（禁忌前置） → D 角色资料
-    → E 事件日志（理解本句输入的钥匙） → F 场景快照（此刻环境）
-    → G NPC 近况 → H 幕后注（伴随警示，与 C 双保险） → I 可选素材
-    → J 编剧准则（贴近动笔） → K 输出格式（紧贴玩家输入）→ 玩家输入消息
+    A 身份与任务 → C 金科玉律（禁忌前置） → J 编剧准则
+    → B 世界硬规则（资料区前段，永不裁剪） → I 可选素材（世界书命中）
+    → D 角色资料 → H 幕后注 → F 场景快照（此刻环境）
+    → G 在场 NPC 已知集 → G 剧情目标（近因区引导） → K 输出格式
+    → E 事件日志（最近原文在后） → 玩家输入消息
 """
 
 from __future__ import annotations
@@ -47,12 +48,11 @@ def character_block(world: WorldContent, ledger: Ledger, present_ids: list[str],
         npc = world.npcs.get(pid)
         if npc:
             ticket = "（配 Actor）" if npc.has_actor else "（导演代笔）"
-            id_tag = f"（id: {npc.id}）" if include_ids else ""
             npc_lines.append(
-                f"[{npc.name}]{id_tag}{ticket} 名字：{npc.name}；外貌：{npc.appearance or '未设定'}；人格：{npc.persona or '未设定'}"
+                f"[{npc.id}]{ticket} 外貌：{npc.appearance or '未设定'}；人格：{npc.persona or '未设定'}"
             )
         else:
-            npc_lines.append(f"[{pid}] 名字：{pid}")
+            npc_lines.append(f"[{pid}]")
     if npc_lines:
         lines.append("在场 NPC：")
         lines.extend(npc_lines)
@@ -75,7 +75,7 @@ def event_log_block(world: WorldContent, ledger: Ledger, limit: int = 10, recent
         if not loc:
             return ""
         scene = next((s for s in world.scenes if s.id == loc), None)
-        return scene.name if scene else (ev.get("location_name") or loc)
+        return scene.id if scene else (ev.get("location_name") or loc)
 
     def _ctx_tag(ev: dict) -> str:
         parts = []
@@ -86,7 +86,7 @@ def event_log_block(world: WorldContent, ledger: Ledger, limit: int = 10, recent
         if pids:
             names = [
                 ledger.save.player.name if pid == "player"
-                else (world.npcs[pid].name if pid in world.npcs else pid)
+                else (pid)
                 for pid in pids
             ]
             parts.append("在场者：" + "、".join(names))
@@ -138,7 +138,7 @@ def scene_snapshot_block(world: WorldContent, ledger: Ledger, scene_id: str) -> 
     clock = ledger.save.clock or ""
     parts = []
     for pid in present_ids:
-        name = world.npcs[pid].name if pid in world.npcs else pid
+        name = pid
         ev = ledger.where_is(pid)
         seen = _rel_seen(clock, ev.get("at", "")) if ev else ""
         parts.append(f"{name}（最后目击：{seen}）" if seen else name)
@@ -146,7 +146,7 @@ def scene_snapshot_block(world: WorldContent, ledger: Ledger, scene_id: str) -> 
         "当前时间：" + (clock or "-"),
         "在场（括号内 = 该角色最后被记录在此的时刻，久未见面的要考虑他是否还在）："
         + ("、".join(parts) or "暂无"),
-        "当前场景：" + (scene.name if scene else "主街"),
+        "当前场景：" + (scene.id if scene else "主街"),
         scene.perceivable if scene else "未知场景",
     ]
 
@@ -163,9 +163,9 @@ def known_set_block(world: WorldContent, ledger: Ledger, present_ids: list[str],
             continue
         mem = ledger.known_set(pid, scene_id, per_npc)
         if mem:
-            lines.append(f"[{npc.name}] 知道的事：{'；'.join(mem)}")
+            lines.append(f"[{npc.id}] 知道的事：{'；'.join(mem)}")
         else:
-            lines.append(f"[{npc.name}] 知道的事：（无——该角色的知识从眼前开始）")
+            lines.append(f"[{npc.id}] 知道的事：（无——该角色的知识从眼前开始）")
     if not lines:
         return []
     return [
@@ -198,34 +198,42 @@ def private_notes_block(world: WorldContent, ledger: Ledger, present_ids: list[s
             if npc.private_note:
                 notes.append(npc.private_note)
             if npc.personal_secrets:
-                notes.append(f"[{npc.name} 自知] {npc.personal_secrets}")
+                notes.append(f"[{npc.id} 自知] {npc.personal_secrets}")
             lines.append(
-                f"幕后注（仅你可读，绝不写进正文，也不得让任何角色知道）：[{npc.name}] {'；'.join(notes)}"
+                f"幕后注（仅你可读，绝不写进正文，也不得让任何角色知道）：[{npc.id}] {'；'.join(notes)}"
             )
     return lines
 
 
 def active_lore_block(ledger: Ledger) -> list[str]:
-    """World book entries triggered for this turn (save.active_lore_ids).
+    """World book entries for this turn (常驻 + save.active_lore_ids).
 
-    The engine maintains the active list (keyword hits on player input at
-    pre-solve; rebuild from adopted prose at commit); this block only renders
-    the full body of each triggered entry into the work order.
+    常驻条目（always_on）每轮必注入、不占触发名额、不吃 5 条上限；
+    触发条目（关键词命中玩家输入/已采纳正文）走 save.active_lore_ids。
     """
-    if not ledger.save.active_lore_ids:
-        return []
-    by_id = {entry.id: entry for entry in ledger.world.lorebook}
     lines = ["世界书（本场可能相关的背景设定，按此设定写）："]
+    by_id = {entry.id: entry for entry in ledger.world.lorebook}
+    seen: set[str] = set()
+    count = 0
+    for entry in ledger.world.lorebook:
+        if entry.always_on and entry.id not in seen:
+            seen.add(entry.id)
+            count += 1
+            lines.append(f"- 【常驻】{entry.body}")
     for entry_id in ledger.save.active_lore_ids:
         entry = by_id.get(entry_id)
-        if entry:
-            lines.append(f"- [{entry.id}] {entry.body}")
+        if entry and entry.id not in seen:
+            seen.add(entry_id)
+            count += 1
+            lines.append(f"- {entry.body}")
+    if not count:
+        return []
     return lines
 
 
 def goals_block(ledger: Ledger) -> list[str]:
     """剧情目标（M14）：玩家在导演窗口设立的方向（玩家目标与 NPC 目标），
-    编剧写作时必须自然地向其引导。置于预设段之后（不可裁块）。"""
+    编剧写作时必须自然地向其引导。置于尾部近因区（2026-09-10，贴近动笔位置）。"""
     goals = [g for g in ledger.save.goals if g.status == "active"]
     if not goals:
         return []
@@ -233,9 +241,9 @@ def goals_block(ledger: Ledger) -> list[str]:
     for g in goals:
         tag = "大目标/主线" if g.kind == "big" else "小目标/支线"
         owner = "玩家" if g.subject in {"", "player"} else (
-            ledger.world.npcs[g.subject].name if g.subject in ledger.world.npcs else g.subject
+            g.subject
         )
-        npc_tag = f"（关联：{ledger.world.npcs[g.npc_id].name}）" if g.npc_id and g.npc_id in ledger.world.npcs else ""
+        npc_tag = f"（关联：{g.npc_id}）" if g.npc_id and g.npc_id in ledger.world.npcs else ""
         lines.append(f"- [{tag}·{owner}] {g.text}{npc_tag}")
     lines.append(
         "引导纪律：把本回剧情**自然地**朝这些目标推进——NPC 提起线索、机会现前、冲突冒头；"
@@ -258,15 +266,11 @@ def writer_identity() -> list[str]:
 
 
 def writer_golden_rules() -> list[str]:
-    """不可违背的禁忌，置于高注意力区（prompt 前部）。"""
+    """不可违背的禁忌，置于高注意力区（prompt 前部）。2026-09-10 用户改写定稿。"""
     return [
         "金科玉律（绝对不可违背）：",
         "角色不是你（知情总纲）：事件日志、幕后注、世界书都是你案头的编剧资料，角色本人并不知道。"
-        "每个角色开口前，核对台词是否在他自己的已知范围内——他亲历的事（日志行标注的在场者）、"
-        "他来历该知道的事（人物卡）、剧情里有人当场告诉过他的事。"
-        "在场 NPC 以工作单「已知集」清单为准：清单里没有的事一律不知道——包括其他区域的旧事，"
-        "哪怕主角就是眼前这位玩家；清单外的公开旧事只能以「听说的」口吻或不提"
-        "（轰动大事可作风闻，鸡毛小事传不出远门）；"
+        "每个角色开口前，核对台词是否在他的已知信息内。在场 NPC 掌握的信息以工作单「已知集」清单为准。"
         "幕后注与私密事件的真相绝不能从不该知道的人嘴里说出（知情者当场坦白除外，那是新戏）；"
         "无人物卡的即兴角色只知道眼前可见的东西。",
         "位置是快照不是事实：NPC 的最后位置/在场名单是最近一次记录的快照，可能已过期。"
@@ -276,9 +280,9 @@ def writer_golden_rules() -> list[str]:
         "前情已在世界里发生（事件日志是它的记录）：玩家已经历过的事不需要你复述或回顾，"
         "直接接续当下的戏，只处理本回合的输入；不要再交代一遍已经写过的剧情。",
         "深抉择纪律：标（配 Actor）的 NPC 撞上深抉择（内心判断 / 涉密反应 / 是否信任）时，"
-        "你**不得替他决定**，必须在输出里填 actor_questions（npc_id / question / context），引擎会派他的 Actor 决定后回来再成文；"
-        "标（导演代笔）的 NPC 或普通对话由你直接写出即可。context 只写该 NPC 本人会知道的情境，"
-        "禁止写只有你知道的动机、私密或幕后注。",
+        "你不得替他决定，必须在输出里填 actor_questions（npc_id / question / context），"
+        "引擎会派他的 Actor 决定后回来再成文；标（导演代笔）的 NPC 或普通对话由你直接写出即可。"
+        "context 只写该 NPC 本人会知道的情境，禁止写只有你知道的动机、私密或幕后注。",
         "不要提到 AIWorld、系统、编剧、玩家输入等元信息，不要打破第四面墙——只写玩家在故事里能感知到的内容。",
     ]
 
@@ -316,7 +320,6 @@ def build_actor_work_order(
     ledger: Ledger,
     npc_id: str,
     scene_id: str,
-    memory_limit: int = 5,
 ) -> str:
     """Physically isolated work order for one NPC's deep choice.
 
@@ -329,15 +332,15 @@ def build_actor_work_order(
     if npc is None:
         raise ValueError(f"unknown npc: {npc_id}")
     parts = [
-        *actor_contract(npc.name),
+        *actor_contract(npc.id),
         *world_summary_block(world),
         "你的档案（人物卡）：",
-        f"姓名：{npc.name}；外貌：{npc.appearance or '未设定'}；人格：{npc.persona or '未设定'}",
+        f"姓名：{npc.id}；外貌：{npc.appearance or '未设定'}；人格：{npc.persona or '未设定'}",
     ]
     if npc.personal_secrets:
         parts.append(f"你心里的事（只有你自己知道，绝不对外人说）：{npc.personal_secrets}")
     parts += scene_snapshot_block(world, ledger, scene_id)
-    mem = ledger.experiences(npc_id, npc_id)[-memory_limit:]
+    mem = ledger.experiences(npc_id, npc_id)  # 条数上限由 world.meta.memory_limit 统一裁
     if mem:
         parts += ["你记得的事：", *mem]
     return "\n".join(parts)
@@ -357,14 +360,14 @@ def build_director_chat_system(
     scene_id = scene_id or ledger.save.player_scene or "main_street"
     present_ids = ledger.present_at(scene_id)
     scene = next((s for s in world.scenes if s.id == scene_id), None)
-    names = [world.npcs[pid].name if pid in world.npcs else pid for pid in present_ids]
+    names = [pid for pid in present_ids]
 
     parts: list[str] = [
         "你是 AIWorld 的导演，玩家正在戏外（OOC）和你讨论。你不是正文执笔者，一切建议都要玩家采纳后才生效。",
         "世界概要（不可违背）：",
         *world.meta.summary,
         "当前时间：" + (ledger.save.clock or "-"),
-        "当前场景：" + (scene.name if scene else scene_id),
+        "当前场景：" + (scene.id if scene else scene_id),
         "在场：" + ("、".join(names) or "暂无"),
     ]
     parts += event_log_block(world, ledger, include_ids=True)
@@ -388,7 +391,7 @@ def build_director_chat_system(
         '{"reply": "你的回复文本（直接回答玩家，必填）", "action": null | {"type": "override|inject_memory|access_rejudge|set_goal", "payload": {"字段": "值"}}}',
         "reply：给玩家的戏外回复。",
         "action：只有当玩家明确要求执行幕后操作时才填；否则为 null。",
-        "注意：payload 里的 npc_id / subject / goal_id 必须使用角色 id（如 npc_zhuming，见角色资料行的 id 标注），不要用中文名字。",
+        "注意：payload 里的 npc_id / subject 必须使用角色中文名（与在场名单/角色资料一致），不要自造英文 id。",
         "禁止输出其他字段。",
     ]
     return "\n".join(parts)
@@ -404,8 +407,8 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
     scene_id = scene_id or ledger.save.player_scene or "main_street"
     scene = next((s for s in world.scenes if s.id == scene_id), None)
     present_ids = ledger.present_at(scene_id)
-    names = [world.npcs[pid].name if pid in world.npcs else pid for pid in present_ids]
-    scene_list = "、".join(f"{s.id}（{s.name}）" for s in world.scenes)
+    names = [pid for pid in present_ids]
+    scene_list = "、".join(s.id for s in world.scenes)
     goals = [g for g in ledger.save.goals if g.status == "active"]
     goal_lines = "；".join(f"[{g.id}]（{'主线' if g.kind == 'big' else '支线'}）{g.text}" for g in goals) or "（无）"
     return "\n".join(
@@ -413,8 +416,9 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
             "你是 AIWorld 的世界审计：玩家采纳一条正文后，你从正文里结算世界的副作用，并判定剧情目标与生命周期。",
             "只返回 JSON，格式如下：",
             '{"location": "场景id", "scene_name": "地点名（新地点给中文名）", "register_scene": false,'
-            ' "participants": ["player", "npc_zhuming"], "private": false, "delta_minutes": 0,'
-            ' "npc_moves": [{"npc_id": "npc_zhuming", "location": "zhuming_home", "scene_name": "朱明家"}],'
+            ' "participants": ["player", "朱明"], "private": false, "delta_minutes": 0,'
+            ' "npc_moves": [{"npc_id": "朱明", "location": "朱明家"}],'
+            ' "clock_to": "",'
             ' "completed_goal_ids": ["达成目标id"], "lifecycle": [{"npc_id": "npc_zhuming", "status": "retired"}]}',
             "判定规则：",
             "- location：正文里玩家此刻所在之处。玩家在正文中明确移动（离开/去别处/回家）时更新，否则保持当前场景。",
@@ -428,10 +432,10 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
             "正文里在**新场景出现并互动**的角色——无论同行、被玩家找到、还是主动搭话——都计入 participants"
             "（他们亲身参与了这段史实）。",
             "- npc_moves：正文明确写出某个 NPC **离开去了别处**（回家/回店/告辞离去）时输出，"
-            "每项 {\"npc_id\": \"...\", \"location\": \"英文id\", \"scene_name\": \"中文名（新地点给）\"}。"
+            "每项 {\"npc_id\": \"...（角色中文名）\", \"location\": \"去向场景名（新地点给中文名）\"}。"
             "没写去向就不要输出（\"走了\"没说去哪 → 不猜，宁可不记不错记）；"
             "玩家自己的移动不用输出（location 已覆盖）。多数回合为空数组。",
-            "- 场景若已在场景表里，用其 id；正文进入未注册的新地点时，location 给一个英文 id，scene_name 给中文名。"
+            "- 场景若已在场景表里，用其中文名（见已注册场景清单）；正文进入未注册的新地点时，location 给一个中文名，scene_name 同名给出。"
             "register_scene：玩家声明要去/回访/会复用该地点时为 true（注册为可导航场景）；"
             "剧情顺笔的一次性舞台（如今晚的草地、密室）为 false（不进导航集，显示名仍可用）。",
             "- private：按正文内容判定这场戏是否只限在场者知道——判据是\"外人会不会知道这事发生过\"，不单看地点。"
@@ -443,13 +447,16 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
             "干活/训练一个下午 → 120~240；睡觉 → 480。"
             "给 0 的情况：只是说到时间（\"明天见\"\"你昨天答应的\"\"三点在那碰面\"——被说的不是被经历的），"
             "以及没有新的经历性事件（原地续聊）。",
+            "- clock_to：正文**明确说了故事时间走到了几点**（\"到了晚上八点\"\"已经是第二天早上七点\"）时，"
+            "输出该绝对时间，格式 YYYY-MM-DDTHH:MM:SS（日期默认跟当前时间走，正文说了跨天/某天才改）；"
+            "给了 clock_to 就不用再估 delta_minutes。正文没明确说到点 → 留空字符串。",
             "- completed_goal_ids：正文已达到目标文本所述（小目标=当事达成；大目标=关键真相/冲突已解决）。"
             "只推进未达成的不填——推进由编剧纪律负责，审计只判终点。"
             "注意：目标归属者为 NPC 时，该目标 NPC 提及/推进目标只是推进（如王蓉提起接货），"
             "只有当正文里目标所述之事真正发生（如玩家答应了）才判完成——推进不算完成。",
             "- lifecycle：按正文语义识别角色退场（死亡/永久离开）→ retired。",
             "当前时间：" + (ledger.save.clock or "-"),
-            "当前场景：" + (scene.name if scene else scene_id),
+            "当前场景：" + (scene.id if scene else scene_id),
             "在场：" + ("、".join(names) or "暂无"),
             "已注册场景（格式 = id（名），location 必须从这里选 id，新地点才自造英文 id）：" + (scene_list or "（无）"),
             "活动目标：" + goal_lines,
@@ -482,16 +489,16 @@ def build_work_order(
         parts: list[str] = []
         # A 身份与任务
         parts += writer_identity()
-        # B 世界硬规则（常驻，永不裁剪）
-        parts += world_summary_block(world)
-        # C 金科玉律（禁忌前置，高注意力区）
+        # C 金科玉律（禁忌前置，高注意力区——紧跟身份）
         parts += writer_golden_rules()
         # J 编剧准则（创作与写作要求，紧跟金科玉律）
         if preset.writer_guidelines:
             parts.append("编剧准则（创作与写作要求，必须遵循）：")
             parts.append(preset.writer_guidelines)
-        # G 剧情目标（玩家设立的方向，紧跟预设段：写作须自然向目标引导）
-        parts += goals_block(ledger)
+        # B 世界硬规则（常驻，永不裁剪；2026-09-10 挪入资料区前段）
+        parts += world_summary_block(world)
+        # I 可选素材（世界书命中：本场相关背景，紧跟世界总述）
+        parts += active_lore_block(ledger)
         # D 玩家资料 + 在场 NPC（含 id 标注，编剧须用规范 id）
         parts += character_block(world, ledger, present_ids, include_ids=True)
         # H 幕后注（机密，与金科玉律呼应双保险）
@@ -500,8 +507,8 @@ def build_work_order(
         parts += scene_snapshot_block(world, ledger, scene_id)
         # G 在场 NPC 已知集（机械知识边界，取代旧近况块）
         parts += known_set_block(world, ledger, present_ids, scene_id)
-        # I 可选素材（世界书命中，未来 token 超支时最先可裁）
-        parts += active_lore_block(ledger)
+        # G 剧情目标（写作引导，近因区——贴近动笔位置；2026-09-10 与世界书换位）
+        parts += goals_block(ledger)
         # K 输出格式（指令，近因区）
         parts += writer_output_format()
         # E 事件日志（更早摘要在前 → 最近原文在后，收尾紧贴玩家输入以便续写）

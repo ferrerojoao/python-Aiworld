@@ -6,7 +6,7 @@ import re
 from app.config import Settings
 from app.core.store import new_id
 from app.rules.lorebook import hit_entry_ids, merge_active_lore
-from app.rules.movement import resolve_destination, travel_minutes
+from app.rules.movement import resolve_destination
 from app.rules.route import classify_input
 from app.rules.scenes import scene_description
 from app.runtime.session import GameSession
@@ -118,7 +118,7 @@ class TurnRunner:
                     temperature=0.8,
                 )
                 decisions.append(
-                    f"- {npc.name}（{npc.id}）：{decision.decision}；行为：{decision.action_hint}；语气：{decision.tone}"
+                    f"- {npc.id}：{decision.decision}；行为：{decision.action_hint}；语气：{decision.tone}"
                 )
             await self._progress("writer", "按NPC决策成文中")
             out = await run_writer(
@@ -149,7 +149,7 @@ class TurnRunner:
         notes = []
         for q in out.actor_questions:
             npc = self.session.world.npcs.get(q.npc_id)
-            name = npc.name if npc else q.npc_id
+            name = npc.id if npc else q.npc_id
             if self._actor_ticket(q.npc_id):
                 desc = f"二稿仍提出{name}的未决深抉择（{q.question[:40]}），本回合不再追派 Actor"
             else:
@@ -183,8 +183,8 @@ class TurnRunner:
         if route == "move":
             dest = resolve_destination(player_input, self.session.world, self.session.ledger)
             if dest:
-                delta = travel_minutes(scene, dest, self.session.world)
-                rule_bundle.update({"destination": dest, "delta_minutes": delta, "scene": dest})
+                # 移动耗时归审计估时长（2026-09-10：邻接图退役，规则不再算路程）
+                rule_bundle.update({"destination": dest, "scene": dest})
                 scene = dest
         elif route == "jump":
             if "第二天" in player_input or "明天" in player_input:

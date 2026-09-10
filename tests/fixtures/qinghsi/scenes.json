@@ -1,42 +1,43 @@
 [
   {
-    "id": "school_gate",
-    "name": "校门口",
-    "aliases": ["学校门口", "校门口"],
+    "id": "校门口",
+    "aliases": [
+      "学校门口"
+    ],
     "perceivable": "铁门半掩，槐树荫下停着几辆自行车，午后的蝉鸣很吵。",
-    "open_hours": "全天",
-    "adjacent": ["main_street", "net_bar", "alley_old_building"]
+    "region": ""
   },
   {
-    "id": "main_street",
-    "name": "主街",
-    "aliases": ["主街", "镇上主街"],
+    "id": "主街",
+    "aliases": [
+      "镇上主街"
+    ],
     "perceivable": "青石板路两侧是铺面，几家店门口晾着鱼干。",
-    "open_hours": "全天",
-    "adjacent": ["school_gate", "net_bar", "fish_market"]
+    "region": ""
   },
   {
-    "id": "net_bar",
-    "name": "网吧",
-    "aliases": ["网吧", "街角网吧"],
+    "id": "网吧",
+    "aliases": [
+      "街角网吧"
+    ],
     "perceivable": "屋里灯光偏暗，屏幕光映在一排排人脸上，键盘声很密。",
-    "open_hours": "全天",
-    "adjacent": ["main_street", "school_gate"]
+    "region": ""
   },
   {
-    "id": "fish_market",
-    "name": "鱼市",
-    "aliases": ["鱼市", "码头鱼市"],
+    "id": "鱼市",
+    "aliases": [
+      "码头鱼市"
+    ],
     "perceivable": "早市已散，水泥台面上残留着水渍和零散的鱼鳞。",
-    "open_hours": "清晨",
-    "adjacent": ["main_street"]
+    "region": ""
   },
   {
-    "id": "alley_old_building",
-    "name": "老巷旧楼",
-    "aliases": ["旧楼", "老巷"],
+    "id": "老巷旧楼",
+    "aliases": [
+      "旧楼",
+      "老巷"
+    ],
     "perceivable": "墙皮剥落，巷子深处有一扇常年关着的木门。",
-    "open_hours": "全天",
-    "adjacent": ["school_gate"]
+    "region": ""
   }
 ]

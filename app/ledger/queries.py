@@ -194,22 +194,17 @@ class Ledger:
     def cache_stats_snapshot(self) -> dict[str, int]:
         return dict(self.cache_stats)
 
-    def register_scene(self, scene_id: str, name: str) -> bool:
+    def register_scene(self, scene_id: str) -> bool:
         """Register a reusable scene node in the save's world instance
-        (M17 转正，仅玩家声明的可复用地点；一次性布景不注册)."""
-        if any(s.id == scene_id for s in self.world.scenes):
+        (M17 转正，仅玩家声明的可复用地点；一次性布景不注册).
+
+        场景键 = 中文名：id 即显示名，无需独立 name。"""
+        if not scene_id or any(s.id == scene_id for s in self.world.scenes):
             return False
         from app.core.store import write_json_atomic
         from app.world.models import Scene
 
-        scene = Scene(
-            id=scene_id,
-            name=name or scene_id,
-            aliases=[name or scene_id],
-            perceivable="这里看起来是个还没仔细描述的地方。",
-            open_hours="全天",
-            adjacent=[self.save.player_scene],
-        )
+        scene = Scene(id=scene_id, aliases=[scene_id], perceivable="这里看起来是个还没仔细描述的地方。")
         self.world.scenes.append(scene)
         scenes_path = self.save_dir / "world" / "scenes.json"
         write_json_atomic(scenes_path, [s.model_dump() for s in self.world.scenes])
@@ -239,7 +234,7 @@ class Ledger:
         whose known_by lists someone who is not a participant (改判扩名单 /
         幕后得知) still reaches their memory slice.
         """
-        limit = self.world.meta.default_durations.get("memory_limit", 50)
+        limit = self.world.meta.memory_limit
         lines: list[str] = []
         seen: set[str] = set()
         candidates = (
@@ -262,20 +257,19 @@ class Ledger:
                 continue
             summary = ev.get("summary") or (ev.get("body") or "")[:40]
             lines.append(f"{ev.get('at', '')} {summary}")
-        return lines[-limit:] if lines else []
+        # 防御 [-0:]：Python 里 lines[-0:] == lines[0:]（取全部），与"上限 0 = 不给记忆"
+        # 的直觉相反；负数同理（会砍掉尾部若干条）。≤0 一律判定为不注入记忆。
+        return lines[-limit:] if lines and limit > 0 else []
 
     def _scene_region(self, scene_id: str) -> str | None:
-        """Extract the `region:xxx` tag of a scene; untagged = 全域公共区（None）."""
+        """读取场景的 region（消息域）；空 = 全域公共区（None）."""
         scene = next((s for s in self.world.scenes if s.id == scene_id), None)
         if scene is None:
             return None
-        for tag in scene.tags:
-            if tag.startswith("region:"):
-                return tag.split(":", 1)[1].strip()
-        return None
+        return scene.region.strip() or None
 
     def _event_region(self, event: dict[str, Any]) -> str | None:
-        """事件发生地归属：注册场景取其 `region:xxx`（无标签 = 全域公共区）；
+        """事件发生地归属：注册场景取其 region（消息域，空 = 全域公共区）；
         location 指向场景表查不到的一次性布景 → 哨兵 `adhoc`（不进任何听域的
         风闻通道——宁可不闻，不错闻；在场者走亲历通道不受影响）。"""
         loc = event.get("location") or ""
@@ -284,16 +278,13 @@ class Ledger:
         scene = next((s for s in self.world.scenes if s.id == loc), None)
         if scene is None:
             return ADHOC_REGION
-        for tag in scene.tags:
-            if tag.startswith("region:"):
-                return tag.split(":", 1)[1].strip()
-        return None
+        return scene.region.strip() or None
 
     def _npc_hearing_regions(self, npc_id: str) -> set[str]:
         """NPC 的听域（公开事件的地域耳闻范围）。
 
-        优先取人物卡 `region:xxx` 标签（来属地，作者/转正时声明——出差外地人
-        卡上打原属地，就不该耳闻本地旧事）；卡上无标签 → 按亲历事件的发生地
+        优先取人物卡的 region 消息域（来属地/听域，作者/转正时声明——出差外地人
+        卡上打原属地，就不该耳闻本地旧事）；卡上为空 → 按亲历事件的发生地
         region 推导（本地老 NPC 天然正确；跟玩家旅行过的 NPC 听域随之扩大）；
         推导为空（刚出场的无历史 NPC）→ 听域为空，保守地什么区域的公开旧事
         都不闻（宁可不闻，不错闻）。哨兵 `adhoc` 永不进听域——一次性布景的
@@ -302,11 +293,9 @@ class Ledger:
         npc = self.world.npcs.get(npc_id)
         card_regions: set[str] = set()
         if npc is not None:
-            for tag in getattr(npc, "tags", None) or []:
-                if tag.startswith("region:"):
-                    val = tag.split(":", 1)[1].strip()
-                    if val != ADHOC_REGION:
-                        card_regions.add(val)
+            card_regions = {
+                r.strip() for r in (getattr(npc, "region", None) or []) if r.strip() and r.strip() != ADHOC_REGION
+            }
         if card_regions:
             return card_regions
         derived: set[str] = set()
@@ -320,11 +309,15 @@ class Ledger:
         """Mechanical knowledge boundary for one NPC (装配层单一事实源).
 
         已知集 = 亲历（全量 by_participant，不随滑窗） ∪ known_by 含己（含改判）
-        ∪ 听域内公开事件。听域 = NPC 卡 `region:xxx` 标签，缺省按亲历事件推导
-        （`_npc_hearing_regions`）。场景/事件无 region 标签 = 全域公共区（单区域
-        内容包行为与旧口径兼容）。按事件时间排序，取最近 limit 条。
+        ∪ 听域内公开事件。听域取自人物卡 `region` 字段（来属地/听域），缺省按
+        亲历事件发生地推导（`_npc_hearing_regions`）。场景 region 为空 =
+        全域公共区（单区域内容包行为与旧口径兼容）：**无地域归属的公开事件人人
+        可闻，与听域无关**；听域空集只掐掉"带地域归属的公开事件"这一路。
+        按事件时间排序，取最近 limit 条。
+
+        注：`scene_id` 为兼容装配层调用签名保留——听域口径落地后，筛选已改为
+        按 NPC 听域而非"当前场景 region"，该参数不再参与计算。
         """
-        current_region = self._scene_region(scene_id)
         hearing = self._npc_hearing_regions(npc_id)
         seen: set[str] = set()
         picked: list[dict[str, Any]] = []

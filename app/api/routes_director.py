@@ -92,14 +92,9 @@ async def _director_chat(request, session, message: str):
 
 
 def _resolve_npc_ref(session, ref: str) -> str | None:
-    """Resolve 'npc_zhuming' or '朱明' to the NPC's id (model-friendly)."""
+    """Resolve an NPC reference to its id (= 中文名，如"朱明"）。"""
     ref = (ref or "").strip()
-    if ref in session.world.npcs:
-        return ref
-    for pid, card in session.world.npcs.items():
-        if card.name == ref:
-            return pid
-    return None
+    return ref if ref in session.world.npcs else None
 
 
 def _execute_action(session, action_type: str, payload: dict) -> dict:
@@ -136,7 +131,7 @@ def _execute_action(session, action_type: str, payload: dict) -> dict:
         }
         ledger.append(event)
         ledger.persist_save()
-        return {"ok": True, "action": action_type, "event": event, "npc": npc.name if npc else npc_id}
+        return {"ok": True, "action": action_type, "event": event, "npc": npc_id}
 
     if action_type == "set_goal":
         # 剧情目标（M14）：设立 / 废弃（玩家确认后落账）。
@@ -180,8 +175,8 @@ def _execute_action(session, action_type: str, payload: dict) -> dict:
             raise HTTPException(status_code=400, detail="subject and location are required")
         npc = session.world.npcs.get(subject)
         scene = next((s for s in session.world.scenes if s.id == location), None)
-        subject_name = npc.name if npc else subject
-        location_name = scene.name if scene else location
+        subject_name = subject
+        location_name = location
         event = {
             "id": ledger.allocate_event_id(),
             "kind": "narrative",

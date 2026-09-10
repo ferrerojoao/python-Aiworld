@@ -9,7 +9,7 @@ class WorldInfo(BaseModel):
     summary: list[str] = Field(default_factory=list)
     opening: str = ""  # opening prose: becomes the first ledger event of a save
     start_time: str = ""  # 世界钟起点（ISO 时间）；空=回退引擎默认 2026-07-14T08:00:00
-    default_durations: dict[str, int] = Field(default_factory=dict)
+    memory_limit: int = Field(default=50, ge=0)  # experiences 回溯条数上限（0=不给记忆）
 
 
 class LoreEntry(BaseModel):
@@ -22,27 +22,28 @@ class LoreEntry(BaseModel):
     id: str
     keywords: list[str] = Field(default_factory=list)
     body: str = ""
+    always_on: bool = Field(default=False)  # 常驻开关：勾选后每轮必注入，不占关键词触发名额
 
 
 class Scene(BaseModel):
-    id: str
-    name: str
-    aliases: list[str] = Field(default_factory=list)
+    """场景键 = 中文名（id 即显示名，审计/事件/工作单直接用中文，无独立英文名）。"""
+
+    id: str  # 场景中文名，如"鱼市"（同时是事件 location 与显示名）
+    aliases: list[str] = Field(default_factory=list)  # 变体名（"码头鱼市"），给移动解析与 id 纠偏
     perceivable: str = ""
-    open_hours: str = "全天"
-    adjacent: list[str] = Field(default_factory=list)
-    tags: list[str] = Field(default_factory=list)  # 自由标签；`region:xxx` = 地理归属（跨区域知识边界用，无标签=全域公共区）
+    region: str = ""  # 消息域：该场景事件归属的地域（跨区域知识边界用）；空 = 全域公共区
 
 
 class NpcCard(BaseModel):
-    id: str
-    name: str
+    """人物卡键 = 中文名（id 即显示名，participants/事件/工作单直接用中文）。"""
+
+    id: str  # NPC 中文名，如"朱明"（同时是 participants 成员与显示名）
     appearance: str = ""
     persona: str = ""
     private_note: str | None = None  # 作者底牌：无人（含 NPC 自己）知道的真相，仅编剧可读
     personal_secrets: str | None = None  # 该 NPC 自知的隐秘（心结/往事/把柄），进他自己的 Actor 切片
     has_actor: bool = False
-    tags: list[str] = Field(default_factory=list)  # `region:xxx` = 来属地/听域（已知集公开事件筛选）；缺省=按亲历事件推导
+    region: list[str] = Field(default_factory=list)  # 消息域（听域/来属地，可多个）；空 = 按亲历事件推导
 
 
 class Axis(BaseModel):

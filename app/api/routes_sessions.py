@@ -186,35 +186,29 @@ async def get_state(request: Request, sid: str):
     session = _get_session(request, sid)
     player_scene = session.ledger.save.player_scene
     scene = next((s for s in session.world.scenes if s.id == player_scene), None)
-    adjacent = []
-    if scene is not None:
-        for adj_id in scene.adjacent:
-            adj_scene = next((s for s in session.world.scenes if s.id == adj_id), None)
-            adjacent.append({"id": adj_id, "name": adj_scene.name if adj_scene else adj_id})
+    # 最近去过的 3 个场景（从玩家事件流取，替代旧邻接导航）
+    recent: list[str] = []
+    for ev in reversed(session.ledger.narratives):
+        loc = ev.get("location")
+        if loc and loc not in recent:
+            recent.append(loc)
+        if len(recent) >= 3:
+            break
     present_ids = session.ledger.present_at(player_scene)
-    present_names = [
-        session.world.npcs.get(pid).name if pid in session.world.npcs else pid
-        for pid in present_ids
-    ]
     goals = []
     for g in session.ledger.save.goals:
         if g.status != "active":
             continue
         item = g.model_dump()
-        item["subject_name"] = (
-            "玩家"
-            if g.subject in {"", "player"}
-            else (session.world.npcs[g.subject].name if g.subject in session.world.npcs else g.subject)
-        )
+        item["subject_name"] = "玩家" if g.subject in {"", "player"} else g.subject
         goals.append(item)
     return {
         "clock": session.ledger.save.clock,
         "scene": session.scene_description(),
         "scene_id": player_scene,
-        "scene_name": scene.name if scene else (session.ledger.save.scene_name or player_scene),
-        "adjacent": adjacent,
+        "recent_scenes": recent,
         "present": present_ids,
-        "present_names": present_names,
+        "present_names": present_ids,
         "goals": goals,
         "preset": request.app.state.global_preset.model_dump(),
         "pending": [
@@ -504,8 +498,7 @@ async def reset_session(request: Request, sid: str):
     save = session.ledger.save
     save.clock = world_start_time(session.world)
     save.meta.next_event_id = 1
-    save.player_scene = "main_street"
-    save.scene_name = ""
+    save.player_scene = session.world.scenes[0].id if session.world.scenes else ""
     save.narrative_preset = session.world.presets
     save.entities = {}
     save.axes = {}

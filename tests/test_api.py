@@ -140,7 +140,7 @@ def test_director_confirm_override(tmp_path):
         {
             "朱明在网吧": {
                 "reply": "好的，我将记录朱明此刻在网吧。",
-                "action": {"type": "override", "payload": {"subject": "npc_zhuming", "location": "net_bar"}},
+                "action": {"type": "override", "payload": {"subject": "朱明", "location": "网吧"}},
             }
         }
     )
@@ -167,7 +167,7 @@ def test_director_confirm_override(tmp_path):
         assert confirm.status_code == 200
         event = confirm.json()["event"]
         assert event["source"] == "director"
-        assert event["location"] == "net_bar"
+        assert event["location"] == "网吧"
 
 
 def test_player_profile_update(tmp_path):
@@ -363,7 +363,7 @@ def test_director_chat_pending_action_confirm(tmp_path):
         {
             "设立一个主线目标": {
                 "reply": "好的，我来设立这个目标。",
-                "action": {"type": "set_goal", "payload": {"text": "查明朱明打架的真相", "kind": "big", "npc_id": "npc_zhuming"}},
+                "action": {"type": "set_goal", "payload": {"text": "查明朱明打架的真相", "kind": "big", "npc_id": "朱明"}},
             }
         }
     )
@@ -392,7 +392,7 @@ def test_director_chat_pending_action_confirm(tmp_path):
         assert goal["status"] == "active"
         assert goal["kind"] == "big"
         assert goal["subject"] == "player"
-        assert goal["npc_id"] == "npc_zhuming"
+        assert goal["npc_id"] == "朱明"
 
         state = client.get(f"/api/sessions/{sid}/state").json()
         assert [g["text"] for g in state["goals"]] == ["查明朱明打架的真相"]
@@ -408,7 +408,7 @@ def test_director_set_goal_npc_subject(tmp_path):
                 "reply": "好，王蓉的目标记下了。",
                 "action": {
                     "type": "set_goal",
-                    "payload": {"text": "让主角答应下周跟她一起去接货", "kind": "small", "subject": "npc_wangrong", "npc_id": "npc_wangrong"},
+                    "payload": {"text": "让主角答应下周跟她一起去接货", "kind": "small", "subject": "王蓉", "npc_id": "王蓉"},
                 },
             }
         }
@@ -427,7 +427,7 @@ def test_director_set_goal_npc_subject(tmp_path):
         )
         assert confirm.status_code == 200
         goal = confirm.json()["goal"]
-        assert goal["subject"] == "npc_wangrong"
+        assert goal["subject"] == "王蓉"
 
         state = client.get(f"/api/sessions/{sid}/state").json()
         assert state["goals"][0]["subject_name"] == "王蓉"
@@ -454,14 +454,14 @@ def test_director_confirm_set_goal_and_inject_memory(tmp_path):
                 "reply": "好的，记下这个支线目标。",
                 "action": {
                     "type": "set_goal",
-                    "payload": {"text": "帮王蓉修好渔船", "kind": "small", "npc_id": "npc_wangrong"},
+                    "payload": {"text": "帮王蓉修好渔船", "kind": "small", "npc_id": "王蓉"},
                 },
             },
             "给朱明注入一段记忆": {
                 "reply": "好的，我会私下记下这条。",
                 "action": {
                     "type": "inject_memory",
-                    "payload": {"npc_id": "npc_zhuming", "memory": "朱明心里记着：那天刘星在网吧替他挡了一下。"},
+                    "payload": {"npc_id": "朱明", "memory": "朱明心里记着：那天刘星在网吧替他挡了一下。"},
                 },
             },
         }
@@ -505,12 +505,12 @@ def test_director_confirm_set_goal_and_inject_memory(tmp_path):
         )
         assert confirm2.status_code == 200
         ev = confirm2.json()["event"]
-        assert ev["known_by"] == ["npc_zhuming"]
+        assert ev["known_by"] == ["朱明"]
         assert ev["location"] is None
 
         events = client.get(f"/api/sessions/{sid}/ledger/events").json()["events"]
         injected = next(e for e in events if e["id"] == ev["id"])
-        assert injected["known_by"] == ["npc_zhuming"]
+        assert injected["known_by"] == ["朱明"]
 
 
 def test_director_confirm_abandon_goal(tmp_path):

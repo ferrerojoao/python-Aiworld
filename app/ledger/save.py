@@ -60,7 +60,6 @@ class SaveData(BaseModel):
     meta: SaveMeta
     clock: str = ""
     player_scene: str = "main_street"
-    scene_name: str = ""  # 当前场景显示名：注册场景取场景表，一次性场景取审计中文名（回退 player_scene）
     player: PlayerProfile = Field(default_factory=PlayerProfile)
     narrative_preset: NarrativePreset = Field(default_factory=NarrativePreset)
     entities: dict[str, EntityRuntime] = Field(default_factory=dict)

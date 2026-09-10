@@ -137,6 +137,13 @@ class Transaction:
             # 保险丝：审计估时长抽风（如把聊天提时间当流逝）时截断，防静默漂移；
             # 规则 delta（move/jump 玩家意图）不受限。单回合审计上限 = 16 小时。
             delta += min(audit_out.delta_minutes or 0, 960)
+        # 正文明确说了故事时间走到几点 → 绝对对钟优先于估时长（时长已被对钟涵盖）。
+        if audit_out is not None and audit_out.clock_to:
+            try:
+                clock = dt.datetime.fromisoformat(audit_out.clock_to).replace(microsecond=0).isoformat()
+                delta = 0
+            except ValueError:
+                pass  # 格式坏 → 退回估时长，不当致命错误
         if delta:
             try:
                 parsed = dt.datetime.fromisoformat(clock)
@@ -156,16 +163,16 @@ class Transaction:
         known_by = participants if private else None
 
         def _resolve_scene(loc: str, *aliases: str) -> str:
-            """审计 id 纠偏：id 命中注册场景直接用；否则按中文名/别名反查
-            （审计拿不到 id 时会自造拼音 id，如鱼市→yushi；scene_name 通常
-            恰是注册场景的中文名，可机械救回）。都未命中 → 原样（一次性布景）。"""
+            """场景键纠偏：键命中注册场景直接用；否则按中文名/别名反查
+            （审计偶尔自造变体名；scene_name 通常恰是注册场景名，可机械救回）。
+            都未命中 → 原样（一次性布景）。"""
             if loc and loc in {s.id for s in self.ledger.world.scenes}:
                 return loc
             for alias in aliases:
                 if not alias:
                     continue
                 for s in self.ledger.world.scenes:
-                    if alias == s.name or alias in s.aliases:
+                    if alias == s.id or alias in s.aliases:
                         return s.id
             return loc
 
@@ -194,17 +201,9 @@ class Transaction:
             if scene_alias:
                 narrative["location_name"] = scene_alias
             if audit_out and audit_out.register_scene and location:
-                self.ledger.register_scene(location, scene_alias or location)
+                self.ledger.register_scene(location)
         self.ledger.append(narrative, flush=False)
         self.ledger.save.player_scene = location
-        # 显示名：注册场景=场景表 name；一次性场景=审计中文名（回退英文 id，避免 UI 出现英文）。
-        registered = next((s for s in self.ledger.world.scenes if s.id == location), None)
-        if registered:
-            self.ledger.save.scene_name = registered.name
-        elif audit_out and audit_out.scene_name:
-            self.ledger.save.scene_name = audit_out.scene_name
-        else:
-            self.ledger.save.scene_name = location
 
         for event in candidate.side_effects.events:
             event = dict(event)
@@ -223,10 +222,6 @@ class Transaction:
             if not dest or npc_id == "player" or npc_id not in self.ledger.world.npcs:
                 continue
             dest = _resolve_scene(dest, mv.get("scene_name") or "")
-            npc_name = self.ledger.world.npcs[npc_id].name
-            dest_name = mv.get("scene_name") or next(
-                (s.name for s in self.ledger.world.scenes if s.id == dest), dest
-            )
             self.ledger.append(
                 {
                     "id": self.ledger.allocate_event_id(),
@@ -236,7 +231,7 @@ class Transaction:
                     "participants": [npc_id],
                     "known_by": sorted({npc_id, "player"}),
                     "body": "",
-                    "summary": f"{npc_name}前往{dest_name}",
+                    "summary": f"{npc_id}前往{dest}",
                     "source": "turn",
                 },
                 flush=False,

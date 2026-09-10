@@ -42,7 +42,7 @@ async def run_actor(
     private notes, other NPCs' secrets, goals, or the writer's motivation.
     """
     system = build_work_order(f"actor_{npc.id}", world, ledger, scene_id or "")
-    scene = normalize_context(context, npc.name)
+    scene = normalize_context(context, npc.id)
     messages = [
         {"role": "system", "content": system},
         {

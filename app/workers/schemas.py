@@ -94,3 +94,7 @@ class AuditOutput(BaseModel):
         default_factory=list,
         validation_alias=AliasChoices("npc_moves", "npc移动", "角色去向"),
     )
+    clock_to: str = Field(
+        default="",
+        validation_alias=AliasChoices("clock_to", "目标时间", "对钟", "绝对时间"),
+    )

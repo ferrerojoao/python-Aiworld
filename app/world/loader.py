@@ -64,14 +64,6 @@ def check_world(root: str | Path) -> list[str]:
     except Exception as exc:  # pragma: no cover - diagnostic helper
         return [f"world load failed: {exc}"]
 
-    scene_ids = {s.id for s in world.scenes}
-    for scene in world.scenes:
-        for adj in scene.adjacent:
-            if adj not in scene_ids:
-                problems.append(f"scene {scene.id}: unknown adjacent {adj}")
-    for npc_id in world.npcs:
-        if not npc_id.startswith("npc_"):
-            problems.append(f"npc id should start with 'npc_': {npc_id}")
     for entry in world.lorebook:
         if not any(kw.strip() for kw in entry.keywords):
             problems.append(
@@ -103,7 +95,7 @@ def save_world_assets(root: str | Path, data: dict) -> None:
         "summary": overview.get("summary", []),
         "opening": overview.get("opening", ""),
         "start_time": overview.get("start_time", ""),
-        "default_durations": overview.get("default_durations", {}),
+        "memory_limit": overview.get("memory_limit", 50),
     }
     write_json_atomic(root / "world.json", world_info)
     write_json_atomic(root / "lorebook.json", data.get("lorebook", []))

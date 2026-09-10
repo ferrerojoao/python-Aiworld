@@ -32,13 +32,13 @@ def test_actor_two_stage_deep_choice(session, settings):
     writer_first = {
         "prose": "朱明听完问题没接话。",
         "summary": "刘星追问打架的事。",
-        "location": "net_bar",
-        "participants": ["player", "npc_zhuming"],
+        "location": "网吧",
+        "participants": ["player", "朱明"],
         "private": False,
         "adopt_player_body": False,
         "actor_questions": [
             {
-                "npc_id": "npc_zhuming",
+                "npc_id": "朱明",
                 "question": "被追问打架的旧事，朱明是含糊带过还是翻脸？",
                 "context": "玩家问朱明昨天为什么打架，朱明想起父亲欠债的由头",
             }
@@ -48,8 +48,8 @@ def test_actor_two_stage_deep_choice(session, settings):
     writer_second = {
         "prose": "朱明把脸别过去，含糊带过，岔开话题。",
         "summary": "朱明含糊带过打架的事。",
-        "location": "net_bar",
-        "participants": ["player", "npc_zhuming"],
+        "location": "网吧",
+        "participants": ["player", "朱明"],
         "private": False,
         "adopt_player_body": False,
         "actor_questions": [],
@@ -79,7 +79,7 @@ def test_actor_two_stage_deep_choice(session, settings):
     assert has(call3, "正文：")
     # the second pass received the actor's decision text
     second_input = " ".join(m.get("content", "") for m in call2["messages"])
-    assert "含糊带过" in second_input and "npc_zhuming" in second_input
+    assert "含糊带过" in second_input and "朱明" in second_input
     assert candidate.side_effects.narrative["summary"] == writer_second["summary"]
 
 
@@ -89,12 +89,12 @@ def test_actor_questions_without_ticket_stay_ghostwritten(session, settings):
     writer_out = {
         "prose": "王蓉低头想了想。",
         "summary": "王蓉考虑刘星的请求。",
-        "location": "main_street",
-        "participants": ["player", "npc_wangrong"],
+        "location": "主街",
+        "participants": ["player", "王蓉"],
         "private": False,
         "adopt_player_body": False,
         "actor_questions": [
-            {"npc_id": "npc_wangrong", "question": "王蓉是否帮忙？", "context": "玩家请王蓉修电脑"}
+            {"npc_id": "王蓉", "question": "王蓉是否帮忙？", "context": "玩家请王蓉修电脑"}
         ],
     }
     qc_out = {"status": "pass", "prose": "王蓉低头想了想。", "issues": []}
@@ -180,7 +180,7 @@ def test_audit_settles_side_effects_and_one_shot_scene(session, settings):
         "location": "weicao_deep",
         "scene_name": "苇草深处",
         "register_scene": False,
-        "participants": ["player", "npc_wangrong"],
+        "participants": ["player", "王蓉"],
         "private": True,
         "delta_minutes": 240,
         "lifecycle": [],
@@ -199,21 +199,20 @@ def test_audit_settles_side_effects_and_one_shot_scene(session, settings):
     assert session.ledger.save.clock == "2026-07-14T12:00:00"  # 08:00 + 240min
     ev = session.ledger.narratives[-1]
     assert ev["location"] == "weicao_deep"
-    assert ev["known_by"] == ["npc_wangrong", "player"]  # private（名单确定性排序）
+    assert ev["known_by"] == ["player", "王蓉"]  # private（名单确定性排序）
     assert ev["location_name"] == "苇草深处"
     # One-shot scene is NOT registered in the world instance.
     assert not any(s.id == "weicao_deep" for s in session.world.scenes)
     # Presence follows the audit inference.
-    assert "npc_zhuming" not in session.ledger.present_at("weicao_deep")
-    # 显示名回写：一次性场景用审计中文名，UI 不再显示英文 id。
+    assert "朱明" not in session.ledger.present_at("weicao_deep")
     assert session.ledger.save.player_scene == "weicao_deep"
-    assert session.ledger.save.scene_name == "苇草深处"
 
 
 def test_audit_registers_reusable_scene(session, settings):
-    """A scene the player declares reusable gets registered (M17 转正)."""
+    """A scene the player declares reusable gets registered (M17 转正)。
+    键=中文名后，审计直接给出中文 id，register_scene 按该键落表。"""
     audit_out = {
-        "location": "milktea_shop",
+        "location": "街角奶茶店",
         "scene_name": "街角奶茶店",
         "register_scene": True,
         "participants": ["player"],
@@ -236,9 +235,8 @@ def test_audit_registers_reusable_scene(session, settings):
     candidate = asyncio.run(runner.run_turn("去街角那家奶茶店"))
     asyncio.run(runner.adopt(candidate.candidate_id))
 
-    assert any(s.id == "milktea_shop" and s.name == "街角奶茶店" for s in session.world.scenes)
-    assert session.ledger.save.player_scene == "milktea_shop"
-    assert session.ledger.save.scene_name == "街角奶茶店"  # 注册场景显示名取场景表
+    assert any(s.id == "街角奶茶店" for s in session.world.scenes)
+    assert session.ledger.save.player_scene == "街角奶茶店"
 
 
 def test_multiple_candidates_blocks_new_turn(session, fake_llm, settings):
@@ -269,10 +267,10 @@ def test_lore_trigger_input_merges_then_adopt_rebuilds(session, settings):
     }
     qc_out = {"status": "pass", "prose": writer_out["prose"], "issues": []}
     audit_out = {
-        "location": "net_bar",
+        "location": "网吧",
         "scene_name": "网吧",
         "register_scene": False,
-        "participants": ["player", "npc_zhuming"],
+        "participants": ["player", "朱明"],
         "private": False,
         "delta_minutes": 0,
         "lifecycle": [],
@@ -291,9 +289,9 @@ def test_lore_trigger_input_merges_then_adopt_rebuilds(session, settings):
     assert session.ledger.save.active_lore_ids == ["net_bar_fire"]
 
     # The writer's first call saw the triggered entry's body in the work order.
+    # （2026-09-10 起世界书块不再输出条目 id 前缀，只注入正文全文。）
     writer_call = llm.calls[0]
     system = writer_call["messages"][0]["content"]
-    assert "net_bar_fire" in system
     assert "包夜十块钱" in system
 
     # Adopt: the active list is rebuilt from the adopted prose, which also
@@ -311,7 +309,7 @@ def test_lore_trigger_input_merges_then_adopt_rebuilds(session, settings):
             },
             "正文：": {"status": "pass", "prose": "你坐在海边石头上发呆。", "issues": []},
             "已采纳正文": {
-                "location": "main_street",
+                "location": "主街",
                 "scene_name": "主街",
                 "register_scene": False,
                 "participants": ["player"],
@@ -338,7 +336,7 @@ def test_lore_merge_dedup_and_cap(session, settings):
     }
     qc_out = {"status": "pass", "prose": writer_out["prose"], "issues": []}
     audit_out = {
-        "location": "fish_market",
+        "location": "鱼市",
         "scene_name": "鱼市",
         "register_scene": False,
         "participants": ["player"],
@@ -378,16 +376,16 @@ def test_player_notes_reach_writer_work_order(session, settings):
 
     session.ledger.save.player.private_note = "其实是镇长的私生子"
     session.ledger.save.player.personal_secrets = "欠了赌债"
-    session.world.npcs["npc_zhuming"].private_note = "网吧冬天会失火"
-    session.world.npcs["npc_zhuming"].personal_secrets = "他爸欠了赌债"
-    # 让朱明的近况成立：seed 一条他在 net_bar 的定位事件。
+    session.world.npcs["朱明"].private_note = "网吧冬天会失火"
+    session.world.npcs["朱明"].personal_secrets = "他爸欠了赌债"
+    # 让朱明的近况成立：seed 一条他在 网吧 的定位事件。
     session.ledger.append(
         {
             "id": session.ledger.allocate_event_id(),
             "kind": "narrative",
             "at": "2026-07-14T08:00:00",
-            "location": "net_bar",
-            "participants": ["npc_zhuming"],
+            "location": "网吧",
+            "participants": ["朱明"],
             "known_by": None,
             "body": "朱明在网吧。",
             "summary": "朱明在网吧。",
@@ -396,14 +394,14 @@ def test_player_notes_reach_writer_work_order(session, settings):
         }
     )
 
-    writer = build_work_order("writer", session.world, session.ledger, "net_bar")
+    writer = build_work_order("writer", session.world, session.ledger, "网吧")
     assert "主角·你" in writer
     assert "其实是镇长的私生子" in writer
     assert "欠了赌债" in writer
     assert "网吧冬天会失火" in writer
     assert "背景：" not in writer
 
-    actor = build_work_order("actor_npc_zhuming", session.world, session.ledger, "net_bar")
+    actor = build_work_order("actor_朱明", session.world, session.ledger, "网吧")
     assert "其实是镇长的私生子" not in actor  # 主角底牌不泄漏进 NPC 切片
     assert "网吧冬天会失火" not in actor  # 朱明的幕后注（他也不知道）不给他自己看
     assert "他爸欠了赌债" in actor  # 朱明自知隐秘进他自己的切片
@@ -411,11 +409,11 @@ def test_player_notes_reach_writer_work_order(session, settings):
     # QC 参照区：玩家秘密是禁区（NPC 提及=泄漏；正文揭示=泄漏）。
     from app.workers.qc import build_qc_reference
 
-    reference = build_qc_reference(session.world, session.ledger, ["player", "npc_zhuming"])
+    reference = build_qc_reference(session.world, session.ledger, ["player", "朱明"])
     assert "假面骑士" not in reference  # 无秘密时的基线
     session.ledger.save.player.personal_secrets = "夜里是假面骑士"
     session.ledger.save.player.private_note = "受神之加护，赐予者名雅典娜"
-    reference = build_qc_reference(session.world, session.ledger, ["player", "npc_zhuming"])
+    reference = build_qc_reference(session.world, session.ledger, ["player", "朱明"])
     assert "假面骑士" in reference
     assert "雅典娜" in reference
     assert "只有玩家自己知道" in reference
@@ -431,12 +429,12 @@ def test_audit_npc_moves_updates_snapshot(session, settings):
     }
     qc_out = {"status": "pass", "prose": writer_out["prose"], "issues": []}
     audit_out = {
-        "location": "net_bar",
-        "participants": ["player", "npc_zhuming"],
+        "location": "网吧",
+        "participants": ["player", "朱明"],
         "private": False,
         "delta_minutes": 15,
         "npc_moves": [
-            {"npc_id": "npc_zhuming", "location": "zhuming_home", "scene_name": "朱明家"},
+            {"npc_id": "朱明", "location": "zhuming_home", "scene_name": "朱明家"},
             {"npc_id": "npc_ghost", "location": "somewhere"},  # 未知 npc → 静默跳过
         ],
         "lifecycle": [],
@@ -449,16 +447,16 @@ def test_audit_npc_moves_updates_snapshot(session, settings):
     evs = session.ledger.narratives
     main, move = evs[-2], evs[-1]
     # 主事件：朱明是被找到的互动对象 → 参与者
-    assert "npc_zhuming" in main["participants"]
+    assert "朱明" in main["participants"]
     # 离场事件：轻量位置账目，去向私密（本人 + 目击玩家）
-    assert move["participants"] == ["npc_zhuming"]
-    assert move["known_by"] == ["npc_zhuming", "player"]
+    assert move["participants"] == ["朱明"]
+    assert move["known_by"] == ["player", "朱明"]
     assert move["location"] == "zhuming_home"
     assert "朱明前往" in move["summary"]
     # 快照更新：朱明从网吧在场名单消失（快照已随离场事件走到未注册的"朱明家"）
-    assert "npc_zhuming" not in session.ledger.present_at("net_bar")
+    assert "朱明" not in session.ledger.present_at("网吧")
     # 他的已知集含亲历：主事件（被找到聊天）+ 自己的移动
-    got = "\n".join(session.ledger.known_set("npc_zhuming", "net_bar"))
+    got = "\n".join(session.ledger.known_set("朱明", "网吧"))
     assert "朱明前往" in got
     # 非法条目静默跳过：未知 npc_id 不落账
     assert not any(e["location"] == "somewhere" for e in evs)
@@ -475,11 +473,11 @@ def test_audit_invented_id_rescued_by_alias(session, settings):
     audit_out = {
         "location": "yushi",  # 审计自造的拼音 id，场景表里没有
         "scene_name": "鱼市",
-        "participants": ["player", "npc_zhuming"],
+        "participants": ["player", "朱明"],
         "private": False,
         "delta_minutes": 40,
         "npc_moves": [
-            {"npc_id": "npc_zhuming", "location": "zhuming_jia", "scene_name": "朱明家"}
+            {"npc_id": "朱明", "location": "zhuming_jia", "scene_name": "朱明家"}
         ],
         "lifecycle": [],
     }
@@ -491,9 +489,63 @@ def test_audit_invented_id_rescued_by_alias(session, settings):
     evs = session.ledger.narratives
     main, move = evs[-2], evs[-1]
     # 主事件 location 被别名救回注册 id，不再是幻影
-    assert main["location"] == "fish_market"
+    assert main["location"] == "鱼市"
     assert "location_name" not in main  # 注册场景不需要显示名兜底
-    assert session.ledger.save.player_scene == "fish_market"
+    assert session.ledger.save.player_scene == "鱼市"
     # 离场事件：目的地未注册且 scene_name 也不命中 → 原样保留（一次性布景）
     assert move["location"] == "zhuming_jia"
-    assert "npc_zhuming" not in session.ledger.present_at("fish_market")
+    assert "朱明" not in session.ledger.present_at("鱼市")
+
+def test_audit_clock_to_overrides_delta(session, settings):
+    """正文明确说了故事时间走到几点 → 审计 clock_to 绝对对钟，
+    delta_minutes 被涵盖不再叠加；格式坏则退回估时长。"""
+    writer_out = {
+        "prose": "不知不觉到了晚上八点，刘星和王蓉在网吧聊完了正事。",
+        "summary": "晚上八点刘星和王蓉在网吧聊完正事。",
+        "actor_questions": [],
+    }
+    qc_out = {"status": "pass", "prose": writer_out["prose"], "issues": []}
+    audit_out = {
+        "location": "网吧",
+        "participants": ["player", "王蓉"],
+        "private": False,
+        "delta_minutes": 999,  # 若未对钟会被保险丝截到 960——对钟后必须被忽略
+        "clock_to": "2026-07-14T20:00:00",
+        "lifecycle": [],
+    }
+    llm = PrefixKeyLLM({"玩家输入：": writer_out, "正文：": qc_out, "已采纳正文": audit_out})
+    runner = _runner(session, llm, settings)
+    candidate = asyncio.run(runner.run_turn("和王蓉在网吧把事情谈完"))
+    asyncio.run(runner.adopt(candidate.candidate_id))
+
+    # 08:00 → 直接对钟 20:00，而非 08:00+960min(=隔天 00:00)
+    assert session.ledger.save.clock == "2026-07-14T20:00:00"
+    assert session.ledger.narratives[-1]["at"] == "2026-07-14T20:00:00"
+
+def test_lore_always_on_always_injected(session):
+    """常驻条目（always_on）：不需要关键词触发，每轮必注入世界书块；
+    不占触发名额（5 条上限只管关键词命中）。"""
+    from app.core.workorder import build_work_order
+    from app.world.models import LoreEntry
+
+    session.ledger.world.lorebook.append(
+        LoreEntry(id="lore_tide", keywords=[], body="镇外的潮汐每月十五最盛。", always_on=True)
+    )
+    # 零触发状态（active_lore_ids 空）：常驻条目仍然出现
+    order = build_work_order("writer", session.world, session.ledger, "网吧")
+    assert "【常驻】镇外的潮汐每月十五最盛。" in order
+
+    # 塞满 5 条触发名额：常驻条目不受影响，第 6 条触发被上限挡住
+    for i in range(6):
+        session.ledger.world.lorebook.append(
+            LoreEntry(id=f"lore_hit{i}", keywords=[f"线索{i}"], body=f"背景{i}")
+        )
+    from app.rules.lorebook import merge_active_lore
+    session.ledger.save.active_lore_ids = merge_active_lore(
+        [], [f"lore_hit{i}" for i in range(6)]
+    )
+    assert len(session.ledger.save.active_lore_ids) == 5
+    order = build_work_order("writer", session.world, session.ledger, "网吧")
+    assert "【常驻】镇外的潮汐每月十五最盛。" in order
+    assert "背景4" in order      # 触发第 5 条（上限内）
+    assert "背景5" not in order  # 第 6 条被上限挡住
