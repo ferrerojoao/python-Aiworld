@@ -15,6 +15,7 @@
   --danger: #8a3b3b;
   --success: #2f6f4f;
   --warn: #d9a441;
+  --warn-bg: #3a2e16;
   --hover: #26272d;
   --modal-overlay: rgba(0, 0, 0, 0.6);
 }
@@ -36,6 +37,7 @@ body.light {
   --danger: #a33;
   --success: #2f6f4f;
   --warn: #b07d1a;
+  --warn-bg: #f7edcd;
   --hover: #e4e6eb;
   --modal-overlay: rgba(0, 0, 0, 0.35);
 }
