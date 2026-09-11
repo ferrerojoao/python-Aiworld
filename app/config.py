@@ -60,7 +60,7 @@ class Settings:
 
     llm_base_url: str = field(default_factory=lambda: _env("LLM_BASE_URL", "http://127.0.0.1:11434/v1"))
     llm_api_key: str = field(default_factory=lambda: _env("LLM_API_KEY", "ollama"))
-    llm_timeout_seconds: float = field(default_factory=lambda: float(_env("LLM_TIMEOUT_SECONDS", "120") or 120))
+    llm_timeout_seconds: float = field(default_factory=lambda: float(_env("LLM_TIMEOUT_SECONDS", "90") or 90))
     model_main: str = field(default_factory=lambda: _env("MODEL_MAIN", "qwen2.5:7b"))
     model_cheap: str = field(default_factory=lambda: _env("MODEL_CHEAP", "qwen2.5:7b"))
 

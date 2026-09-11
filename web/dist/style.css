@@ -14,6 +14,7 @@
   --accent-hover: #4d6a90;
   --danger: #8a3b3b;
   --success: #2f6f4f;
+  --warn: #d9a441;
   --hover: #26272d;
   --modal-overlay: rgba(0, 0, 0, 0.6);
 }
@@ -34,6 +35,7 @@ body.light {
   --accent-hover: #2f4d6e;
   --danger: #a33;
   --success: #2f6f4f;
+  --warn: #b07d1a;
   --hover: #e4e6eb;
   --modal-overlay: rgba(0, 0, 0, 0.35);
 }
@@ -402,6 +404,13 @@ button:hover {
 }
 .dbg-err-badge {
   background: var(--danger);
+  color: #fff;
+  border-radius: 4px;
+  padding: 1px 8px;
+  font-size: 11px;
+}
+.dbg-slow-badge {
+  background: var(--warn);
   color: #fff;
   border-radius: 4px;
   padding: 1px 8px;

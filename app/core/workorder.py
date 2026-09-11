@@ -3,14 +3,23 @@
 Objective blocks are pure data (facts queried from the ledger/content pack);
 subjective contracts are instructions (identity, discipline, output format).
 
-Assembly order (2026-09-10 rework): forbidden rules upfront, static data
-cluster next, dynamic recency at tail, output format last:
+Assembly order（2026-09-11 三级分层）：写作纪律**分级**并连成一块梯队，排在身份之后；
+资料区紧随其后、完整不被切开；事件日志收尾紧贴玩家输入：
 
-    A 身份与任务 → C 金科玉律（禁忌前置） → J 编剧准则
-    → B 世界硬规则（资料区前段，永不裁剪） → I 可选素材（世界书命中）
-    → D 角色资料 → H 幕后注 → F 场景快照（此刻环境）
-    → G 在场 NPC 已知集 → G 剧情目标（近因区引导） → K 输出格式
-    → E 事件日志（最近原文在后） → 玩家输入消息
+    一级 输出格式 —— 格式出错 = 界面直接失败、玩家无法继续；全表唯一的硬边界
+    二级 情节合理性 —— 信息边界 / 抉择归属 / 设定一致 / 连续性 / 不出戏
+    三级 文风与剧情倾向 —— 预设；默认遵循，可按情境灵活
+
+    实际顺序：A 身份与任务 → 二级 → 三级 → 一级 →
+    资料区（世界概要 / 世界书命中 / 角色资料 / 幕后注 / 场景快照 /
+    已知集 / 剧情目标——不标规则等级，与事件日志同性质）→
+    E 事件日志（最近原文在后） → 玩家输入消息
+
+    段落抬头只写等级名、不带解释句（同日用户判定自我说明是废话）；
+    一级置于梯队末尾而非资料区之后，是为了让资料区连成整块（同日用户调整）。
+
+分级的目的：让模型分清「错了会坏数据」与「这样写更好」。此前两者混在同一个
+「绝对不可违背」的箱子里，模型只能一律照办——越写越保守，什么都不敢写。
 """
 
 from __future__ import annotations
@@ -26,8 +35,14 @@ from app.world.models import NarrativePreset, WorldContent
 # ---------------------------------------------------------------------------
 
 def world_summary_block(world: WorldContent) -> list[str]:
+    """世界概要：与事件日志同性质的**资料**，不标规则等级（2026-09-11）。
+
+    世界设定天然公开、人人可引（REQ 〇章）。抬头不再写「硬规则 / 不可违背」——
+    规则等级只留给真正需要分级的三级写作纪律；资料一律平等地摆在资料区，
+    模型自会取材，不需要额外的强制标签。
+    """
     return [
-        "世界概要（硬规则，不可违背）：",
+        "世界概要：",
         *world.meta.summary,
     ]
 
@@ -132,16 +147,38 @@ def _rel_seen(clock: str, at: str) -> str:
     return f"{minutes // 1440} 天前"
 
 
-def scene_snapshot_block(world: WorldContent, ledger: Ledger, scene_id: str) -> list[str]:
+def player_display_name(ledger: Ledger) -> str:
+    """玩家在名单里的显示名。
+
+    主角名是占位符「你」时退化为「玩家」——否则 Actor 视图里会出现
+    「你（玩家）」，与契约「你 = 你自己」正面打架（2026-09-11）。
+    """
+    name = (ledger.save.player.name or "").strip()
+    return name if name and name != "你" else "玩家"
+
+
+def scene_snapshot_block(
+    world: WorldContent,
+    ledger: Ledger,
+    scene_id: str,
+    exclude: list[str] | None = None,
+) -> list[str]:
+    """场景快照：当前时间 / 在场名单 / 当前场景 / 可感知区。
+
+    玩家无条件列在名单最前并标注「（玩家）」——`present_at` 只遍历 NPC 卡，
+    玩家永远不在返回值里；Actor 视图据此认出谁是对话对象（2026-09-11）。
+    ``exclude`` 供 Actor 视图剔掉自己。
+    """
     scene = next((s for s in world.scenes if s.id == scene_id), None)
-    present_ids = ledger.present_at(scene_id)
+    skip = set(exclude or ())
+    present_ids = [pid for pid in ledger.present_at(scene_id) if pid not in skip]
     clock = ledger.save.clock or ""
-    parts = []
+    name = player_display_name(ledger)
+    parts = ["玩家" if name == "玩家" else f"{name}（玩家）"]
     for pid in present_ids:
-        name = pid
         ev = ledger.where_is(pid)
         seen = _rel_seen(clock, ev.get("at", "")) if ev else ""
-        parts.append(f"{name}（最后目击：{seen}）" if seen else name)
+        parts.append(f"{pid}（最后目击：{seen}）" if seen else pid)
     return [
         "当前时间：" + (clock or "-"),
         "在场（括号内 = 该角色最后被记录在此的时刻，久未见面的要考虑他是否还在）："
@@ -179,8 +216,9 @@ def private_notes_block(world: WorldContent, ledger: Ledger, present_ids: list[s
     """幕后注：作者底牌与角色自知隐秘（主角同 NPC，字段一致）。
 
     消费方：编剧/导演（作者侧全知）。永不进任何 Actor 切片与玩家视角。
+    保密要求由抬头统一声明一次，各条目只列内容（2026-09-11 去重）。
     """
-    lines = []
+    notes_lines: list[str] = []
     player = ledger.save.player
     if player.private_note or player.personal_secrets:
         notes = []
@@ -188,9 +226,7 @@ def private_notes_block(world: WorldContent, ledger: Ledger, present_ids: list[s
             notes.append(player.private_note)
         if player.personal_secrets:
             notes.append(f"[{player.name} 自知] {player.personal_secrets}")
-        lines.append(
-            f"幕后注（仅你可读，绝不写进正文，也不得让任何角色知道）：[主角·{player.name}] {'；'.join(notes)}"
-        )
+        notes_lines.append(f"[主角·{player.name}] {'；'.join(notes)}")
     for pid in present_ids:
         npc = world.npcs.get(pid)
         if npc and (npc.private_note or npc.personal_secrets):
@@ -199,10 +235,13 @@ def private_notes_block(world: WorldContent, ledger: Ledger, present_ids: list[s
                 notes.append(npc.private_note)
             if npc.personal_secrets:
                 notes.append(f"[{npc.id} 自知] {npc.personal_secrets}")
-            lines.append(
-                f"幕后注（仅你可读，绝不写进正文，也不得让任何角色知道）：[{npc.id}] {'；'.join(notes)}"
-            )
-    return lines
+            notes_lines.append(f"[{npc.id}] {'；'.join(notes)}")
+    if not notes_lines:
+        return []
+    return [
+        "幕后注（仅你可读，绝不写进正文，也不得让任何角色知道）：",
+        *notes_lines,
+    ]
 
 
 def active_lore_block(ledger: Ledger) -> list[str]:
@@ -255,7 +294,7 @@ def goals_block(ledger: Ledger) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# 主观层 · 角色契约（按 agent 身份选择；每个契约 = 身份/金科玉律/输出格式）
+# 主观层 · 角色契约（按 agent 身份选择；每个契约 = 身份/写作纪律/输出格式）
 # ---------------------------------------------------------------------------
 
 def writer_identity() -> list[str]:
@@ -265,51 +304,97 @@ def writer_identity() -> list[str]:
     ]
 
 
-def writer_golden_rules() -> list[str]:
-    """不可违背的禁忌，置于高注意力区（prompt 前部）。2026-09-10 用户改写定稿。"""
+def writer_story_rules(player_name: str = "玩家") -> list[str]:
+    """二级 · 情节合理性：信息边界 / 抉择归属 / 设定一致 / 连续性 / 不出戏。
+
+    2026-09-11 由「金科玉律（绝对不可违背）」改名并**降级**：这些规则违反会让
+    戏说不通（重掷或改写即可救），但不损坏数据、不影响系统运转——不该与输出
+    格式同处「绝对不可违背」的等级。段落抬头只保留等级名，**不带解释句**
+    （同日用户判定：抬头的自我说明是废话，等级靠位置与命名即可读出来）。
+
+    ``player_name`` 走 ``player_display_name``：context 里提到玩家一律写其**姓名**
+    （同日用户改口径，此前是写「玩家」）；主角名未设定时退化为「玩家」。
+    """
+    if player_name == "玩家":
+        ctx_clause = "「玩家」"
+    else:
+        ctx_clause = f"玩家姓名「{player_name}」，不要写成「玩家」"
     return [
-        "金科玉律（绝对不可违背）：",
-        "角色不是你（知情总纲）：事件日志、幕后注、世界书都是你案头的编剧资料，角色本人并不知道。"
-        "每个角色开口前，核对台词是否在他的已知信息内。在场 NPC 掌握的信息以工作单「已知集」清单为准。"
+        "【二级 · 情节合理性】",
+        "信息边界（角色不是你）：事件日志、幕后注、世界书都是你案头的编剧资料，角色本人并不知道——"
+        "每个角色开口前核对台词是否在他已知范围内（在场 NPC 见工作单「已知集」清单）。"
         "幕后注与私密事件的真相绝不能从不该知道的人嘴里说出（知情者当场坦白除外，那是新戏）；"
         "无人物卡的即兴角色只知道眼前可见的东西。",
-        "位置是快照不是事实：NPC 的最后位置/在场名单是最近一次记录的快照，可能已过期。"
-        "在场名单标注了每人最后被目击的时刻——刚目击的可放心写他在场；隔了半天的，"
-        "依据此人的人物卡与最近经历合理推断他此刻可能在何处——找到、扑空、他挪了地方都是合理的叙事，"
-        "不要机械地把快照位置当作他此刻的所在。",
-        "前情已在世界里发生（事件日志是它的记录）：玩家已经历过的事不需要你复述或回顾，"
-        "直接接续当下的戏，只处理本回合的输入；不要再交代一遍已经写过的剧情。",
-        "深抉择纪律：标（配 Actor）的 NPC 撞上深抉择（内心判断 / 涉密反应 / 是否信任）时，"
+        "抉择归属：标（配 Actor）的 NPC 撞上深抉择（内心判断 / 涉密反应 / 是否信任）时，"
         "你不得替他决定，必须在输出里填 actor_questions（npc_id / question / context），"
         "引擎会派他的 Actor 决定后回来再成文；标（导演代笔）的 NPC 或普通对话由你直接写出即可。"
-        "context 只写该 NPC 本人会知道的情境，禁止写只有你知道的动机、私密或幕后注。",
-        "不要提到 AIWorld、系统、编剧、玩家输入等元信息，不要打破第四面墙——只写玩家在故事里能感知到的内容。",
+        f"context 的人称约定（只约束该字段，正文照旧）：以该 NPC 为「你」，提到玩家一律写{ctx_clause}，"
+        "不得同句混指；context 只写该 NPC 本人会知道的情境，禁止写只有你知道的动机、私密或幕后注。",
+        "设定一致（位置）：在场名单是最近一次记录的快照，可能已过期——结合每人最后被目击的时刻"
+        "与其人物卡合理推断他此刻在哪，找到、扑空、他挪了地方都是合理的叙事，"
+        "不要机械地把快照位置当作他此刻的所在。",
+        "连续性：玩家已经历过的事不需要你复述或回顾，直接接续当下的戏，只处理本回合的输入；"
+        "不要再交代一遍已经写过的剧情。",
+        "不出戏：不要提到 AIWorld、系统、编剧、玩家输入等元信息，不要打破第四面墙——"
+        "只写玩家在故事里能感知到的内容。",
+    ]
+
+
+def writer_style_block(preset: NarrativePreset) -> list[str]:
+    """三级 · 文风与剧情倾向：默认遵循，可按情境灵活（2026-09-11）。
+
+    这一级是**偏好**不是硬边界。写明等级不是给它降格，而是让模型敢于为了
+    戏的张力偏离它——此前它与「绝对不可违背」的规则混在一起，模型只能
+    一律照办，结果是越写越保守。抬头只留等级名，不带解释句（同日用户判定）。
+    """
+    if not preset.writer_guidelines:
+        return []
+    return [
+        "【三级 · 文风与剧情倾向】",
+        preset.writer_guidelines,
     ]
 
 
 def writer_output_format() -> list[str]:
-    """JSON 信封说明，置于近因区（prompt 尾部，紧贴玩家输入消息）。"""
+    """一级 · 输出格式：最硬的一级（2026-09-11 用户定级）。
+
+    格式一旦出错，前端直接解析失败、玩家看不到正文也无法继续——这一级没有
+    「灵活处理」的余地，是全表唯一的硬边界。抬头只留等级名，不带解释句
+    （同日用户判定：抬头的自我说明是废话）。
+
+    位置：紧跟三级预设块之后，使 二级 → 三级 → 一级 连成完整梯队，资料区
+    不被切开（2026-09-11 用户调整，此前置于资料区与事件日志之间）。
+    """
     return [
-        "",
+        "【一级 · 输出格式】",
         "输出必须是 JSON 对象，字段：",
         '{"prose": "正文全文（必填，直接成稿）", "summary": "一句话剧情摘要（不超过30字）", "actor_questions": []}',
         "prose：本场戏正文，唯一正文字段。",
         "summary：本场发生的核心事件摘要，供事件日志使用。",
         "actor_questions：需要派 Actor 的深抉择列表，没有则空数组。",
-        "时间、地点、在场者、私密情境等世界变化都由引擎从你的正文里结算——你不需要、也不要输出这些字段，只需把变化在正文里写清楚（如「天黑了」「走出网吧」「王蓉先走了」）。",
-        "禁止输出 location、participants、time_hint、private 或任何其他字段。",
+        "时间、地点、在场者、私密情境等世界变化都由引擎从你的正文里结算——你只把变化写清楚"
+        "（如「天黑了」「走出网吧」），不要输出 location、participants、time_hint、private 或其他任何字段。",
     ]
 
 
-def actor_contract(npc_name: str) -> list[str]:
-    """NPC Actor 的身份、隔离纪律与输出格式（物理隔离工作单）。"""
+def actor_contract(npc_name: str, player_name: str = "玩家") -> list[str]:
+    """NPC Actor 的身份、隔离纪律与输出格式（物理隔离工作单）。
+
+    人称读法必须讲明（2026-09-11）：情境文本里的人称由 writer 侧约定产生
+    （以该 NPC 为「你」、提到玩家写其**姓名**），这里给出对应的读法，两边
+    对齐后就不再需要机械替换。``player_name`` 走 ``player_display_name``——
+    主角名未设定（占位符「你」）时退化为「玩家」。
+    """
     return [
         f"你正在扮演：{npc_name}。你只根据下面「你知道的事」做决定，绝不使用你不知道的信息。",
-        "金科玉律（绝对不可违背）：",
-        f"- 你自己 = {npc_name}；下面用「他/她/名字」这类第三人称提及你时，指的就是你本人。",
-        "- 「玩家」= 你的对话对象（人类玩家）；情境中的第三人称不指你时，以「玩家」为你的对话对象。",
+        "人称读法（先把这几个词认准）：",
+        f"- 「你」= 你自己（{npc_name}）；情境里用「他/她/名字」这类第三人称提到你时，那也是在说你。",
+        f"- 「{player_name}」= 你的对话对象（人类玩家），是另一个人，不是你。",
+        "- 某件事的归属出现矛盾（像是你做的、又像不是你做的）时，以「你知道的事」清单为准："
+        "清单里没有的事，就不是你做的。",
+        "不可违背的纪律（本契约的硬边界）：",
         "- 你只能说自己知道的事；你不知道的事不能猜着说，更不能替别人说。",
-        "- 只输出你的决定，不要输出旁白、不要替玩家做决定。",
+        f"- 只输出你的决定，不要输出旁白、不要替{player_name}做决定。",
         '只返回 JSON，格式如下：',
         '{"decision": "你的决定", "action_hint": "你会做的动作/行为", "tone": "语气"}',
     ]
@@ -332,17 +417,20 @@ def build_actor_work_order(
     if npc is None:
         raise ValueError(f"unknown npc: {npc_id}")
     parts = [
-        *actor_contract(npc.id),
+        *actor_contract(npc.id, player_display_name(ledger)),
         *world_summary_block(world),
         "你的档案（人物卡）：",
         f"姓名：{npc.id}；外貌：{npc.appearance or '未设定'}；人格：{npc.persona or '未设定'}",
     ]
     if npc.personal_secrets:
         parts.append(f"你心里的事（只有你自己知道，绝不对外人说）：{npc.personal_secrets}")
-    parts += scene_snapshot_block(world, ledger, scene_id)
-    mem = ledger.experiences(npc_id, npc_id)  # 条数上限由 world.meta.memory_limit 统一裁
+    # 在场名单剔掉自己，并显式补上玩家（Actor 要认出谁是对话对象）
+    parts += scene_snapshot_block(world, ledger, scene_id, exclude=[npc_id])
+    # 记忆口径与写手/QC 一致：known_set（亲历 ∪ known_by 含己 ∪ 听域内公开），
+    # 条数上限统一由 world.meta.memory_limit 管，不再有第二处硬编码。
+    mem = ledger.known_set(npc_id, scene_id, limit=world.meta.memory_limit)
     if mem:
-        parts += ["你记得的事：", *mem]
+        parts += ["你知道的事：", *mem]
     return "\n".join(parts)
 
 
@@ -364,7 +452,7 @@ def build_director_chat_system(
 
     parts: list[str] = [
         "你是 AIWorld 的导演，玩家正在戏外（OOC）和你讨论。你不是正文执笔者，一切建议都要玩家采纳后才生效。",
-        "世界概要（不可违背）：",
+        "世界概要：",
         *world.meta.summary,
         "当前时间：" + (ledger.save.clock or "-"),
         "当前场景：" + (scene.id if scene else scene_id),
@@ -489,29 +577,29 @@ def build_work_order(
         parts: list[str] = []
         # A 身份与任务
         parts += writer_identity()
-        # C 金科玉律（禁忌前置，高注意力区——紧跟身份）
-        parts += writer_golden_rules()
-        # J 编剧准则（创作与写作要求，紧跟金科玉律）
-        if preset.writer_guidelines:
-            parts.append("编剧准则（创作与写作要求，必须遵循）：")
-            parts.append(preset.writer_guidelines)
-        # B 世界硬规则（常驻，永不裁剪；2026-09-10 挪入资料区前段）
-        parts += world_summary_block(world)
-        # I 可选素材（世界书命中：本场相关背景，紧跟世界总述）
-        parts += active_lore_block(ledger)
-        # D 玩家资料 + 在场 NPC（含 id 标注，编剧须用规范 id）
-        parts += character_block(world, ledger, present_ids, include_ids=True)
-        # H 幕后注（机密，与金科玉律呼应双保险）
-        parts += private_notes_block(world, ledger, present_ids)
-        # F 场景快照（此刻环境：当前时间/在场/场景/可感知）
-        parts += scene_snapshot_block(world, ledger, scene_id)
-        # G 在场 NPC 已知集（机械知识边界，取代旧近况块）
-        parts += known_set_block(world, ledger, present_ids, scene_id)
-        # G 剧情目标（写作引导，近因区——贴近动笔位置；2026-09-10 与世界书换位）
-        parts += goals_block(ledger)
-        # K 输出格式（指令，近因区）
+        # ── 三级写作纪律：二级 → 三级 → 一级 连成完整梯队（2026-09-11 用户调整）
+        # 二级 · 情节合理性（信息边界 / 抉择归属 / 设定一致 / 连续性 / 不出戏）
+        parts += writer_story_rules(player_display_name(ledger))
+        # 三级 · 文风与剧情倾向（预设；默认遵循，可灵活）
+        parts += writer_style_block(preset)
+        # 一级 · 输出格式（全表唯一的硬边界）
         parts += writer_output_format()
-        # E 事件日志（更早摘要在前 → 最近原文在后，收尾紧贴玩家输入以便续写）
+        # ── 资料区：以下与事件日志同性质，都是写作取材，一律不标规则等级 ──
+        # 世界概要（常驻，永不裁剪）
+        parts += world_summary_block(world)
+        # 世界书命中（本场相关背景）
+        parts += active_lore_block(ledger)
+        # 玩家资料 + 在场 NPC（含 id 标注，编剧须用规范 id）
+        parts += character_block(world, ledger, present_ids, include_ids=True)
+        # 幕后注（机密，与二级「信息边界」呼应双保险）
+        parts += private_notes_block(world, ledger, present_ids)
+        # 场景快照（此刻环境：当前时间/在场/场景/可感知）
+        parts += scene_snapshot_block(world, ledger, scene_id)
+        # 在场 NPC 已知集（机械知识边界，取代旧近况块）
+        parts += known_set_block(world, ledger, present_ids, scene_id)
+        # 剧情目标（写作引导，贴近动笔位置）
+        parts += goals_block(ledger)
+        # 事件日志（更早摘要在前 → 最近原文在后，收尾紧贴玩家输入以便续写）
         parts += event_log_block(world, ledger)
         return "\n".join(parts)
 

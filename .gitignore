@@ -1,6 +1,7 @@
 .workbuddy/
 __pycache__/
 *.py[cod]
+*.egg-info/
 .pytest_cache/
 .pytest_tmp/
 .venv/

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
 # schema 类型 → 调用者身份（调试卡片头显示用）
@@ -42,18 +43,22 @@ class TraceRecorder:
             "model": model,
             "temperature": temperature,
             "messages": messages,
+            "started_at": time.time(),
         }
         try:
             result = await self._llm.complete_json(
                 messages, schema, model=model, temperature=temperature
             )
-            entry["output"] = result
         except Exception as exc:  # noqa: BLE001
             entry["error"] = f"{type(exc).__name__}: {exc}"
-            self.entries.append(entry)
             raise
-        self.entries.append(entry)
-        return result
+        else:
+            entry["output"] = result
+            return result
+        finally:
+            # 失败的那一笔也必须记耗时——卡住的调用恰恰是最需要看到耗时的那种。
+            entry["duration_ms"] = int((time.time() - entry["started_at"]) * 1000)
+            self.entries.append(entry)
 
     async def complete_text(self, messages, *, model="fake", temperature=0.7):
         entry: dict[str, Any] = {
@@ -62,15 +67,18 @@ class TraceRecorder:
             "model": model,
             "temperature": temperature,
             "messages": messages,
+            "started_at": time.time(),
         }
         try:
             result = await self._llm.complete_text(
                 messages, model=model, temperature=temperature
             )
-            entry["output"] = result
         except Exception as exc:  # noqa: BLE001
             entry["error"] = f"{type(exc).__name__}: {exc}"
-            self.entries.append(entry)
             raise
-        self.entries.append(entry)
-        return result
+        else:
+            entry["output"] = result
+            return result
+        finally:
+            entry["duration_ms"] = int((time.time() - entry["started_at"]) * 1000)
+            self.entries.append(entry)

@@ -346,4 +346,7 @@ class Ledger:
             picked.append(ev)
         picked.sort(key=lambda e: e.get("at", ""))
         lines = [f"{e.get('at', '')} {e.get('summary') or (e.get('body') or '')[:40]}" for e in picked]
-        return lines[-limit:] if lines else []
+        # 防御 [-0:]：Python 里 lines[-0:] == lines[0:]（取全部），与"上限 0 = 不开记忆"
+        # 的直觉相反；负数同理（会砍掉尾部若干条）。≤0 一律判定为不注入，
+        # 与 experiences 的 0 口径对齐（2026-09-11）。
+        return lines[-limit:] if lines and limit > 0 else []

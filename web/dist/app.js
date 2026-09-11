@@ -443,14 +443,24 @@ function esc(s) {
     .replaceAll(">", "&gt;");
 }
 
+const SLOW_CALL_MS = 30000; // 单笔 LLM 调用超过 30s 打「慢」标签
+
+function durationLabel(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+}
+
 function debugEntryCard(entry, seq) {
   const label = entry.label || "未标注调用";
-  const meta = [entry.type, entry.model, `temp ${entry.temperature}`]
+  const ms = Number(entry.duration_ms);
+  const durText = durationLabel(ms);
+  const meta = [entry.type, entry.model, `temp ${entry.temperature}`, durText ? `耗时 ${durText}` : ""]
     .filter(Boolean)
     .map(esc)
     .join(" · ");
+  const slowBadge = ms >= SLOW_CALL_MS ? `<span class="dbg-slow-badge">慢</span>` : "";
   const errBadge = entry.error ? `<span class="dbg-err-badge">出错</span>` : "";
-  const head = `<span class="dbg-seq">#${seq}</span><span class="dbg-label">${esc(label)}</span><span class="dbg-meta">${meta}</span>${errBadge}`;
+  const head = `<span class="dbg-seq">#${seq}</span><span class="dbg-label">${esc(label)}</span><span class="dbg-meta">${meta}</span>${slowBadge}${errBadge}`;
 
   const msgs = (entry.messages || [])
     .map((m) => {

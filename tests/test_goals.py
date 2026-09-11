@@ -55,6 +55,8 @@ def test_goals_block_after_preset(session):
     their owner and get the two-advance-mode discipline."""
     add_goal(session.ledger, text="查明朱明打架的真相", kind="big", npc_id="朱明")
     add_goal(session.ledger, text="让主角答应下周跟她一起去接货", kind="small", subject="王蓉", npc_id="王蓉")
+    # 预设文风块（三级）非空，才能断言三级与资料区、一级的相对位置。
+    session.world.presets.writer_guidelines = "文风偏好：白描为主，少形容词。"
 
     order = build_work_order("writer", session.world, session.ledger, "网吧")
     assert "剧情目标（玩家设立的方向）：" in order
@@ -65,13 +67,14 @@ def test_goals_block_after_preset(session):
     assert "NPC 在场 → 让她自然提及" in order
     assert "NPC 不在场 → 安排她主动来找玩家" in order
 
-    # 位置：金科玉律之后（✓），但 2026-09-10 重排后剧情目标在玩家资料之后、
-    # 输出格式之前（尾部近因区——写作引导贴近动笔位置）。
-    c_pos = order.index("金科玉律")
-    g_pos = order.index("剧情目标")
+    # 位置（2026-09-11）：二级 → 三级 → 一级 连成梯队（在资料区之前），
+    # 资料区整体在后（玩家资料 → 剧情目标），事件日志收尾。
+    c_pos = order.index("【二级 · 情节合理性】")
+    s_pos = order.index("【三级 · 文风与剧情倾向】")
+    k_pos = order.index("【一级 · 输出格式】")
     d_pos = order.index("玩家资料：")
-    k_pos = order.index("输出必须是 JSON 对象")
-    assert c_pos < d_pos < g_pos < k_pos
+    g_pos = order.index("剧情目标")
+    assert c_pos < s_pos < k_pos < d_pos < g_pos
 
 
 def test_goals_never_reach_actor_slice(session):

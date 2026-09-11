@@ -1,4 +1,0 @@
-{"id": "ev_00001", "kind": "narrative", "at": "2026-07-14T08:00:00", "location": null, "participants": ["player"], "known_by": null, "body": "七月的青石镇，白天被太阳晒得发白，鱼市散了早市，主街上只剩几家铺面敞着门。你在这个小镇过暑假，刚起床不久，站在主街的槐树荫下，想着今天去找点什么事做。", "summary": "开场", "player_input": null, "source": "opening"}
-{"id": "ev_00002", "kind": "narrative", "at": "2026-07-14T09:00:00", "location": "net_bar", "participants": ["npc_zhuming"], "known_by": null, "body": "朱明在网吧。", "summary": "朱明在网吧。"}
-{"id": "ev_00003", "kind": "narrative", "at": "2026-07-14T10:00:00", "location": "school_gate", "participants": ["npc_zhuming"], "known_by": null, "body": "朱明到了校门口。", "summary": "朱明到了校门口。"}
-{"id": "ev_00004", "kind": "narrative", "at": "2026-07-14T10:05:00", "location": "alley_old_building", "participants": ["npc_wangrong"], "known_by": ["npc_wangrong"], "body": "王蓉一个人来老巷。", "summary": "王蓉一个人来老巷。"}
