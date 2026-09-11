@@ -26,9 +26,33 @@ def _runner(session, fake_llm, settings):
     return TurnRunner(session, fake_llm, settings)
 
 
+def _place(session, npc_id: str, scene: str) -> None:
+    """把 NPC 安置到某场景（在场推导读账本里该角色的最后一条定位事件）。"""
+    ledger = session.ledger
+    ledger.append(
+        {
+            "id": ledger.allocate_event_id(),
+            "kind": "narrative",
+            "at": "2026-07-14T08:30:00",
+            "location": scene,
+            "participants": ["player", npc_id],
+            "known_by": None,
+            "body": f"{npc_id}在{scene}。",
+            "summary": f"{npc_id}在{scene}。",
+            "player_input": None,
+            "source": "test",
+        }
+    )
+
+
 def test_actor_two_stage_deep_choice(session, settings):
     """Writer raises actor_questions -> isolated Actor decides -> writer
-    second pass writes by the decision; calls are writer, actor, writer, qc."""
+    second pass rewrites by the decision, anchored on the first draft
+    （一稿以 assistant 消息回填，二稿输出整场全文）;
+    calls are writer, actor, writer, qc."""
+    session.ledger.save.player_scene = "网吧"
+    _place(session, "朱明", "网吧")
+
     writer_first = {
         "prose": "朱明听完问题没接话。",
         "summary": "刘星追问打架的事。",
@@ -59,7 +83,7 @@ def test_actor_two_stage_deep_choice(session, settings):
         {
             "玩家输入：": writer_first,
             "深抉择问题": actor_out,
-            "以下深抉择已由": writer_second,
+            "【必须按本人决定重写的部分】": writer_second,
             "正文：": qc_out,
         }
     )
@@ -75,38 +99,121 @@ def test_actor_two_stage_deep_choice(session, settings):
     call0, call1, call2, call3 = llm.calls
     assert has(call0, "玩家输入：") and not has(call0, "深抉择问题")
     assert has(call1, "深抉择问题")
-    assert has(call2, "以下深抉择已由")
+    assert has(call2, "【必须按本人决定重写的部分】")
+    assert any("输出整场正文全文" in (m.get("content") or "") for m in call2["messages"])
     assert has(call3, "正文：")
+    # 一稿以 assistant 消息回填进二稿（questions 已清空），不再被整体丢弃
+    echoes = [
+        m
+        for m in call2["messages"]
+        if m.get("role") == "assistant" and "朱明听完问题没接话" in (m.get("content") or "")
+    ]
+    assert echoes and '"actor_questions":[]' in echoes[0]["content"]
     # the second pass received the actor's decision text
     second_input = " ".join(m.get("content", "") for m in call2["messages"])
     assert "含糊带过" in second_input and "朱明" in second_input
     assert candidate.side_effects.narrative["summary"] == writer_second["summary"]
 
 
-def test_actor_questions_without_ticket_stay_ghostwritten(session, settings):
-    """actor_questions for an NPC without has_actor are not dispatched:
-    the first-pass prose is kept and no Actor call happens."""
-    writer_out = {
-        "prose": "王蓉低头想了想。",
-        "summary": "王蓉考虑刘星的请求。",
-        "location": "主街",
-        "participants": ["player", "王蓉"],
-        "private": False,
-        "adopt_player_body": False,
+def test_actor_questions_without_ticket_force_a_second_pass(session, settings):
+    """无票角色的上缴 = 编剧停笔，一稿残缺 → 不派 Actor，但**必须走第二稿**，
+    明说「由你直接拍板、不要把这一拍留空」（2026-09-11：照用一稿必然缺戏）。"""
+    writer_first = {
+        "prose": "刘星和王蓉一起吃着早饭。",
+        "summary": "刘星和王蓉吃早饭。",
         "actor_questions": [
             {"npc_id": "王蓉", "question": "王蓉是否帮忙？", "context": "玩家请王蓉修电脑"}
         ],
     }
-    qc_out = {"status": "pass", "prose": "王蓉低头想了想。", "issues": []}
-    llm = PrefixKeyLLM({"玩家输入：": writer_out, "正文：": qc_out})
+    writer_second = {
+        "prose": "刘星问王蓉能不能帮忙，王蓉低头想了想，答应了。",
+        "summary": "刘星请王蓉帮忙，王蓉答应。",
+        "actor_questions": [],
+    }
+    qc_out = {"status": "pass", "prose": writer_second["prose"], "issues": []}
+    llm = PrefixKeyLLM(
+        {
+            "玩家输入：": writer_first,
+            "【本轮不派 Actor、必须由你直接拍板的部分": writer_second,
+            "正文：": qc_out,
+        }
+    )
     runner = _runner(session, llm, settings)
     candidate = asyncio.run(runner.run_turn("请王蓉修电脑"))
 
-    assert candidate.prose == "王蓉低头想了想。"
-    # only writer + qc called, no actor pass
-    assert len(llm.calls) == 2
-    # the deferred question is surfaced instead of silently dropped
+    assert candidate.prose == writer_second["prose"]
+    # writer + writer(补写) + qc：没有 Actor 调用，但一稿不再被照用
+    assert len(llm.calls) == 3
+    second_call = llm.calls[1]
+    blob = " ".join((m.get("content") or "") for m in second_call["messages"])
+    assert "王蓉" in blob and "不要把这一拍留空" in blob
+    assert any(m.get("role") == "assistant" for m in second_call["messages"])
+    # 落点可见：无票的深抉择由编剧拍板（升格提示，不静默）
     assert any("王蓉" in (i.get("desc") or "") for i in candidate.conflicts)
+
+
+def test_absent_ticketed_npc_is_not_dispatched(session, settings):
+    """有票但不在场 → 不派 Actor（工作单按当前场景拼，缺席者拿到错位处境）；
+    走第二稿由编剧拍板，稿子不悬空。"""
+    writer_first = {
+        "prose": "刘星在电话里跟朱明说起昨晚的事。",
+        "summary": "刘星电话里问朱明。",
+        "actor_questions": [
+            {"npc_id": "朱明", "question": "要不要说出打架的原因？", "context": "电话那头的朱明"}
+        ],
+    }
+    writer_second = {
+        "prose": "电话那头朱明沉默了一会儿，含糊带过。",
+        "summary": "朱明电话里含糊带过。",
+        "actor_questions": [],
+    }
+    qc_out = {"status": "pass", "prose": writer_second["prose"], "issues": []}
+    llm = PrefixKeyLLM(
+        {
+            "玩家输入：": writer_first,
+            "【本轮不派 Actor、必须由你直接拍板的部分": writer_second,
+            "正文：": qc_out,
+        }
+    )
+    runner = _runner(session, llm, settings)
+    candidate = asyncio.run(runner.run_turn("给朱明打电话"))
+
+    # 朱明有票但从未被记到任何场景 → 不派，走补写
+    assert len(llm.calls) == 3
+    assert any("不在当前场景" in (i.get("desc") or "") for i in candidate.conflicts)
+    assert candidate.prose == writer_second["prose"]
+
+
+def test_unresolved_npc_id_is_surfaced_not_silent(session, settings):
+    """npc_id 填了「你」且文本里认不出是谁 → 不派但不静默：warning 带原始串，
+    第二稿仍由编剧拍板补全（2026-09-11：填错 id 能过校验、却永远匹配不上）。"""
+    writer_first = {
+        "prose": "房间里只剩两个人对视。",
+        "summary": "两人在房间里对视。",
+        "actor_questions": [
+            {"npc_id": "你", "question": "你怎么办？", "context": "对方盯着你"}
+        ],
+    }
+    writer_second = {
+        "prose": "对视三秒，你先开了口。",
+        "summary": "你先开口打破沉默。",
+        "actor_questions": [],
+    }
+    qc_out = {"status": "pass", "prose": writer_second["prose"], "issues": []}
+    llm = PrefixKeyLLM(
+        {
+            "玩家输入：": writer_first,
+            "【本轮不派 Actor、必须由你直接拍板的部分": writer_second,
+            "正文：": qc_out,
+        }
+    )
+    runner = _runner(session, llm, settings)
+    candidate = asyncio.run(runner.run_turn("和他对峙"))
+
+    assert len(llm.calls) == 3
+    hits = [i for i in candidate.conflicts if "无法识别" in (i.get("desc") or "")]
+    assert hits and "你" in hits[0]["desc"]
+    assert candidate.prose == writer_second["prose"]
 
 
 def test_jump_advances_delta(session, fake_llm, settings):

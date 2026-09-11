@@ -144,6 +144,29 @@ def test_writer_prompt_is_tiered(session):
     assert "金科玉律" not in order
 
 
+def test_writer_roster_clause_follows_presence_and_tickets(session):
+    """本轮可上缴名单 = 在场 ∩ 配 Actor，必须显式下发（2026-09-11）：
+    编剧不再从各人名后的括号自行推断谁不能上缴——推错一格就会上缴无票角色，
+    而引擎按票丢弃，那一拍永远是空的。"""
+    ledger = session.ledger
+
+    # 无人在场：名单为空 → 明说"无人可上缴"，所有抉择编剧自己写。
+    order = build_work_order("writer", session.world, ledger, "网吧")
+    assert "本轮没有任何角色可上缴深抉择" in order
+
+    # 朱明（有票）在场 → 名单只列他；无票的王蓉即使同场也不列。
+    _narrative(
+        ledger,
+        location="网吧",
+        participants=["player", "朱明", "王蓉"],
+        body="三人在网吧碰头。",
+        summary="网吧聚齐",
+    )
+    order = build_work_order("writer", session.world, ledger, "网吧")
+    assert "本轮可上缴深抉择的角色：朱明" in order
+    assert "其余角色一律由你直接决定并写进正文" in order
+
+
 def test_actor_contract_explains_pronouns():
     """Actor 契约必须讲明人称读法与归属冲突的判据。玩家一律用主角名指代
     （2026-09-11 改口径）；主角名未设定时退化为「玩家」。"""

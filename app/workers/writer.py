@@ -15,7 +15,9 @@ async def run_writer(
     rule_bundle: dict | None = None,
     scene_id: str | None = None,
     preset: NarrativePreset | None = None,
+    prior_output: WriterOutput | None = None,
     actor_decisions: str = "",
+    own_decisions: str = "",
     rewrite_note: str = "",
     writer_directive: str = "",
     model: str = "fake",
@@ -24,9 +26,18 @@ async def run_writer(
     """Single-agent writer: decides the scene and writes the prose in one call.
 
     The work order (objective snapshot + subjective contract) is assembled by
-    ``app.core.workorder.build_work_order``. When the output carries
-    actor_questions, the caller runs the isolated Actor for each and
-    re-invokes with actor_decisions set.
+    ``app.core.workorder.build_work_order``.
+
+    深抉择两段式（2026-09-11 修复）：编剧上缴 = 它在那一拍**停笔**，所以只要有
+    上缴就一定有第二稿。第二稿的锚点由两部分组成——
+
+    - ``prior_output``：一稿以 **assistant 消息**回填（「你上一条回答」的形状，
+      与 ``llm.complete_json`` 的重试反馈同构），``actor_questions`` 清空——那条
+      问题已被处理，留着会诱导二稿再上缴一遍。此前二稿只收到一句「已由…决定」
+      （48 字），一稿正文 100% 丢弃，模型只能凭空重排，于是只写后半段。
+    - ``actor_decisions``：派了 Actor 的角色，按本人决定重写。
+    - ``own_decisions``：没派 Actor 的（无票 / 不在场 / npc_id 无法识别），明说
+      「必须由你直接拍板，不要把这一拍留空」——这是第二稿能补全残稿的关键。
     """
     system = build_work_order("writer", world, ledger, scene_id or "", preset=preset)
     if player_input.strip():
@@ -50,8 +61,19 @@ async def run_writer(
         )
     if rule_bundle:
         messages.append({"role": "user", "content": f"规则段预结算：{rule_bundle}"})
-    if actor_decisions:
-        messages.append({"role": "user", "content": f"以下深抉择已由对应 NPC 亲自决定，按此成文：\n{actor_decisions}"})
+    if prior_output is not None:
+        echo = prior_output.model_copy(update={"actor_questions": []})
+        messages.append({"role": "assistant", "content": echo.model_dump_json()})
+    if actor_decisions or own_decisions:
+        blocks = []
+        if actor_decisions:
+            blocks.append("【必须按本人决定重写的部分】\n" + actor_decisions)
+        if own_decisions:
+            blocks.append(
+                "【本轮不派 Actor、必须由你直接拍板的部分（不要把这一拍留空）】\n" + own_decisions
+            )
+        blocks.append("输出整场正文全文，从第一句话开始（不是续写、不是只写改动的部分）。")
+        messages.append({"role": "user", "content": "\n".join(blocks)})
     if rewrite_note:
         messages.append({"role": "user", "content": f"改写要求：{rewrite_note}"})
 

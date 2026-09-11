@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+from typing import Any, Mapping, NamedTuple
 
 from app.config import Settings
 from app.core.store import new_id
@@ -15,6 +16,7 @@ from app.world.models import NarrativePreset
 from app.workers.actor import run_actor
 from app.workers.auditor import run_audit
 from app.workers.qc import build_qc_reference, run_qc
+from app.workers.schemas import ActorQuestion, WriterOutput
 from app.workers.writer import run_writer
 
 
@@ -40,6 +42,44 @@ def _extract_directive(text: str) -> tuple[str, str]:
     return clean, directive
 
 
+def _resolve_npc(
+    raw: str,
+    question: str,
+    context: str,
+    present: list[str],
+    npcs: Mapping[str, Any],
+) -> str | None:
+    """编剧上缴的 ``npc_id`` 纠偏。
+
+    模型偶尔填「你」「玩家」或自造 id——这类值能通过 pydantic 校验却永远匹配
+    不上，静默丢弃最难查。按确定性递进救回（与 ``transaction._resolve_scene``
+    同一思路）：精确命中 → 在场名单里唯一一个名字出现在上缴串里的 → 唯一一个
+    名字出现在问句/处境里的 → 放弃（返回 None，由调用方丢弃并给 warning，
+    绝不静默）。
+    """
+    raw = (raw or "").strip()
+    if raw and raw in npcs:
+        return raw
+    names = [pid for pid in present if pid and pid in npcs]
+    if raw:
+        hits = [pid for pid in names if pid in raw]
+        if len(hits) == 1:
+            return hits[0]
+    blob = f"{question}\n{context}"
+    hits = [pid for pid in names if pid in blob]
+    if len(hits) == 1:
+        return hits[0]
+    return None
+
+
+class WriteResult(NamedTuple):
+    """``_write_turn`` 的产出：成稿 + 落点备注 + 两稿上缴过的角色（QC 比对基准）。"""
+
+    output: WriterOutput
+    notes: list[dict]
+    participants: list[str]
+
+
 class TurnRunner:
     def __init__(
         self,
@@ -62,11 +102,17 @@ class TurnRunner:
         if self._progress_queue is not None:
             await self._progress_queue.put({"type": "stage", "stage": stage, "label": label})
 
-    def _actor_ticket(self, npc_id: str) -> bool:
+    def _actor_ticket(self, npc_id: str, scene_id: str) -> bool:
+        """可派 = 配了 Actor **且此刻在场**。
+
+        不在场的一律不派：Actor 工作单按当前场景拼装，缺席者会拿到错位的处境
+        （2026-09-11 修 2×2 越界派发的 B 格）。在场名单与编剧工作单里的「在场 NPC」
+        同源（都走 ``present_at``），所以编剧的正常上缴不会被这条门误拦。
+        """
         npc = self.session.world.npcs.get(npc_id)
-        if npc is None:
+        if npc is None or not npc.has_actor:
             return False
-        return bool(npc.has_actor)
+        return npc_id in self.session.ledger.present_at(scene_id)
 
     async def _write_turn(
         self,
@@ -76,16 +122,23 @@ class TurnRunner:
         rule_bundle: dict | None = None,
         rewrite_note: str = "",
         writer_directive: str = "",
-    ):
-        """Single-agent write pass, with the deep-choice two-stage loop.
+    ) -> WriteResult:
+        """Writer pass, with the deep-choice two-stage loop.
 
-        First call: the writer emits the prose, or emits actor_questions for
-        NPCs facing deep choices. If questions exist and the NPC holds an
-        actor ticket, run the isolated Actor and re-invoke the writer once
-        with the decisions; otherwise act as ghostwriter and keep the output.
+        编剧上缴 = 它在那一拍**停笔**（2026-09-11 用户实测：只写吃早饭和发问的
+        引子，朱明的反应根本没写）。所以**只要有上缴就一定有第二稿**——一稿在
+        定义上就不完整，照用必然缺戏。能不能派 Actor 只决定第二稿的输入：
+
+        - 派得出去（在场 ∩ 配 Actor，且 ``npc_id`` 能识别）→ 先问 Actor，
+          第二稿按本人决定重写那一拍；
+        - 派不出去（无票 / 不在场 / ``npc_id`` 无法识别）→ 第二稿明说「由你直接
+          拍板、不要把这一拍留空」。
+
+        第二稿以一稿为底稿（assistant 消息回填，见 ``run_writer``），输出仍是
+        整场全文——不再出现"第一稿被丢弃、第二稿只写后半段"。
         """
         await self._progress("writer", "编排成文中")
-        out = await run_writer(
+        first = await run_writer(
             self.llm,
             self.session.world,
             self.session.ledger,
@@ -98,29 +151,71 @@ class TurnRunner:
             model=self.settings.resolved_model("story"),
             temperature=0.8,
         )
+        out = first
+        notes: list[dict] = []
+        participants = {q.npc_id for q in first.actor_questions}
 
-        # Deep choices are delegated to the NPCs' isolated Actors.
-        questions = [q for q in out.actor_questions if self._actor_ticket(q.npc_id)]
-        if questions:
-            await self._progress("actor", "NPC Agent 思考中")
-            decisions = []
-            for q in questions:
-                npc = self.session.world.npcs[q.npc_id]
-                decision = await run_actor(
-                    self.llm,
-                    self.session.world,
-                    self.session.ledger,
-                    npc,
-                    q.question,
-                    context=q.context,
-                    scene_id=scene,
-                    model=self.settings.resolved_model("actor"),
-                    temperature=0.8,
+        if first.actor_questions:
+            present = self.session.ledger.present_at(scene)
+            dispatch: list[tuple[str, ActorQuestion]] = []
+            own: list[tuple[str, str]] = []
+            for q in first.actor_questions:
+                npc_id = _resolve_npc(
+                    q.npc_id, q.question, q.context, present, self.session.world.npcs
                 )
-                decisions.append(
-                    f"- {npc.id}：{decision.decision}；行为：{decision.action_hint}；语气：{decision.tone}"
-                )
-            await self._progress("writer", "按NPC决策成文中")
+                if npc_id is None:
+                    notes.append(
+                        {
+                            "level": "warning",
+                            "desc": f"编剧上缴的「{q.npc_id or '未署名'}」无法识别为角色，"
+                            "本轮未派 Actor，该抉择由编剧自行写入正文",
+                        }
+                    )
+                    own.append((q.npc_id or "未署名角色", q.question))
+                    continue
+                npc = self.session.world.npcs[npc_id]
+                if npc.has_actor and npc_id in present:
+                    dispatch.append((npc_id, q))
+                    continue
+                if not npc.has_actor:
+                    notes.append(
+                        {
+                            "level": "info",
+                            "desc": f"{npc_id} 未配 Actor，本轮其深抉择由编剧直接拍板"
+                            "（如需隔离决策，可在世界工作台勾选「使用 Actor」）",
+                        }
+                    )
+                else:
+                    notes.append(
+                        {
+                            "level": "warning",
+                            "desc": f"{npc_id} 不在当前场景，本轮未派 Actor，"
+                            "其深抉择由编剧直接写入正文",
+                        }
+                    )
+                own.append((npc_id, q.question))
+
+            decisions: list[str] = []
+            if dispatch:
+                await self._progress("actor", "NPC Agent 思考中")
+                for npc_id, q in dispatch:
+                    npc = self.session.world.npcs[npc_id]
+                    decision = await run_actor(
+                        self.llm,
+                        self.session.world,
+                        self.session.ledger,
+                        npc,
+                        q.question,
+                        context=q.context,
+                        scene_id=scene,
+                        model=self.settings.resolved_model("actor"),
+                        temperature=0.8,
+                    )
+                    decisions.append(
+                        f"- {npc.id}：{decision.decision}；行为：{decision.action_hint}；语气：{decision.tone}"
+                    )
+
+            await self._progress("writer", "按NPC决策改稿中")
             out = await run_writer(
                 self.llm,
                 self.session.world,
@@ -129,33 +224,30 @@ class TurnRunner:
                 rule_bundle=rule_bundle,
                 scene_id=scene,
                 preset=self.preset,
+                prior_output=first,
                 actor_decisions="\n".join(decisions),
+                own_decisions="\n".join(f"- {name}：{question}" for name, question in own),
                 rewrite_note=rewrite_note,
                 writer_directive=writer_directive,
                 model=self.settings.resolved_model("story"),
                 temperature=0.8,
             )
+            participants |= {q.npc_id for q in out.actor_questions}
 
-        return out
+        # 改稿后仍冒出的上缴：一轮只跑一次两段式，不再追派。
+        notes.extend(self._repeat_notes(out))
+        return WriteResult(output=out, notes=notes, participants=sorted(participants))
 
-    def _deferred_actor_notes(self, out) -> list[dict]:
-        """Notes for deep choices not dispatched to an isolated Actor.
-
-        Two cases: a second-pass question with a ticket (recursion guard, we
-        only run one two-stage loop per turn), or a question for an NPC
-        without a ticket (ghostwritten by the writer). Both are surfaced as
-        minor issues instead of being silently dropped.
-        """
-        notes = []
-        for q in out.actor_questions:
-            npc = self.session.world.npcs.get(q.npc_id)
-            name = npc.id if npc else q.npc_id
-            if self._actor_ticket(q.npc_id):
-                desc = f"二稿仍提出{name}的未决深抉择（{q.question[:40]}），本回合不再追派 Actor"
-            else:
-                desc = f"{name} 无 Actor 配给，该深抉择已由编剧代笔（{q.question[:40]}）"
-            notes.append({"level": "minor", "desc": desc})
-        return notes
+    def _repeat_notes(self, out) -> list[dict]:
+        """改稿后仍上缴的问题：一轮只跑一次两段式，不再追派（minor，留痕不静默）。"""
+        return [
+            {
+                "level": "minor",
+                "desc": f"改稿后仍提出{q.npc_id or '未署名角色'}的未决深抉择"
+                f"（{q.question[:40]}），本回合不再追派",
+            }
+            for q in out.actor_questions
+        ]
 
     # ------------------------------------------------------------------
     # Main entry
@@ -205,16 +297,19 @@ class TurnRunner:
                 self.session.ledger.save.active_lore_ids, hits
             )
 
-        out = await self._write_turn(
+        result = await self._write_turn(
             player_input,
             scene=scene,
             rule_bundle=rule_bundle,
             writer_directive=writer_directive,
         )
+        out = result.output
 
         if self.settings.qc_enabled:
             await self._progress("qc", "质检员审校中")
-            qc_participants = ["player"] + [q.npc_id for q in out.actor_questions]
+            # 两稿上缴过的角色都进比对基准：二稿不再提，不代表这一拍没发生过
+            # （诊断成因 #6：participants 侧漏会让相关 NPC 从质检里掉出去）。
+            qc_participants = ["player"] + [pid for pid in result.participants if pid != "player"]
             qc = await run_qc(
                 self.llm,
                 self.session.world,
@@ -260,7 +355,7 @@ class TurnRunner:
                 },
                 events=[],
             ),
-            conflicts=issues + self._deferred_actor_notes(out),
+            conflicts=issues + result.notes,
             created_at=now,
             updated_at=now,
         )
@@ -285,12 +380,13 @@ class TurnRunner:
                 parts.append(f"（玩家要求：{note}）")
             rewrite_note = "；".join(parts)
 
-        out = await self._write_turn(
+        result = await self._write_turn(
             latest.player_input,
             scene=scene,
             rewrite_note=rewrite_note,
             writer_directive=latest.writer_directive,
         )
+        out = result.output
 
         if self.settings.qc_enabled:
             await self._progress("qc", "质检员审校中")
@@ -327,7 +423,7 @@ class TurnRunner:
             writer_directive=latest.writer_directive,
             prose=prose,
             side_effects=side_effects,
-            conflicts=issues + self._deferred_actor_notes(out),
+            conflicts=issues + result.notes,
             created_at=now,
             updated_at=now,
         )

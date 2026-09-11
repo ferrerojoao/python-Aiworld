@@ -20,6 +20,11 @@ Assembly order（2026-09-11 三级分层）：写作纪律**分级**并连成一
 
 分级的目的：让模型分清「错了会坏数据」与「这样写更好」。此前两者混在同一个
 「绝对不可违背」的箱子里，模型只能一律照办——越写越保守，什么都不敢写。
+
+同日另补（深抉择流程修复）：
+- 二级「抉择归属」条末尾下发**本轮可上缴名单**（在场 ∩ 配 Actor），编剧不必再从
+  各人名后的括号自行推断谁不能上缴；
+- 一级收下 ``actor_questions`` 的**条目结构**（此前错放在二级的括号里），并给带值样例。
 """
 
 from __future__ import annotations
@@ -304,7 +309,7 @@ def writer_identity() -> list[str]:
     ]
 
 
-def writer_story_rules(player_name: str = "玩家") -> list[str]:
+def writer_story_rules(player_name: str = "玩家", roster: list[str] | None = None) -> list[str]:
     """二级 · 情节合理性：信息边界 / 抉择归属 / 设定一致 / 连续性 / 不出戏。
 
     2026-09-11 由「金科玉律（绝对不可违背）」改名并**降级**：这些规则违反会让
@@ -314,21 +319,35 @@ def writer_story_rules(player_name: str = "玩家") -> list[str]:
 
     ``player_name`` 走 ``player_display_name``：context 里提到玩家一律写其**姓名**
     （同日用户改口径，此前是写「玩家」）；主角名未设定时退化为「玩家」。
+
+    ``roster`` 是**本轮可上缴名单**（在场 ∩ 配 Actor，由 ``build_work_order`` 算）。
+    这份名单必须显式下发：此前编剧只能自己聚合各人名后「（配 Actor）/（导演代笔）」
+    的括号去推谁不能上缴，推错一格就会把无票角色的深抉择上缴上去，而引擎按票
+    丢弃 → 那一拍永远是空的（同日用户报的第二类漏洞）。字段结构不在这里讲——
+    那属于一级「输出格式」。
     """
     if player_name == "玩家":
         ctx_clause = "「玩家」"
     else:
         ctx_clause = f"玩家姓名「{player_name}」，不要写成「玩家」"
+    if roster:
+        roster_clause = (
+            "本轮可上缴深抉择的角色：" + "、".join(roster) + "。"
+            "其余角色一律由你直接决定并写进正文，不要为他们上缴。"
+        )
+    else:
+        roster_clause = "本轮没有任何角色可上缴深抉择，所有抉择都由你直接决定并写进正文。"
     return [
         "【二级 · 情节合理性】",
         "信息边界（角色不是你）：事件日志、幕后注、世界书都是你案头的编剧资料，角色本人并不知道——"
         "每个角色开口前核对台词是否在他已知范围内（在场 NPC 见工作单「已知集」清单）。"
         "幕后注与私密事件的真相绝不能从不该知道的人嘴里说出（知情者当场坦白除外，那是新戏）；"
         "无人物卡的即兴角色只知道眼前可见的东西。",
-        "抉择归属：标（配 Actor）的 NPC 撞上深抉择（内心判断 / 涉密反应 / 是否信任）时，"
-        "你不得替他决定，必须在输出里填 actor_questions（npc_id / question / context），"
-        "引擎会派他的 Actor 决定后回来再成文；标（导演代笔）的 NPC 或普通对话由你直接写出即可。"
-        f"context 的人称约定（只约束该字段，正文照旧）：以该 NPC 为「你」，提到玩家一律写{ctx_clause}，"
+        "抉择归属：标（配 Actor）的角色撞上深抉择（内心判断 / 涉密反应 / 是否信任）时，"
+        "你不得替他决定——把这一拍写到抉择点为止（不要替他写出结果），在 actor_questions 里上缴，"
+        "引擎会让他的 Actor 决定后再把整场写全；标（导演代笔）的角色或普通对话由你直接写出来。"
+        + roster_clause
+        + f"context 的人称约定（只约束该字段，正文照旧）：以该 NPC 为「你」，提到玩家一律写{ctx_clause}，"
         "不得同句混指；context 只写该 NPC 本人会知道的情境，禁止写只有你知道的动机、私密或幕后注。",
         "设定一致（位置）：在场名单是最近一次记录的快照，可能已过期——结合每人最后被目击的时刻"
         "与其人物卡合理推断他此刻在哪，找到、扑空、他挪了地方都是合理的叙事，"
@@ -364,14 +383,22 @@ def writer_output_format() -> list[str]:
 
     位置：紧跟三级预设块之后，使 二级 → 三级 → 一级 连成完整梯队，资料区
     不被切开（2026-09-11 用户调整，此前置于资料区与事件日志之间）。
+
+    同日迁入：``actor_questions`` 的**条目结构**。此前字段名塞在二级的括号里、
+    模板里只有一个空数组，模型得自己猜 ``npc_id`` 填什么——填「你」「玩家」或
+    自造 id 都能通过校验，然后静默匹配不上（用户追问点）。字段结构属于格式层，
+    迁到一级并给出带值的样例。``prose`` 一节补写「全文 / 不是续写」，用于压住
+    改稿时只写后半段的倾向。
     """
     return [
         "【一级 · 输出格式】",
         "输出必须是 JSON 对象，字段：",
-        '{"prose": "正文全文（必填，直接成稿）", "summary": "一句话剧情摘要（不超过30字）", "actor_questions": []}',
-        "prose：本场戏正文，唯一正文字段。",
+        '{"prose": "正文全文", "summary": "一句话摘要（不超过30字）",'
+        ' "actor_questions": [{"npc_id": "朱明", "question": "…", "context": "…"}]}',
+        "prose：本场戏正文全文，从第一句话开始（不是续写、不是只写改动的部分）。",
         "summary：本场发生的核心事件摘要，供事件日志使用。",
-        "actor_questions：需要派 Actor 的深抉择列表，没有则空数组。",
+        "actor_questions：每项都要写全 npc_id / question / context；npc_id 填在场名单方括号里的"
+        "角色名（如 朱明），不得写「你」「玩家」或自造 id；没有深抉择时给空数组 []。",
         "时间、地点、在场者、私密情境等世界变化都由引擎从你的正文里结算——你只把变化写清楚"
         "（如「天黑了」「走出网吧」），不要输出 location、participants、time_hint、private 或其他任何字段。",
     ]
@@ -579,7 +606,14 @@ def build_work_order(
         parts += writer_identity()
         # ── 三级写作纪律：二级 → 三级 → 一级 连成完整梯队（2026-09-11 用户调整）
         # 二级 · 情节合理性（信息边界 / 抉择归属 / 设定一致 / 连续性 / 不出戏）
-        parts += writer_story_rules(player_display_name(ledger))
+        # roster = 在场 ∩ 配 Actor：本轮谁可以被上缴深抉择（零 LLM 的配置量）。
+        # 编剧据此决定该不该为某个角色的抉择停笔，引擎事后也按同一份名单裁决。
+        roster = [
+            pid
+            for pid in present_ids
+            if (npc := world.npcs.get(pid)) is not None and npc.has_actor
+        ]
+        parts += writer_story_rules(player_display_name(ledger), roster)
         # 三级 · 文风与剧情倾向（预设；默认遵循，可灵活）
         parts += writer_style_block(preset)
         # 一级 · 输出格式（全表唯一的硬边界）
