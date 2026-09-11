@@ -489,12 +489,11 @@ async def import_world(request: Request, sid: str, body: ImportWorldBody):
 
 @router.post("/sessions/{sid}/reset")
 async def reset_session(request: Request, sid: str):
-    from app.runtime.session import rebuild_world_instance, world_start_time, write_opening_event
+    from app.runtime.session import world_start_time, write_opening_event
 
     session = _get_session(request, sid)
-    # 世界实例从模板重建（演化和编辑全清），运行态清零，开场重建。
-    template_root = Path(request.app.state.settings.content_root) / session.world.meta.id
-    rebuild_world_instance(session, template_root)
+    # 世界实例原地保留（工作台对概览/NPC 卡/场景/世界书的编辑不丢），
+    # 只清运行态：事件、候选、实体演化、目标、知情覆盖等，开场重建。
     save = session.ledger.save
     save.clock = world_start_time(session.world)
     save.meta.next_event_id = 1

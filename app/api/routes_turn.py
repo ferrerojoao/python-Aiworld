@@ -145,7 +145,16 @@ async def adopt_candidate(request: Request, sid: str, candidate_id: str):
 @router.post("/{sid}/turns/{turn_id}/reroll")
 async def reroll_turn(request: Request, sid: str, turn_id: str, body: RerollBody):
     session = _get_session(request, sid)
-    runner = request.app.state.turn_runner_factory(session)
+    # 与 /turn 相同：重抽的 LLM 调用也套 TraceRecorder 并挂到 debug_trace，
+    # 否则调试面板完全看不到重抽过程（2026-09-11 用户实测反馈）。
+    trace = TraceRecorder(request.app.state.llm)
+    runner = TurnRunner(
+        session,
+        trace,
+        request.app.state.settings,
+        preset=request.app.state.global_preset,
+    )
+    session.debug_trace = trace.entries
     try:
         candidate = await runner.reroll(turn_id, mode=body.mode, note=body.note)
     except KeyError as exc:

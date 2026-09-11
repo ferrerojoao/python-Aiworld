@@ -304,7 +304,10 @@ PendingTurn（内存事务上下文）
      就不完整，照用必然缺戏；2026-09-11 修复）。第二稿输入 = 一稿正文以 **assistant
      消息回填**（questions 清空）+ 按落点分两块指令：可派者（在场 ∩ 配 Actor，npc_id
      经 `_resolve_npc` 纠偏）附 Actor 决定；不可派者（无票 / 不在场 / 无法识别）明说
-     「由你直接拍板、不要把这一拍留空」→ 输出整场全文（正常回合 1 次，上缴 2~3 次）
+     「由你直接拍板、不要把这一拍留空」→ 输出整场全文 + **summary 同样覆盖整场**
+     （2026-09-11 实测：二稿指令只提正文时，模型 summary 只写补写的那一拍，事件日志
+     只剩后半段——故二稿指令与一级 summary 行都明写"覆盖整场/合入上一稿摘要"）
+     （正常回合 1 次，上缴 2~3 次）
   5. （合并后无独立说书人调用；正文一律由编剧成文）
   6. 质检（必经）：文风（局部改写）/泄漏（参照区比对）/禁用词 → 成品正文 + 修改记录
   7. SSE 交付候选区 → 玩家选择采纳某一候选 / 唯一候选自动采纳（commit，§4）→ 提交后结算（§5.7）
@@ -557,6 +560,7 @@ GET    /api/sessions/{sid}/ledger/events?cursor=   # 事件日志（玩家视角
 GET    /api/sessions/{sid}/world            # 世界工作台（概览/世界书/场景/NPC/轴/事件）
 PUT    /api/sessions/{sid}/world            # 编辑存档的世界实例（设计 C）
 POST   /api/sessions/{sid}/world/save-as    # 另存为新世界资产包
+POST   /api/sessions/{sid}/reset            # 重置存档：事件/候选/运行态清零、开场重写；世界实例原地保留（2026-09-11 改版：工作台对概览/NPC 卡/场景/世界书的编辑不再被模板覆盖）
 GET    /api/sessions/{sid}/world/export     # 导出资产包（仅世界资产）
 GET    /api/sessions/{sid}/export           # 导出存档（save.json + events.jsonl + world/，2026-09-08）
 POST   /api/saves/import                    # 导入存档（同名自动改名、缺世界则建档，2026-09-08）
@@ -583,6 +587,8 @@ POST /api/sessions/{sid}/turn  {"input": "…"}
 GET    /api/sessions/{sid}/candidates/pending   # 恢复未决候选列表（断线/重启后用；按 turn 分组）
 POST   /api/sessions/{sid}/candidates/{candidate_id}/adopt
 POST   /api/sessions/{sid}/turns/{turn_id}/reroll   {"mode": "rephrase|redirect|retarget", "note": "…"}
+  # 重抽与 /turn 同构：LLM 调用同样套 TraceRecorder 并挂 session.debug_trace（2026-09-11：
+  # 此前 reroll 用裸 LLM，调试面板完全看不到重抽过程）
 POST   /api/sessions/{sid}/turns/{turn_id}/discard
 ```
 

@@ -396,7 +396,7 @@ def writer_output_format() -> list[str]:
         '{"prose": "正文全文", "summary": "一句话摘要（不超过30字）",'
         ' "actor_questions": [{"npc_id": "朱明", "question": "…", "context": "…"}]}',
         "prose：本场戏正文全文，从第一句话开始（不是续写、不是只写改动的部分）。",
-        "summary：本场发生的核心事件摘要，供事件日志使用。",
+        "summary：本场戏从头到尾的核心事件摘要，供事件日志使用；重写稿也不能只写改动的部分。",
         "actor_questions：每项都要写全 npc_id / question / context；npc_id 填在场名单方括号里的"
         "角色名（如 朱明），不得写「你」「玩家」或自造 id；没有深抉择时给空数组 []。",
         "时间、地点、在场者、私密情境等世界变化都由引擎从你的正文里结算——你只把变化写清楚"

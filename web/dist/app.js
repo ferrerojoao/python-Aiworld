@@ -138,6 +138,7 @@ async function rerollCurrent() {
     state.candidates.push(data);
     state.currentCandidateId = data.candidate_id;
     renderCandidateMessage();
+    loadDebugTrace();  // 重抽过程也进调试面板
   } catch (e) {
     clearPipelineStatus();
     addMessage("npc", `⚠ 重抽失败：${e.message}`);
@@ -1376,7 +1377,7 @@ function readFileAsBase64(file) {
 }
 
 async function resetWorld() {
-  if (!confirm("确定重置当前世界存档？事件、候选、设置都会被清空。")) return;
+  if (!confirm("确定重置当前世界存档？事件、候选与运行状态会清空；工作台对概览、NPC 卡、场景、世界书的修改会保留。")) return;
   await api(`/api/sessions/${state.sid}/reset`, { method: "POST" });
   clearCandidateControls();
   await refreshState();

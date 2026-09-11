@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 
 from fastapi.testclient import TestClient
@@ -55,6 +56,13 @@ def test_reroll_keeps_old_and_adopt_cleans(tmp_path):
         )
         assert r.status_code == 200
         second_id = r.json()["candidate_id"]
+
+        # 重抽的 LLM 调用也要进调试面板（此前 reroll 用裸 LLM，trace 不可见）。
+        # 「玩家要求：<note>」是重抽独有的调用痕迹，首回合的 trace 里不会有。
+        trace_after_reroll = client.get(f"/api/sessions/{sid}/debug/latest").json()["trace"]
+        assert trace_after_reroll
+        blob = json.dumps(trace_after_reroll, ensure_ascii=False)
+        assert "玩家要求：温和一点" in blob
 
         pending = client.get(f"/api/sessions/{sid}/candidates/pending").json()["candidates"]
         assert len(pending) == 2
@@ -303,12 +311,26 @@ def test_world_browser_and_reset(tmp_path):
         assert len(world["npcs"]) > 0
         assert len(world["events"]) >= 1
 
+        # 工作台编辑实例（改一张 NPC 卡 + 一条世界书），随后重置应保留。
+        npc_id = next(iter(world["npcs"]))
+        world["npcs"][npc_id]["persona"] = "重置后应保留的人设"
+        world["lorebook"] = list(world.get("lorebook") or []) + [
+            {"id": "reset_probe", "keywords": ["重置探针"], "body": "reset lore probe"}
+        ]
+        put = client.put(f"/api/sessions/{sid}/world", json=world)
+        assert put.status_code == 200
+
         reset = client.post(f"/api/sessions/{sid}/reset")
         assert reset.status_code == 200
         events = client.get(f"/api/sessions/{sid}/ledger/events").json()["events"]
         # After a reset only the world's opening event remains.
         assert len(events) == 1
         assert events[0]["source"] == "opening"
+
+        # 重置不清世界实例：工作台编辑（NPC 卡 / 世界书）原样保留。
+        world2 = client.get(f"/api/sessions/{sid}/world").json()
+        assert world2["npcs"][npc_id]["persona"] == "重置后应保留的人设"
+        assert any(e["id"] == "reset_probe" for e in world2["lorebook"])
 
 
 def test_world_start_time_roundtrip(tmp_path):

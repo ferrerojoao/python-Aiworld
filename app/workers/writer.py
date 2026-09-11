@@ -72,7 +72,10 @@ async def run_writer(
             blocks.append(
                 "【本轮不派 Actor、必须由你直接拍板的部分（不要把这一拍留空）】\n" + own_decisions
             )
-        blocks.append("输出整场正文全文，从第一句话开始（不是续写、不是只写改动的部分）。")
+        blocks.append(
+            "输出整场正文全文（从第一句话开始，不是续写、不是只写改动的部分）；"
+            "summary 同样覆盖整场——把上一稿摘要与新增部分合在一起，不能只写补写的那一拍。"
+        )
         messages.append({"role": "user", "content": "\n".join(blocks)})
     if rewrite_note:
         messages.append({"role": "user", "content": f"改写要求：{rewrite_note}"})

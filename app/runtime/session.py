@@ -128,12 +128,3 @@ def open_session(save_root: str | Path, save_name: str) -> GameSession:
     if not instance_dir.is_dir():
         raise FileNotFoundError(f"world instance not found: {instance_dir}")
     return GameSession(instance_dir, save_dir)
-
-
-def rebuild_world_instance(session: GameSession, template_root: str | Path) -> None:
-    """Reset semantics: rebuild the writable instance from the template."""
-    template_root = Path(template_root)
-    shutil.rmtree(session.world_dir, ignore_errors=True)
-    session.world_dir.mkdir(parents=True, exist_ok=True)
-    copy_world_instance(template_root, session.world_dir)
-    session.reload_world()
