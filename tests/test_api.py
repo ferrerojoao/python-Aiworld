@@ -178,6 +178,62 @@ def test_director_confirm_override(tmp_path):
         assert event["location"] == "网吧"
 
 
+def test_director_retire_marks_lifecycle(tmp_path):
+    """导演窗口 retire：确认后 entities.lifecycle = retired（present_at 跳过），
+    并落一条导演留痕事件；退场者从此不在任何在场名单里。"""
+    from app.core.llm import FakeLLM
+
+    class PrefixKeyLLM(FakeLLM):
+        def _key(self, messages):
+            for msg in reversed(messages):
+                if msg.get("role") in {"user", "system"}:
+                    content = msg.get("content", "")
+                    for prefix in self.responses:
+                        if content.startswith(prefix):
+                            return prefix
+            return "*"
+
+    llm = PrefixKeyLLM(
+        {
+            "让朱明永久退场": {
+                "reply": "好的，朱明将永久退场。",
+                "action": {"type": "retire", "payload": {"npc_id": "朱明"}},
+            }
+        }
+    )
+    with _make_client(tmp_path, llm=llm) as client:
+        r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
+        sid = r.json()["sid"]
+        session = client.app.state.sessions[sid]
+
+        chat = client.post(
+            f"/api/sessions/{sid}/director",
+            json={"topic": "chat", "message": "让朱明永久退场"},
+        )
+        assert chat.status_code == 200
+        pending = chat.json()["pending_action"]
+        assert pending["type"] == "retire"
+
+        # 确认前未标记。
+        assert session.ledger.save.entities.get("朱明") is None
+        assert all(e["source"] != "director" for e in session.ledger.events)
+
+        confirm = client.post(
+            f"/api/sessions/{sid}/director",
+            json={"topic": "confirm", "action": pending},
+        )
+        assert confirm.status_code == 200
+        event = confirm.json()["event"]
+        assert event["source"] == "director"
+        assert "退场" in event["summary"]
+
+        # 标记生效 + present_at 跳过（无论快照在哪都不再出现在任何场景）。
+        entity = session.ledger.save.entities["朱明"]
+        assert entity.lifecycle == "retired"
+        for scene in session.world.scenes:
+            assert "朱明" not in session.ledger.present_at(scene.id)
+
+
 def test_player_profile_update(tmp_path):
     with _make_client(tmp_path) as client:
         r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
@@ -616,6 +672,34 @@ def test_settings_and_director_chat(tmp_path):
         settings = client.get("/api/settings").json()
         assert settings["llm_base_url"] == "http://example.test/v1"
         assert settings["reasoning_effort"] == "low"
+
+
+def test_settings_persist_across_restart(tmp_path):
+    """UI 改的推理等级/质检开关落盘 data/settings.json，重启（新 app 实例）后恢复。"""
+    with _make_client(tmp_path) as client:
+        put = client.put(
+            "/api/settings",
+            json={"reasoning_effort": "high", "qc_enabled": False},
+        )
+        assert put.status_code == 200
+        state = client.get("/api/settings").json()
+        assert state["reasoning_effort"] == "high"
+        assert state["qc_enabled"] is False
+        assert (tmp_path / "data" / "settings.json").exists()
+
+    # 重启 = 全新 Settings（回到 env 默认）+ 同一 data_dir → lifespan 应用覆盖层。
+    restarted = create_app(
+        settings=Settings(
+            content_root=tmp_path,
+            data_dir=tmp_path / "data",
+            candidate_ttl_days=7,
+        ),
+        llm=FakeLLM({"*": GENERIC_LLM_RESPONSE}),
+    )
+    with TestClient(restarted) as client:
+        state = client.get("/api/settings").json()
+        assert state["reasoning_effort"] == "high"
+        assert state["qc_enabled"] is False
 
 
 def _candidate_id_from_sse(text: str) -> str:

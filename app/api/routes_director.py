@@ -168,6 +168,31 @@ def _execute_action(session, action_type: str, payload: dict) -> dict:
         ledger.persist_save()
         return {"ok": True, "action": action_type, "goal": goal.model_dump()}
 
+    if action_type == "retire":
+        # 角色退场：玩家确认后打 lifecycle 标（不可逆），并落一条导演留痕事件。
+        npc_id = _resolve_npc_ref(session, payload.get("npc_id", ""))
+        if npc_id is None:
+            raise HTTPException(status_code=404, detail=f"npc not found: {payload.get('npc_id')}")
+        from app.ledger.save import EntityRuntime
+
+        entity = ledger.save.entities.setdefault(npc_id, EntityRuntime())
+        entity.lifecycle = "retired"
+        event = {
+            "id": ledger.allocate_event_id(),
+            "kind": "narrative",
+            "at": ledger.save.clock,
+            "location": None,
+            "participants": [npc_id],
+            "known_by": sorted({npc_id, "player"}),
+            "body": "",
+            "summary": f"{npc_id}退场（永久离开舞台）",
+            "player_input": None,
+            "source": "director",
+        }
+        ledger.append(event)
+        ledger.persist_save()
+        return {"ok": True, "action": action_type, "event": event, "npc": npc_id}
+
     if action_type == "override":
         subject = _resolve_npc_ref(session, payload.get("subject", ""))
         location = payload.get("location", "")

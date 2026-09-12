@@ -365,13 +365,19 @@ def writer_style_block(preset: NarrativePreset) -> list[str]:
     这一级是**偏好**不是硬边界。写明等级不是给它降格，而是让模型敢于为了
     戏的张力偏离它——此前它与「绝对不可违背」的规则混在一起，模型只能
     一律照办，结果是越写越保守。抬头只留等级名，不带解释句（同日用户判定）。
+
+    style_sample（文风示范，2026-09-11）：紧贴 guidelines 注入，只留
+    「文风示范：」标记 + 原文——贴身禁令经用户实测后要求去掉（22:47 功能
+    上线时带禁令，23:08 用户要求先试无禁令版）。空 = 不注入，零成本。
     """
-    if not preset.writer_guidelines:
-        return []
-    return [
-        "【三级 · 文风与剧情倾向】",
-        preset.writer_guidelines,
-    ]
+    lines: list[str] = []
+    if preset.writer_guidelines:
+        lines += ["【三级 · 文风与剧情倾向】", preset.writer_guidelines]
+    if preset.style_sample:
+        if not lines:
+            lines.append("【三级 · 文风与剧情倾向】")
+        lines += ["文风示范：", f"「{preset.style_sample}」"]
+    return lines
 
 
 def writer_output_format() -> list[str]:
@@ -498,12 +504,14 @@ def build_director_chat_system(
         "- 记忆注入 inject_memory：玩家要求给某 NPC 私下注入一条记忆 → payload {npc_id, memory}（只有他知道）",
         "- 事件访问改判 access_rejudge：玩家要求某事件公开或私密 → payload {event_id, known_by: [知情者...] 或 null}",
         "- 剧情目标 set_goal：玩家要求设立/废弃剧情目标 → payload {text, kind: big|small, subject?: player|npc_id, big_goal_id?, npc_id?}（设立）或 {goal_id, status: abandoned}（废弃）；大目标=主线，小目标=支线；subject=目标归属者（默认 player，玩家替 NPC 设立时给该 NPC id），活动目标上限 6 条",
+        "- 角色退场 retire：玩家要求某人永久退场（死亡/远行/消失，不再出现在任何场景）→ payload {npc_id}；"
+        "不可逆，退场者从此退出在场推导与主动调度",
         "（人物卡编辑、Actor 档位、转正/场景注册一律由世界工作台直接编辑，不走导演窗口。）",
         "纪律：不得替玩家决定是否执行；一旦要执行必须返回 action 供玩家确认。",
         "讨论剧情时，若结论明确，最后给一句简短的输入建议（玩家可直接复制进正文框）。",
         "",
         "输出必须是 JSON 对象，字段：",
-        '{"reply": "你的回复文本（直接回答玩家，必填）", "action": null | {"type": "override|inject_memory|access_rejudge|set_goal", "payload": {"字段": "值"}}}',
+        '{"reply": "你的回复文本（直接回答玩家，必填）", "action": null | {"type": "override|inject_memory|access_rejudge|set_goal|retire", "payload": {"字段": "值"}}}',
         "reply：给玩家的戏外回复。",
         "action：只有当玩家明确要求执行幕后操作时才填；否则为 null。",
         "注意：payload 里的 npc_id / subject 必须使用角色中文名（与在场名单/角色资料一致），不要自造英文 id。",

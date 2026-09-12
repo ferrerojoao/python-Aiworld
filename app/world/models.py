@@ -62,10 +62,12 @@ class NarrativePreset(BaseModel):
 
     writer_guidelines: the one guidance block (scene shaping + prose style).
     banned_words: hard-blocked words enforced by the QC pass.
+    style_sample: 文风示范原文（三级块内随禁令注入；空 = 不注入）。
     """
 
     writer_guidelines: str = ""
     banned_words: list[str] = Field(default_factory=list)
+    style_sample: str = ""  # 文风示范原文；空 = 不注入
 
 
 class WorldContent(BaseModel):

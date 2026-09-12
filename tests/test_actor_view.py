@@ -144,6 +144,27 @@ def test_writer_prompt_is_tiered(session):
     assert "金科玉律" not in order
 
 
+def test_style_sample_injected_with_adjacent_ban(session):
+    """文风示范（2026-09-11）：三级块内紧贴准则注入，只留「文风示范：」
+    标记 + 原文（贴身禁令经用户要求已去掉，先试无禁令版）；空 = 不注入。"""
+    session.world.presets.writer_guidelines = "文风偏好：白描为主。"
+    session.world.presets.style_sample = "他把伞收了，雪就落满了肩。"
+
+    order = build_work_order("writer", session.world, session.ledger, "网吧")
+    assert "文风示范：" in order
+    assert "「他把伞收了，雪就落满了肩。」" in order
+    # 禁令已去掉（用户 23:08 要求）。
+    assert "不得以任何形式出现在正文里" not in order
+    # 示范跟在准则之后（都在三级抬头与一级之间）。
+    assert order.index("文风示范") < order.index("【一级 · 输出格式】")
+    assert order.index("文风偏好：白描为主。") < order.index("文风示范")
+
+    # 留空 = 不注入（连"文风示范"字样都不出现）。
+    session.world.presets.style_sample = ""
+    empty = build_work_order("writer", session.world, session.ledger, "网吧")
+    assert "文风示范" not in empty
+
+
 def test_writer_roster_clause_follows_presence_and_tickets(session):
     """本轮可上缴名单 = 在场 ∩ 配 Actor，必须显式下发（2026-09-11）：
     编剧不再从各人名后的括号自行推断谁不能上缴——推错一格就会上缴无票角色，

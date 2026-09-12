@@ -227,6 +227,7 @@ async def list_events(request: Request, sid: str):
 class PresetBody(BaseModel):
     writer_guidelines: str | None = None
     banned_words: list[str] | None = None
+    style_sample: str | None = None
 
 
 def _apply_preset_update(preset, body: PresetBody) -> None:
@@ -234,6 +235,8 @@ def _apply_preset_update(preset, body: PresetBody) -> None:
         preset.writer_guidelines = body.writer_guidelines
     if body.banned_words is not None:
         preset.banned_words = body.banned_words
+    if body.style_sample is not None:
+        preset.style_sample = body.style_sample
 
 
 class PlayerBody(BaseModel):
@@ -566,6 +569,7 @@ async def update_system_settings(request: Request, body: SettingsBody):
         s.reasoning_effort = "" if effort in {"auto", "none", ""} else effort
     if body.qc_enabled is not None:
         s.qc_enabled = body.qc_enabled
+    from app.config import save_settings_overrides
     from app.core.llm import LLMGateway
 
     request.app.state.llm = LLMGateway(
@@ -575,4 +579,6 @@ async def update_system_settings(request: Request, body: SettingsBody):
         timeout=s.llm_timeout_seconds,
         reasoning_effort=s.reasoning_effort,
     )
+    # UI 改的设置落盘（data/settings.json），重启后由 lifespan 覆盖回来。
+    save_settings_overrides(s.data_dir / "settings.json", s)
     return {"ok": True}

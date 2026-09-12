@@ -10,7 +10,12 @@ from fastapi.staticfiles import StaticFiles
 from app.api.routes_director import router as director_router
 from app.api.routes_sessions import router as sessions_router
 from app.api.routes_turn import router as turn_router
-from app.config import Settings, get_settings
+from app.config import (
+    Settings,
+    apply_settings_overrides,
+    get_settings,
+    load_settings_overrides,
+)
 from app.core.llm import LLMGateway
 from app.core.presets import load_global_preset
 from app.runtime.session import GameSession, open_session
@@ -22,6 +27,10 @@ def create_app(settings: Settings | None = None, llm=None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # UI 改过的设置（data/settings.json）覆盖 env 默认值，重启不丢。
+        overrides = load_settings_overrides(settings.data_dir / "settings.json")
+        if overrides:
+            apply_settings_overrides(settings, overrides)
         app.state.settings = settings
         app.state.sessions: dict[str, GameSession] = {}
         app.state.global_preset = load_global_preset(settings.data_dir / "presets.json")
@@ -50,6 +59,7 @@ def create_app(settings: Settings | None = None, llm=None) -> FastAPI:
                 api_key=settings.llm_api_key,
                 max_concurrency=4,
                 timeout=settings.llm_timeout_seconds,
+                reasoning_effort=settings.reasoning_effort,
             )
 
         def factory(session: GameSession) -> TurnRunner:

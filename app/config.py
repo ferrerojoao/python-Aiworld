@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -112,3 +113,43 @@ def get_settings() -> Settings:
     settings = Settings()
     settings.check_host_security()
     return settings
+
+
+# UI 可改且需要跨重启保留的设置项（PUT /api/settings 落盘，启动时覆盖 env 值）。
+# 注意含 llm_api_key：settings.json 必须在 .gitignore 里。
+SETTINGS_OVERRIDE_FIELDS = (
+    "llm_base_url",
+    "llm_api_key",
+    "model_main",
+    "model_cheap",
+    "reasoning_effort",
+    "qc_enabled",
+)
+
+
+def load_settings_overrides(path: str | Path) -> dict:
+    """Read UI-persisted settings overrides. Missing/corrupt file = no overrides."""
+    p = Path(path)
+    if not p.exists():
+        return {}
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {k: raw[k] for k in SETTINGS_OVERRIDE_FIELDS if k in raw}
+
+
+def apply_settings_overrides(settings: Settings, overrides: dict) -> None:
+    """Apply persisted overrides in place (env values stay as fallback)."""
+    for key, value in overrides.items():
+        setattr(settings, key, value)
+
+
+def save_settings_overrides(path: str | Path, settings: Settings) -> None:
+    """Persist the UI-editable settings snapshot (PUT /settings writes here)."""
+    from app.core.store import write_json_atomic
+
+    data = {k: getattr(settings, k) for k in SETTINGS_OVERRIDE_FIELDS}
+    write_json_atomic(Path(path), data)

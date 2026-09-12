@@ -603,6 +603,58 @@ def test_audit_invented_id_rescued_by_alias(session, settings):
     assert move["location"] == "zhuming_jia"
     assert "朱明" not in session.ledger.present_at("鱼市")
 
+
+def test_audit_lifecycle_retire_leaves_trace_event(session, settings):
+    """审计判永久退场：打 retired 标的同时落一条退场留痕事件（2026-09-12）——
+    事件日志是长期记忆比对基准，静默退场会让"他不在了"无史实可引。
+    已退场者不重复留痕。"""
+    writer_out = {
+        "prose": "一声闷响，朱明倒在柜台边，再也没有起来。",
+        "summary": "朱明在网吧出事身亡。",
+        "actor_questions": [],
+    }
+    qc_out = {"status": "pass", "prose": writer_out["prose"], "issues": []}
+    audit_out = {
+        "location": "网吧",
+        "participants": ["player", "朱明"],
+        "private": False,
+        "delta_minutes": 5,
+        "lifecycle": [{"npc_id": "朱明", "status": "retired"}],
+    }
+    llm = PrefixKeyLLM({"玩家输入：": writer_out, "正文：": qc_out, "已采纳正文": audit_out})
+    runner = _runner(session, llm, settings)
+    candidate = asyncio.run(runner.run_turn("推了朱明一把"))
+    asyncio.run(runner.adopt(candidate.candidate_id))
+
+    assert session.ledger.save.entities["朱明"].lifecycle == "retired"
+    evs = session.ledger.narratives
+    main, trace = evs[-2], evs[-1]
+    assert "退场" in trace["summary"]
+    assert trace["participants"] == ["朱明"]
+    assert trace["known_by"] == ["player", "朱明"]
+    assert "朱明" not in session.ledger.present_at("网吧")
+
+    # 已退场者再被判 retired 不重复留痕。
+    audit2 = dict(audit_out, delta_minutes=0, participants=["player"])
+    llm2 = PrefixKeyLLM(
+        {
+            "玩家输入：": {
+                "prose": "你在网吧坐了很久。",
+                "summary": "网吧独坐。",
+                "actor_questions": [],
+            },
+            "正文：": {"status": "pass", "prose": "你在网吧坐了很久。", "issues": []},
+            "已采纳正文": audit2,
+        }
+    )
+    runner2 = _runner(session, llm2, settings)
+    candidate2 = asyncio.run(runner2.run_turn("继续待着"))
+    asyncio.run(runner2.adopt(candidate2.candidate_id))
+    evs2 = session.ledger.narratives
+    assert "退场" not in evs2[-1]["summary"]  # 最后一轮只有主事件，无第二条留痕
+    assert sum(1 for e in evs2 if "退场" in (e.get("summary") or "")) == 1
+
+
 def test_audit_clock_to_overrides_delta(session, settings):
     """正文明确说了故事时间走到几点 → 审计 clock_to 绝对对钟，
     delta_minutes 被涵盖不再叠加；格式坏则退回估时长。"""

@@ -253,7 +253,26 @@ class Transaction:
                     from app.ledger.save import EntityRuntime
 
                     entity = self.ledger.save.entities.setdefault(npc_id, EntityRuntime())
+                    if entity.lifecycle == "retired":
+                        continue  # 已退场不重复留痕
                     entity.lifecycle = "retired"
+                    # 退场留痕（2026-09-12）：与 npc_moves/导演 retire 同口径——
+                    # 事件日志是长期记忆比对基准，静默退场会让"他不在了"无史实可引。
+                    self.ledger.append(
+                        {
+                            "id": self.ledger.allocate_event_id(),
+                            "kind": "narrative",
+                            "at": clock,
+                            "location": None,
+                            "participants": [npc_id],
+                            "known_by": sorted({npc_id, "player"}),
+                            "body": "",
+                            "summary": f"{npc_id}退场（永久离开舞台）",
+                            "player_input": None,
+                            "source": "turn",
+                        },
+                        flush=False,
+                    )
 
         # World book: adopt rebuilds the active list from the adopted prose
         # (采纳阶段：清空 → 命中已采纳正文 → 列表 = 上轮事实优先)。

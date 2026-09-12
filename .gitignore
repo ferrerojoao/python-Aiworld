@@ -14,3 +14,4 @@ web/dist/.vite/
 scratch_saves/
 bt_all/
 bt_tt/
+data/settings.json
