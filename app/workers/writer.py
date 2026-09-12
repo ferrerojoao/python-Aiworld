@@ -37,7 +37,8 @@ async def run_writer(
       （48 字），一稿正文 100% 丢弃，模型只能凭空重排，于是只写后半段。
     - ``actor_decisions``：派了 Actor 的角色，按本人决定重写。
     - ``own_decisions``：没派 Actor 的（无票 / 不在场 / npc_id 无法识别），明说
-      「必须由你直接拍板，不要把这一拍留空」——这是第二稿能补全残稿的关键。
+      「必须由你直接拍板」——这是第二稿能补全残稿的关键（2026-09-12 去否定化：
+      原句尾还挂着一句"不要把这一拍留空"，已删——标题本身已把要求说清）。
     """
     system = build_work_order("writer", world, ledger, scene_id or "", preset=preset)
     if player_input.strip():
@@ -70,11 +71,11 @@ async def run_writer(
             blocks.append("【必须按本人决定重写的部分】\n" + actor_decisions)
         if own_decisions:
             blocks.append(
-                "【本轮不派 Actor、必须由你直接拍板的部分（不要把这一拍留空）】\n" + own_decisions
+                "【本轮不派 Actor、必须由你直接拍板的部分】\n" + own_decisions
             )
         blocks.append(
-            "输出整场正文全文（从第一句话开始，不是续写、不是只写改动的部分）；"
-            "summary 同样覆盖整场——把上一稿摘要与新增部分合在一起，不能只写补写的那一拍。"
+            "输出整场正文全文（从第一句话开始）；"
+            "summary 覆盖整场——上一稿摘要与新增部分合在一起。"
         )
         messages.append({"role": "user", "content": "\n".join(blocks)})
     if rewrite_note:

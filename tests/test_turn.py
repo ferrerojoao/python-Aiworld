@@ -117,7 +117,8 @@ def test_actor_two_stage_deep_choice(session, settings):
 
 def test_actor_questions_without_ticket_force_a_second_pass(session, settings):
     """无票角色的上缴 = 编剧停笔，一稿残缺 → 不派 Actor，但**必须走第二稿**，
-    明说「由你直接拍板、不要把这一拍留空」（2026-09-11：照用一稿必然缺戏）。"""
+    明说「必须由你直接拍板」（2026-09-11：照用一稿必然缺戏；2026-09-12 去否定化，
+    删掉原来的"不要把这一拍留空"尾巴）。"""
     writer_first = {
         "prose": "刘星和王蓉一起吃着早饭。",
         "summary": "刘星和王蓉吃早饭。",
@@ -146,7 +147,8 @@ def test_actor_questions_without_ticket_force_a_second_pass(session, settings):
     assert len(llm.calls) == 3
     second_call = llm.calls[1]
     blob = " ".join((m.get("content") or "") for m in second_call["messages"])
-    assert "王蓉" in blob and "不要把这一拍留空" in blob
+    assert "王蓉" in blob and "必须由你直接拍板" in blob
+    assert "不要把这一拍留空" not in blob
     assert any(m.get("role") == "assistant" for m in second_call["messages"])
     # 落点可见：无票的深抉择由编剧拍板（升格提示，不静默）
     assert any("王蓉" in (i.get("desc") or "") for i in candidate.conflicts)

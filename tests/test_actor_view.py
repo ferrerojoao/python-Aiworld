@@ -109,12 +109,14 @@ def test_writer_contract_pins_context_pronouns():
     assert "context 的人称约定" in rules
     assert "以该 NPC 为「你」" in rules
     assert "一律写玩家姓名「刘星」" in rules
-    assert "不要写成「玩家」" in rules
+    # 2026-09-12 去否定化：人称约定改成正向陈述，不再出现"不要写成…"。
+    assert "一句只用一个人称" in rules
+    assert "不要写成" not in rules
 
     # 主角名未设定（占位符「你」）时退化为「玩家」，不出现自相矛盾的措辞。
     fallback = "\n".join(writer_story_rules("玩家"))
     assert "一律写「玩家」" in fallback
-    assert "不要写成「玩家」" not in fallback
+    assert "不要写成" not in fallback
 
 
 def test_writer_prompt_is_tiered(session):
@@ -195,7 +197,9 @@ def test_actor_contract_explains_pronouns():
     assert "人称读法" in contract
     assert "「你」= 你自己（朱明）" in contract
     assert "「刘星」= 你的对话对象" in contract
-    assert "不要替刘星做决定" in contract
+    # 2026-09-12 去否定化：改为正向陈述（决定的归属在本人）。
+    assert "刘星的抉择留给本人" in contract
+    assert "不要替刘星做决定" not in contract
     assert "以「你知道的事」清单为准" in contract
 
     # 占位名回退：主角名未设定时仍是「玩家」。
@@ -208,6 +212,6 @@ def test_actor_work_order_injects_player_name(session):
     session.ledger.save.player.name = "刘星"
     order = build_actor_work_order(session.world, session.ledger, "朱明", "主街")
     assert "「刘星」= 你的对话对象" in order
-    assert "不要替刘星做决定" in order
+    assert "刘星的抉择留给本人" in order
     # 情境人称同口径：编剧侧拿到的也是主角名。
     assert "一律写玩家姓名「刘星」" not in order  # 该条属编剧契约，不进 Actor 工作单
