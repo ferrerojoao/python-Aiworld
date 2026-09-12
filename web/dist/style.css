@@ -844,6 +844,44 @@ button:hover {
   padding-left: 8px;
 }
 
+/* 剧情目标两级树（2026-09-12）：大目标=章节，子目标=节拍 */
+#state-goals .goal-big {
+  border-left-color: var(--accent);
+  color: var(--text);
+}
+
+#state-goals .goal-sub {
+  margin-left: 10px;
+  padding-left: 8px;
+  border-left-style: dotted;
+  font-size: 11px;
+}
+
+#state-goals .goal-sub.done {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+#state-goals .goal-loose {
+  margin-top: 8px;
+  border-left-color: transparent;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.goal-parent-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.goal-parent-row select {
+  flex: 1;
+  min-width: 0;
+}
+
 #director-output {
   font-size: 12px;
   color: var(--muted);

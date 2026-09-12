@@ -195,9 +195,13 @@ async def get_state(request: Request, sid: str):
         if len(recent) >= 3:
             break
     present_ids = session.ledger.present_at(player_scene)
+    # 目标是两级树（大目标=章节 / 小目标=节拍，2026-09-12）：状态栏需要
+    # 「active 目标 + 挂在 active 大目标下的子目标（含已完成）」才能显示章节
+    # 进度 x/y；其余历史目标（已闭合的主线、已完成/废弃的孤儿支线）不进状态栏。
+    active_ids = {g.id for g in session.ledger.save.goals if g.status == "active"}
     goals = []
     for g in session.ledger.save.goals:
-        if g.status != "active":
+        if g.status != "active" and g.big_goal_id not in active_ids:
             continue
         item = g.model_dump()
         item["subject_name"] = "玩家" if g.subject in {"", "player"} else g.subject

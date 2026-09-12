@@ -149,7 +149,7 @@ class TurnRunner:
             rewrite_note=rewrite_note,
             writer_directive=writer_directive,
             model=self.settings.resolved_model("story"),
-            temperature=0.8,
+            temperature=self.settings.temp_writer,
         )
         out = first
         notes: list[dict] = []
@@ -230,7 +230,7 @@ class TurnRunner:
                 rewrite_note=rewrite_note,
                 writer_directive=writer_directive,
                 model=self.settings.resolved_model("story"),
-                temperature=0.8,
+                temperature=self.settings.temp_writer,
             )
             participants |= {q.npc_id for q in out.actor_questions}
 

@@ -9,6 +9,7 @@ const state = {
   currentMessageEl: null,
   worldData: null,
   editMode: false,
+  goals: [],
 };
 
 async function api(path, options = {}) {
@@ -253,15 +254,41 @@ function renderLeftRail(data) {
   const goals = $("#state-goals");
   goals.innerHTML = "";
   const goalList = data.goals || [];
+  state.goals = goalList;
   if (!goalList.length) {
     goals.innerHTML = '<li class="muted">暂无（找导演设立）</li>';
   } else {
-    for (const g of goalList) {
+    // 两级树（2026-09-12）：大目标 = 章节（带 x/y 进度），子目标缩进；孤儿支线单列。
+    const owner = (g) => (g.subject_name && g.subject_name !== "玩家" ? `·${g.subject_name}` : "");
+    const bigs = goalList.filter((g) => g.kind === "big");
+    const loose = goalList.filter(
+      (g) => g.kind !== "big" && !bigs.some((b) => b.id === g.big_goal_id)
+    );
+    for (const b of bigs) {
+      const kids = goalList.filter((g) => g.big_goal_id === b.id);
+      const done = kids.filter((k) => k.status === "done").length;
       const li = document.createElement("li");
-      const big = g.kind === "big" ? "主线" : "支线";
-      const owner = g.subject_name && g.subject_name !== "玩家" ? `·${g.subject_name}` : "";
-      li.textContent = `【${big}${owner}】${g.text}`;
+      li.className = "goal-big";
+      li.textContent = `【主线${owner(b)}】${b.text}${kids.length ? `　(${done}/${kids.length})` : ""}`;
       goals.appendChild(li);
+      for (const k of kids) {
+        const sub = document.createElement("li");
+        sub.className = k.status === "done" ? "goal-sub done" : "goal-sub";
+        sub.textContent = `└【支线${owner(k)}】${k.text}`;
+        goals.appendChild(sub);
+      }
+    }
+    if (loose.length) {
+      const head = document.createElement("li");
+      head.className = "goal-loose";
+      head.textContent = "未挂靠支线";
+      goals.appendChild(head);
+      for (const g of loose) {
+        const li = document.createElement("li");
+        li.className = "goal-sub";
+        li.textContent = `【支线${owner(g)}】${g.text}`;
+        goals.appendChild(li);
+      }
     }
   }
 }
@@ -574,6 +601,38 @@ async function renderPendingAction(action) {
   const label = document.createElement("div");
   label.textContent = `待确认操作：${desc}`;
   box.appendChild(label);
+  // 设立小目标时允许当场挂到一个大目标下（2026-09-12）——否则玩家没有
+  // 任何 UI 入口建立父子关系，big_goal_id 只能靠手打 id。
+  const p = action.payload || {};
+  let parentSelect = null;
+  if (action.type === "set_goal" && p.status !== "abandoned" && (p.kind || "small") !== "big") {
+    const bigs = (state.goals || []).filter((g) => g.kind === "big");
+    if (bigs.length) {
+      const row = document.createElement("div");
+      row.className = "goal-parent-row";
+      const lab = document.createElement("label");
+      lab.textContent = "挂到主线：";
+      parentSelect = document.createElement("select");
+      const none = document.createElement("option");
+      none.value = "";
+      none.textContent = "（不挂靠）";
+      parentSelect.appendChild(none);
+      for (const b of bigs) {
+        const opt = document.createElement("option");
+        opt.value = b.id;
+        opt.textContent = b.text;
+        if (p.big_goal_id === b.id) opt.selected = true;
+        parentSelect.appendChild(opt);
+      }
+      parentSelect.onchange = () => {
+        p.big_goal_id = parentSelect.value || null;
+        label.textContent = `待确认操作：${describeAction(action)}`;
+      };
+      row.appendChild(lab);
+      row.appendChild(parentSelect);
+      box.appendChild(row);
+    }
+  }
   const actions = document.createElement("div");
   actions.className = "pending-action-buttons";
   const confirm = document.createElement("button");
@@ -581,6 +640,7 @@ async function renderPendingAction(action) {
   confirm.className = "danger";
   confirm.onclick = async () => {
     box.remove();
+    if (parentSelect) p.big_goal_id = parentSelect.value || null;
     try {
       await api(`/api/sessions/${state.sid}/director`, {
         method: "POST",
@@ -620,6 +680,17 @@ function describeAction(action) {
       return `角色转正：为「${p.name || "?"}」建档`;
     case "retire":
       return `角色退场：${p.npc_id || "?"} 永久离开舞台（不可逆）`;
+    case "set_goal": {
+      if (p.status === "abandoned") return `废弃剧情目标：${p.goal_id || "?"}`;
+      const kind = p.kind === "big" ? "大目标/主线" : "小目标/支线";
+      let parent = "";
+      if (p.big_goal_id) {
+        const b = (state.goals || []).find((g) => g.id === p.big_goal_id);
+        parent = `，挂到「${b ? b.text : p.big_goal_id}」`;
+      }
+      const owner = p.subject && p.subject !== "player" ? `（归属：${p.subject}）` : "";
+      return `设立${kind}${owner}：「${p.text || "?"}」${parent}`;
+    }
     case "add_scene":
       return `场景转正：注册新地点「${p.name || "?"}」`;
     default:

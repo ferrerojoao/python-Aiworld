@@ -73,6 +73,8 @@ class Settings:
     model_classify: str | None = field(default_factory=lambda: _env("MODEL_CLASSIFY") or None)
 
     temp_qc: float = field(default_factory=lambda: float(_env("TEMP_QC", "0.2") or 0.2))
+    # 编剧（writer）采样温度：创作要发散，默认 1.0（2026-09-12 用户定）。
+    temp_writer: float = field(default_factory=lambda: float(_env("TEMP_WRITER", "1.0") or 1.0))
     ctx_memory_budget: int = field(default_factory=lambda: _env_int("CTX_MEMORY_BUDGET", 4000))
     ctx_window_turns: int = field(default_factory=lambda: _env_int("CTX_WINDOW_TURNS", 20))
     default_duration_fallback_min: int = field(

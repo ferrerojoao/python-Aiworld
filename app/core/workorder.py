@@ -275,26 +275,107 @@ def active_lore_block(ledger: Ledger) -> list[str]:
     return lines
 
 
-def goals_block(ledger: Ledger) -> list[str]:
+def goal_brief(ledger: Ledger, goal, *, include_ids: bool = False) -> str:
+    """单个目标的单行摘要：``[id] [大目标/主线·玩家] 文本（关联：X）``。"""
+    id_part = f"[{goal.id}] " if include_ids else ""
+    tag = "大目标/主线" if goal.kind == "big" else "小目标/支线"
+    owner = "玩家" if goal.subject in {"", "player"} else goal.subject
+    npc_tag = (
+        f"（关联：{goal.npc_id}）"
+        if goal.npc_id and goal.npc_id in ledger.world.npcs
+        else ""
+    )
+    return f"{id_part}[{tag}·{owner}] {goal.text}{npc_tag}"
+
+
+def _goals_discipline(has_big: bool, has_loose: bool, has_npc: bool) -> str:
+    """引导纪律：按实际存在的目标形态裁剪（不空谈不存在的层级）。
+
+    2026-09-12 分层——大目标是方向盘（每回至少一步、且沿其下子目标走），
+    小目标择机落地（场景/在场者相关才推）。这是"大目标与小目标不再只是标签
+    不同"的落点：父给方向、子给动作。
+    """
+    lead = "把本回剧情**自然地**朝这些目标推进——NPC 提起线索、机会现前、冲突冒头；"
+    parts: list[str] = []
+    if has_big:
+        parts.append(
+            lead
+            + "**大目标是方向盘**：每回至少推进主线一步，且优先沿它下面的小目标走——"
+            "小目标就是这条主线的「下一步该发生什么」。"
+        )
+        if has_loose:
+            parts.append("未挂靠的支线只在与当前场景/在场者相关时顺带推一推，不必每回都碰。")
+    elif has_loose:
+        parts.append(lead + "只在与当前场景/在场者相关时推一推，不必每回都碰。")
+    parts.append("一次只推进一小步，禁止一轮内生硬给出全部结果；目标之外的自由展开不受限制。")
+    if has_npc:
+        parts.append(
+            "目标归属者为 NPC 时，由**该 NPC** 在戏里主动推进：NPC 在场 → 让她自然提及"
+            "（几句话、一个试探）；NPC 不在场 → 安排她主动来找玩家（登门/路遇/托人带话）；"
+            "只对挂在未完成大目标下的子目标这么做（防止支线无限拉人登门）。"
+        )
+    return "引导纪律：" + "".join(parts)
+
+
+def goals_block(ledger: Ledger, include_ids: bool = False) -> list[str]:
     """剧情目标（M14）：玩家在导演窗口设立的方向（玩家目标与 NPC 目标），
-    编剧写作时必须自然地向其引导。置于尾部近因区（2026-09-10，贴近动笔位置）。"""
-    goals = [g for g in ledger.save.goals if g.status == "active"]
-    if not goals:
+    编剧写作时必须自然地向其引导。
+
+    大目标 = 章节（往哪去），小目标 = 节拍（下一步做什么）：按 ``big_goal_id``
+    渲染成两级树并标章节进度——父子层级在此第一次真正参与运转（2026-09-12）。
+    位置未动：仍在资料区尾部、事件日志之前（用户 2026-09-12 明确"位置不要动"）。
+
+    ``include_ids``：导演窗口需要 id 才能废弃/挂父（此前一律不吐 id，导致
+    这两个动作实际填不出来）；编剧不需要 id，保持 False。
+    """
+    from app.ledger.goals import child_progress, goal_tree
+
+    tree, loose = goal_tree(ledger)
+    if not tree and not loose:
         return []
     lines = ["剧情目标（玩家设立的方向）："]
-    for g in goals:
-        tag = "大目标/主线" if g.kind == "big" else "小目标/支线"
-        owner = "玩家" if g.subject in {"", "player"} else (
-            g.subject
-        )
-        npc_tag = f"（关联：{g.npc_id}）" if g.npc_id and g.npc_id in ledger.world.npcs else ""
-        lines.append(f"- [{tag}·{owner}] {g.text}{npc_tag}")
-    lines.append(
-        "引导纪律：把本回剧情**自然地**朝这些目标推进——NPC 提起线索、机会现前、冲突冒头；"
-        "一次只推进一小步，禁止一轮内生硬给出全部结果；目标之外的自由展开不受限制。"
-        "目标归属者为 NPC 时，由**该 NPC** 在戏里主动推进：NPC 在场 → 让她自然提及（几句话、"
-        "一个试探）；NPC 不在场 → 安排她主动来找玩家（登门/路遇/托人带话）。"
+    for big, kids in tree:
+        done, total = child_progress(ledger, big.id)
+        head = "- " + goal_brief(ledger, big, include_ids=include_ids)
+        if total:
+            head += f"　（子目标 {done}/{total} 已完成）"
+        lines.append(head)
+        for kid in kids:
+            lines.append("　　· " + goal_brief(ledger, kid, include_ids=include_ids))
+    if loose:
+        lines.append("未挂靠的支线：")
+        for goal in loose:
+            lines.append("- " + goal_brief(ledger, goal, include_ids=include_ids))
+    has_npc = any(g.npc_id for _b, kids in tree for g in (_b, *kids)) or any(
+        g.npc_id for g in loose
     )
+    lines.append(_goals_discipline(bool(tree), bool(loose), has_npc))
+    return lines
+
+
+def audit_goals_lines(ledger: Ledger) -> list[str]:
+    """审计看到的活动目标：带 id 的两级树 + 章节进度。
+
+    父子层级给审计一个**客观锚点**：判大目标完成时能看到"其下子目标 x/y 已完成"。
+    只呈现证据、不设硬门锁——判不判仍由审计定（避免机械兜底，也避免误伤
+    "玩家绕道达成主线"）。
+    """
+    from app.ledger.goals import child_progress, goal_tree
+
+    tree, loose = goal_tree(ledger)
+    if not tree and not loose:
+        return ["（无）"]
+    lines: list[str] = []
+    for big, kids in tree:
+        done, total = child_progress(ledger, big.id)
+        head = goal_brief(ledger, big, include_ids=True)
+        if total:
+            head += f"——其下子目标 {done}/{total} 已完成"
+        lines.append(head)
+        for kid in kids:
+            lines.append("  └ " + goal_brief(ledger, kid, include_ids=True))
+    for goal in loose:
+        lines.append(goal_brief(ledger, goal, include_ids=True))
     return lines
 
 
@@ -492,7 +573,9 @@ def build_director_chat_system(
         "在场：" + ("、".join(names) or "暂无"),
     ]
     parts += event_log_block(world, ledger, include_ids=True)
-    parts += goals_block(ledger)
+    # include_ids=True：导演要靠 id 废弃目标、把子目标挂到某个大目标下
+    #（2026-09-12 之前一律不吐 id，导致 set_goal 的废弃/挂父实际填不出来）。
+    parts += goals_block(ledger, include_ids=True)
     parts += known_set_block(world, ledger, present_ids, ledger.save.player_scene)
     parts += active_lore_block(ledger)
     parts += private_notes_block(world, ledger, present_ids)
@@ -503,7 +586,11 @@ def build_director_chat_system(
         "- 静默覆写 override：玩家声明某人/某物在哪或去做某事 → payload {subject, location}",
         "- 记忆注入 inject_memory：玩家要求给某 NPC 私下注入一条记忆 → payload {npc_id, memory}（只有他知道）",
         "- 事件访问改判 access_rejudge：玩家要求某事件公开或私密 → payload {event_id, known_by: [知情者...] 或 null}",
-        "- 剧情目标 set_goal：玩家要求设立/废弃剧情目标 → payload {text, kind: big|small, subject?: player|npc_id, big_goal_id?, npc_id?}（设立）或 {goal_id, status: abandoned}（废弃）；大目标=主线，小目标=支线；subject=目标归属者（默认 player，玩家替 NPC 设立时给该 NPC id），活动目标上限 6 条",
+        "- 剧情目标 set_goal：玩家要求设立/废弃剧情目标 → payload {text, kind: big|small, subject?: player|npc_id, big_goal_id?, npc_id?}（设立）或 {goal_id, status: abandoned}（废弃）；"
+        "大目标=主线（章节，往哪去），小目标=支线（节拍，下一步做什么）；subject=目标归属者（默认 player，玩家替 NPC 设立时给该 NPC id）；"
+        "小目标要用 big_goal_id 挂到某个大目标下（挂靠后才能多挂，也才能被编剧当作主线的下一步推进）；"
+        "额度：大目标上限 2 条、单个大目标下子目标上限 3 条、未挂靠支线上限 2 条；大目标完成/废弃时其下子目标一并撤下；"
+        "设立大目标不需要 big_goal_id（层级只有一层）",
         "- 角色退场 retire：玩家要求某人永久退场（死亡/远行/消失，不再出现在任何场景）→ payload {npc_id}；"
         "不可逆，退场者从此退出在场推导与主动调度",
         "（人物卡编辑、Actor 档位、转正/场景注册一律由世界工作台直接编辑，不走导演窗口。）",
@@ -532,8 +619,6 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
     present_ids = ledger.present_at(scene_id)
     names = [pid for pid in present_ids]
     scene_list = "、".join(s.id for s in world.scenes)
-    goals = [g for g in ledger.save.goals if g.status == "active"]
-    goal_lines = "；".join(f"[{g.id}]（{'主线' if g.kind == 'big' else '支线'}）{g.text}" for g in goals) or "（无）"
     return "\n".join(
         [
             "你是 AIWorld 的世界审计：玩家采纳一条正文后，你从正文里结算世界的副作用，并判定剧情目标与生命周期。",
@@ -576,13 +661,17 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
             "- completed_goal_ids：正文已达到目标文本所述（小目标=当事达成；大目标=关键真相/冲突已解决）。"
             "只推进未达成的不填——推进由编剧纪律负责，审计只判终点。"
             "注意：目标归属者为 NPC 时，该目标 NPC 提及/推进目标只是推进（如王蓉提起接货），"
-            "只有当正文里目标所述之事真正发生（如玩家答应了）才判完成——推进不算完成。",
+            "只有当正文里目标所述之事真正发生（如玩家答应了）才判完成——推进不算完成。"
+            "大目标是章节：其下「子目标 x/y 已完成」只作参考证据、不是判据——"
+            "正文若给出明确的关键了结（即使子目标没走完，如玩家绕道达成）即可判完成；"
+            "反之，只是把子目标推了推、关键冲突没解决，就不判。",
             "- lifecycle：按正文语义识别角色退场（死亡/永久离开）→ retired。",
             "当前时间：" + (ledger.save.clock or "-"),
             "当前场景：" + (scene.id if scene else scene_id),
             "在场：" + ("、".join(names) or "暂无"),
-            "已注册场景（格式 = id（名），location 必须从这里选 id，新地点才自造英文 id）：" + (scene_list or "（无）"),
-            "活动目标：" + goal_lines,
+            "已注册场景：location 必须用下列中文名（id 即中文名）；未注册的新地点也一律给中文名，不要自造英文 id：" + (scene_list or "（无）"),
+            "活动目标：",
+            *audit_goals_lines(ledger),
             *world.meta.summary,
         ]
     )

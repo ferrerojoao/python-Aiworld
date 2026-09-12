@@ -511,6 +511,63 @@ def test_director_set_goal_npc_subject(tmp_path):
         assert state["goals"][0]["subject_name"] == "王蓉"
 
 
+def test_director_goal_parent_link_and_state_tree(tmp_path):
+    """父子层级（2026-09-12）：小目标可挂到某个大目标下；非法挂靠被拒；
+    /state 把挂在活动大目标下的子目标（含已完成）一并给出，供侧栏显示 x/y；
+    导演工作单吐目标 id（否则废弃/挂父在戏外窗口填不出来）。"""
+    from app.core.llm import FakeLLM
+    from app.core.workorder import build_director_chat_system
+    from app.ledger.goals import complete_goals
+
+    llm = FakeLLM({"*": {"reply": "好。", "action": None}})
+    with _make_client(tmp_path, llm=llm) as client:
+        r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
+        sid = r.json()["sid"]
+        session = client.app.state.sessions[sid]
+
+        def confirm(payload):
+            return client.post(
+                f"/api/sessions/{sid}/director",
+                json={"topic": "confirm", "action": {"type": "set_goal", "payload": payload}},
+            )
+
+        big = confirm({"text": "查明朱明打架的真相", "kind": "big"}).json()["goal"]
+        kid = confirm(
+            {"text": "帮朱明包扎伤口", "kind": "small", "big_goal_id": big["id"]}
+        ).json()["goal"]
+        assert kid["big_goal_id"] == big["id"]
+
+        # 挂到不存在的大目标 → 拒绝（错误信息可读）。
+        bad = confirm({"text": "挂空", "kind": "small", "big_goal_id": "goal_nope"})
+        assert bad.status_code == 400
+        assert "不存在" in bad.text
+
+        # 导演视图必须带 id（戏外窗口靠它废弃/挂父）——此时子目标仍 active。
+        director = build_director_chat_system(session.world, session.ledger, "网吧")
+        assert f"[{big['id']}] [大目标/主线·玩家]" in director
+        assert f"[{kid['id']}] [小目标/支线·玩家]" in director
+
+        # 完成子目标后它仍进 /state（侧栏靠它算 x/y），状态为 done。
+        complete_goals(session.ledger, [kid["id"]])
+        state = client.get(f"/api/sessions/{sid}/state").json()
+        by_id = {g["id"]: g for g in state["goals"]}
+        assert by_id[kid["id"]]["status"] == "done"
+        assert by_id[big["id"]]["kind"] == "big"
+        # 目标树只列 active 子目标；完成度体现在大目标行的进度里。
+        director2 = build_director_chat_system(session.world, session.ledger, "网吧")
+        assert "（子目标 1/1 已完成）" in director2
+
+        # 父闭合 → 其下子目标级联撤下，且不再出现在 /state 的活动树里。
+        kid2 = confirm(
+            {"text": "问清打架缘由", "kind": "small", "big_goal_id": big["id"]}
+        ).json()["goal"]
+        confirm({"goal_id": big["id"], "status": "abandoned"})
+        state2 = client.get(f"/api/sessions/{sid}/state").json()
+        ids2 = {g["id"] for g in state2["goals"]}
+        assert kid2["id"] not in ids2
+        assert big["id"] not in ids2
+
+
 def test_director_confirm_set_goal_and_inject_memory(tmp_path):
     """set_goal creates the goal; inject_memory lays a private
     event visible only to that NPC. Goal cap rejects overflow."""
@@ -561,17 +618,18 @@ def test_director_confirm_set_goal_and_inject_memory(tmp_path):
         assert goal["kind"] == "small"
         assert goal["status"] == "active"
 
-        # Goal cap is enforced (6 active).
-        for i in range(6):
-            client.post(
-                f"/api/sessions/{sid}/director",
-                json={"topic": "confirm", "action": {"type": "set_goal", "payload": {"text": f"目标{i}", "kind": "small"}}},
-            )
+        # 分档额度（2026-09-12）：未挂靠支线上限 2 条（上面已用 1 条），
+        # 第 3 条被拒，错误信息指名是哪一层满了。
+        client.post(
+            f"/api/sessions/{sid}/director",
+            json={"topic": "confirm", "action": {"type": "set_goal", "payload": {"text": "孤儿一", "kind": "small"}}},
+        )
         over = client.post(
             f"/api/sessions/{sid}/director",
-            json={"topic": "confirm", "action": {"type": "set_goal", "payload": {"text": "超限目标", "kind": "small"}}},
+            json={"topic": "confirm", "action": {"type": "set_goal", "payload": {"text": "孤儿溢出", "kind": "small"}}},
         )
         assert over.status_code == 400
+        assert "未挂靠的支线已达上限" in over.text
 
         chat2 = client.post(
             f"/api/sessions/{sid}/director",
