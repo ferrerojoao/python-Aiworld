@@ -27,6 +27,10 @@ class LoreEntry(BaseModel):
     keywords: list[str] = Field(default_factory=list)
     body: str = ""
     always_on: bool = Field(default=False)  # 常驻开关：勾选后每轮必注入，不占关键词触发名额
+    # 归属角色（人物表中文名，2026-09-13）：该角色**在场**即注入，不依赖正文点名——
+    # "一个 NPC 的信息 = 卡 + 归属条目"才齐全。空串 = 纯关键词触发。每人上限
+    # 见 app.rules.lorebook.LORE_SUBJECT_CAP（注入侧硬截断，体检侧报警告）。
+    subject: str = ""
 
 
 class Scene(BaseModel):

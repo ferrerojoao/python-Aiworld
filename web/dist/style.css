@@ -972,6 +972,22 @@ button:hover {
   border-color: #c8a24a;
 }
 
+/* 人物卡上的只读提示：这个人挂着哪些归属世界书条目（在场即注入）。
+   缺一侧（没挂条目）用暗色提醒，别让人觉得"卡写全了"。 */
+.npc-lore-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  border-left: 2px solid #c8a24a;
+  padding: 2px 0 2px 8px;
+  margin: 2px 0 8px;
+}
+
+.npc-lore-hint.empty {
+  border-left-color: var(--border);
+  opacity: 0.75;
+}
+
 .md-pane .edit-list {
   flex: 1;
   min-width: 0;

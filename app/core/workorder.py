@@ -32,6 +32,7 @@ from __future__ import annotations
 import datetime as dt
 
 from app.ledger.queries import Ledger
+from app.rules.lorebook import subject_hit_ids
 from app.world.models import NarrativePreset, WorldContent
 
 
@@ -269,11 +270,16 @@ def private_notes_block(world: WorldContent, ledger: Ledger, present_ids: list[s
     ]
 
 
-def active_lore_block(ledger: Ledger) -> list[str]:
-    """World book entries for this turn (常驻 + save.active_lore_ids).
+def active_lore_block(ledger: Ledger, present_ids: list[str] | None = None) -> list[str]:
+    """World book entries for this turn (常驻 + 归属 + save.active_lore_ids).
 
-    常驻条目（always_on）每轮必注入、不占触发名额、不吃 5 条上限；
-    触发条目（关键词命中玩家输入/已采纳正文）走 save.active_lore_ids。
+    三条通道（2026-09-13 归属通道上线）：
+
+    - **常驻**（always_on）每轮必注入、不占触发名额、不吃 5 条上限；
+    - **归属**（subject）归属者在场即注入、同样不占关键词名额（每人上限见
+      ``LORE_SUBJECT_CAP``）——"一个 NPC 的信息 = 卡 + 归属条目"才齐全，
+      他被谈论而本人不在场时，仍回到关键词通道；
+    - **触发**（关键词命中玩家输入/已采纳正文）走 save.active_lore_ids，全局 5 条。
     """
     lines = ["世界书（本场可能相关的背景设定，按此设定写）："]
     by_id = {entry.id: entry for entry in ledger.world.lorebook}
@@ -284,6 +290,12 @@ def active_lore_block(ledger: Ledger) -> list[str]:
             seen.add(entry.id)
             count += 1
             lines.append(f"- 【常驻】{entry.body}")
+    for entry_id in subject_hit_ids(ledger.world, list(present_ids or [])):
+        entry = by_id.get(entry_id)
+        if entry and entry.id not in seen:
+            seen.add(entry_id)
+            count += 1
+            lines.append(f"- 【归属·{entry.subject}】{entry.body}")
     for entry_id in ledger.save.active_lore_ids:
         entry = by_id.get(entry_id)
         if entry and entry.id not in seen:
@@ -619,7 +631,7 @@ def build_director_chat_system(
     #（2026-09-12 之前一律不吐 id，导致 set_goal 的废弃/挂父实际填不出来）。
     parts += goals_block(ledger, include_ids=True)
     parts += known_set_block(world, ledger, present_ids, scene_id)
-    parts += active_lore_block(ledger)
+    parts += active_lore_block(ledger, present_ids)
     parts += private_notes_block(world, ledger, present_ids)
     parts += character_block(world, ledger, present_ids, include_ids=True)
 
@@ -768,8 +780,8 @@ def build_work_order(
         # ── 资料区：以下与事件日志同性质，都是写作取材，一律不标规则等级 ──
         # 世界概要（常驻，永不裁剪）
         parts += world_summary_block(world)
-        # 世界书命中（本场相关背景）
-        parts += active_lore_block(ledger)
+        # 世界书命中（本场相关背景：常驻 + 归属在场者 + 关键词触发）
+        parts += active_lore_block(ledger, present_ids)
         # 玩家资料 + 在场 NPC（含 id 标注，编剧须用规范 id）
         parts += character_block(world, ledger, present_ids, include_ids=True)
         # 幕后注（机密，与二级「信息边界」呼应双保险）

@@ -788,6 +788,10 @@ function switchWorldTab(tabName) {
     panel.classList.toggle("active", panel.id === `world-tab-${tabName}`);
   });
   if (!state.worldData) loadWorldBrowser();
+  // 世界书↔人物 之间有一处交叉引用（归属条目），切页时对齐一次：
+  // 人物名可能刚改（下拉选项旧了），归属可能刚改（人物卡提示旧了）。
+  if (tabName === "lore") refreshLoreSubjectSelects();
+  if (tabName === "npcs") refreshNpcLoreHints();
   updateSaveBar();
 }
 
@@ -1321,6 +1325,12 @@ function renderEditOverview(data) {
 
 function renderEditLore(data) {
   const items = data.lorebook || [];
+  const npcIds = Object.keys(data.npcs || {});
+  const counts = {};
+  items.forEach((it) => {
+    const s = (it.subject || "").trim();
+    if (s) counts[s] = (counts[s] || 0) + 1;
+  });
   $("#world-tab-lore").innerHTML = `
     <h3>世界书</h3>
     <div class="md-pane">
@@ -1330,13 +1340,71 @@ function renderEditLore(data) {
         <button id="add-lore" class="md-add">＋ 添加世界书条目</button>
       </div>
       <div class="edit-list" id="edit-lore-list">
-        ${items.map((item, i) => loreCard(item, i)).join("")}
+        ${items.map((item, i) => loreCard(item, i, npcIds, counts)).join("")}
       </div>
     </div>`;
   mdRebuild("edit-lore-list");
 }
 
-function loreCard(item, i) {
+const LORE_SUBJECT_MAX = 2; // 每个归属角色最多 2 条（与后端 LORE_SUBJECT_CAP 一致）
+
+/** 归属条目的「已挂」计数：key = 角色名，value = 条数。 */
+function loreSubjectCounts() {
+  const counts = {};
+  document.querySelectorAll("#edit-lore-list .edit-card").forEach((card) => {
+    const v = card.querySelector('[data-field="subject"]')?.value || "";
+    if (v) counts[v] = (counts[v] || 0) + 1;
+  });
+  return counts;
+}
+
+/** 人物名清单：优先读实时 DOM（改名即时反映），退回载入时的数据。 */
+function npcIdList() {
+  const live = Array.from(document.querySelectorAll("#edit-npc-list .edit-card"))
+    .map((c) => c.querySelector('[data-field="id"]')?.value?.trim())
+    .filter(Boolean);
+  if (live.length) return live;
+  return Object.keys(state.worldData?.npcs || {});
+}
+
+function subjectOptions(selected, npcIds, counts) {
+  const opts = ['<option value="">（无 · 纯关键词触发）</option>'];
+  if (selected && !npcIds.includes(selected)) {
+    // 改名/删人后的悬空引用：留着可见，不然数据会静默丢掉
+    opts.push(
+      `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)}（不在人物表）</option>`
+    );
+  }
+  npcIds.forEach((name) => {
+    const full = (counts[name] || 0) >= LORE_SUBJECT_MAX && name !== selected;
+    opts.push(
+      `<option value="${escapeHtml(name)}"${name === selected ? " selected" : ""}${full ? " disabled" : ""}>` +
+        `${escapeHtml(name)}${full ? `（已满 ${LORE_SUBJECT_MAX} 条）` : ""}</option>`
+    );
+  });
+  return opts.join("");
+}
+
+/** 打开下拉前重建选项：人物可能刚改过名，余额也可能刚变。
+    选项没变就一个字都不动——mousedown 上重建 innerHTML 会把刚要弹出的
+    下拉顶掉，所以只在真变了的时候重写。 */
+function refreshLoreSubjectSelects() {
+  const cards = Array.from(document.querySelectorAll("#edit-lore-list .edit-card"));
+  if (!cards.length) return;
+  const npcIds = npcIdList();
+  const counts = loreSubjectCounts();
+  const sig = JSON.stringify([npcIds, counts]);
+  cards.forEach((card) => {
+    const sel = card.querySelector('[data-field="subject"]');
+    if (!sel) return;
+    const key = `${sig}|${sel.value || ""}`;
+    if (sel.dataset.optsig === key) return;
+    sel.innerHTML = subjectOptions(sel.value || "", npcIds, counts);
+    sel.dataset.optsig = key;
+  });
+}
+
+function loreCard(item, i, npcIds, counts) {
   return `
     <div class="edit-card" data-index="${i}">
       <div class="form-grid">
@@ -1345,9 +1413,17 @@ function loreCard(item, i) {
           <input class="edit-field" data-field="id" value="${escapeHtml(item.id || "")}" />
         </div>
         <div class="field">
-          <label>关键词（逗号分隔，命中玩家输入/已采纳正文时触发本条）</label>
-          <input class="edit-field" data-field="keywords" value="${escapeHtml((item.keywords || []).join(", "))}" />
+          <label>归属角色</label>
+          <select class="edit-field" data-field="subject">${subjectOptions(
+            item.subject || "",
+            npcIds || [],
+            counts || {}
+          )}</select>
         </div>
+      </div>
+      <div class="field full">
+        <label>关键词（逗号分隔，命中玩家输入/已采纳正文时触发本条）</label>
+        <input class="edit-field" data-field="keywords" value="${escapeHtml((item.keywords || []).join(", "))}" />
       </div>
       <div class="field full">
         <label>正文（命中后全量注入编剧提示词）</label>
@@ -1421,6 +1497,32 @@ function renderEditNpcs(data) {
       </div>
     </div>`;
   mdRebuild("edit-npc-list");
+  refreshNpcLoreHints();
+}
+
+/** 人物卡上的只读提示：这个人挂着哪些归属世界书条目（在场即注入）。
+    人物信息 = 卡 + 归属条目，这里让"缺一侧"一眼可见。 */
+function refreshNpcLoreHints() {
+  const owned = {};
+  document.querySelectorAll("#edit-lore-list .edit-card").forEach((card) => {
+    const subject = (card.querySelector('[data-field="subject"]')?.value || "").trim();
+    if (!subject) return;
+    const id = card.querySelector('[data-field="id"]')?.value?.trim() || "（未命名条目）";
+    (owned[subject] ||= []).push(id);
+  });
+  document.querySelectorAll("#edit-npc-list .edit-card").forEach((card) => {
+    const hint = card.querySelector(".npc-lore-hint");
+    if (!hint) return;
+    const name = card.querySelector('[data-field="id"]')?.value?.trim() || "";
+    const mine = owned[name] || [];
+    if (mine.length) {
+      hint.className = "npc-lore-hint";
+      hint.innerHTML = `归属世界书条目（在场即注入）：${mine.map(escapeHtml).join("、")}`;
+    } else {
+      hint.className = "npc-lore-hint empty";
+      hint.innerHTML = "归属世界书条目：无";
+    }
+  });
 }
 
 function npcCard(id, card) {
@@ -1462,6 +1564,7 @@ function npcCard(id, card) {
           <label><input class="edit-field" data-field="is_player" type="checkbox" ${isPlayer ? "checked" : ""} /> <span class="player-check">主角（人物表有且仅有一个）</span></label>
         </div>
       </div>
+      <div class="npc-lore-hint empty"></div>
       ${
         isPlayer
           ? '<div class="player-lock">主角 · 不可删除（换主角：在另一张卡上勾选「主角」）</div>'
@@ -1548,6 +1651,8 @@ function mdBadgeFor(kind, card) {
     if (card.querySelector('[data-field="is_player"]')?.checked) return badge("gold", "主角");
     if (card.querySelector('[data-field="has_actor"]')?.checked) return badge("", "Actor");
   } else if (kind === "lore") {
+    const subject = card.querySelector('[data-field="subject"]')?.value?.trim();
+    if (subject) return badge("gold", `归属·${escapeHtml(subject)}`);
     if (card.querySelector('[data-field="always_on"]')?.checked) return badge("", "常驻");
     const kw = splitList(card.querySelector('[data-field="keywords"]')?.value).length;
     if (kw) return badge("", `${kw} 关键词`);
@@ -1593,6 +1698,10 @@ function mdShow(listId, key) {
 
 function bindEditEvents() {
   document.querySelectorAll(".edit-list").forEach((list) => {
+    // 归属下拉：点开之前重建选项（人物可能刚改名、余额可能刚变）
+    list.onmousedown = (e) => {
+      if (e.target.matches?.('[data-field="subject"]')) refreshLoreSubjectSelects();
+    };
     list.onclick = (e) => {
       const btn = e.target.closest(".remove-item");
       if (!btn) return;
@@ -1600,6 +1709,8 @@ function bindEditEvents() {
       mdRebuild(list.id);
       // 删除是纯 click（无 input/change），必须手动触发脏检查
       refreshDirty();
+      // 删掉归属条目后，人物卡上的提示跟着更新
+      if (list.id === "edit-lore-list") refreshNpcLoreHints();
     };
     // 主角唯一性（2026-09-13）：勾上任意一张卡的「主角」，其余自动取消；
     // 重渲染人物列表让"删除"按钮随之出现/消失——数据从当前 DOM 读回，编辑不丢。
@@ -1624,6 +1735,12 @@ function bindEditEvents() {
       }
       // 改了 ID：左侧摘要的名字跟着刷新（不动选中项）
       if (e.target.matches?.('[data-field="id"]')) mdRebuild(list.id);
+      // 改了归属：别人下拉里的"已满"余额、人物卡提示、左侧徽标都要跟着走
+      if (e.target.matches?.('[data-field="subject"]')) {
+        refreshLoreSubjectSelects();
+        mdRebuild("edit-lore-list");
+        refreshNpcLoreHints();
+      }
     };
   });
 
@@ -1646,7 +1763,10 @@ function bindEditEvents() {
 
   const addLore = $("#add-lore");
   if (addLore) addLore.onclick = () => {
-    $("#edit-lore-list").insertAdjacentHTML("beforeend", loreCard({}, 999));
+    $("#edit-lore-list").insertAdjacentHTML(
+      "beforeend",
+      loreCard({}, 999, npcIdList(), loreSubjectCounts())
+    );
     mdRebuild("edit-lore-list");
     refreshDirty();
   };
@@ -1696,6 +1816,7 @@ function readOverview() {
 function readLore() {
   return Array.from(document.querySelectorAll("#edit-lore-list .edit-card")).map((card) => ({
     id: card.querySelector('[data-field="id"]')?.value ?? "",
+    subject: card.querySelector('[data-field="subject"]')?.value ?? "",
     keywords: splitList(card.querySelector('[data-field="keywords"]')?.value),
     body: card.querySelector('[data-field="body"]')?.value ?? "",
     always_on: !!card.querySelector('[data-field="always_on"]')?.checked,

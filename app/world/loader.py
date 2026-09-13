@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from app.core.store import write_json_atomic
+from app.rules.lorebook import LORE_SUBJECT_CAP
 from .models import (
     PLAYER_PLACEHOLDER,
     Axis,
@@ -78,9 +79,32 @@ def check_world(root: str | Path) -> list[str]:
         return [f"world load failed: {exc}"]
 
     for entry in world.lorebook:
-        if not any(kw.strip() for kw in entry.keywords):
+        subject = (entry.subject or "").strip()
+        if subject and subject not in world.npcs:
+            problems.append(
+                f"lore {entry.id}: 归属角色「{subject}」不在人物表里（这条永远不会被自动注入）"
+            )
+        # 无关键词只对"纯关键词条目"是问题：常驻与归属条目各自有别的入场通道
+        #（2026-09-13 归属通道上线时一并修正——此前会误报常驻/归属条目）。
+        if (
+            not subject
+            and not entry.always_on
+            and not any(kw.strip() for kw in entry.keywords)
+        ):
             problems.append(
                 f"lore {entry.id}: 至少需要一个关键词（无关键词的条目永远不会被命中）"
+            )
+    # 归属配额：每人 2 条（注入侧硬截断，这里让超额的半成品态被看见）
+    by_subject: dict[str, list[str]] = {}
+    for entry in world.lorebook:
+        subject = (entry.subject or "").strip()
+        if subject:
+            by_subject.setdefault(subject, []).append(entry.id)
+    for subject, ids in by_subject.items():
+        if len(ids) > LORE_SUBJECT_CAP:
+            problems.append(
+                f"lore: 角色「{subject}」有 {len(ids)} 条归属条目，超过上限 "
+                f"{LORE_SUBJECT_CAP}（生效只取前 {LORE_SUBJECT_CAP} 条：{'、'.join(ids)}）"
             )
     if world.meta.start_time:
         import datetime as dt

@@ -710,3 +710,76 @@ def test_lore_always_on_always_injected(session):
     assert "【常驻】镇外的潮汐每月十五最盛。" in order
     assert "背景4" in order      # 触发第 5 条（上限内）
     assert "背景5" not in order  # 第 6 条被上限挡住
+
+
+def _stage_presence(session, scene: str, who: list[str]) -> None:
+    """造一条带位置的事件，让人被 ``present_at`` 认定在该场景（测试专用布景）。"""
+    session.ledger.append(
+        {
+            "id": session.ledger.allocate_event_id(),
+            "kind": "narrative",
+            "at": session.ledger.save.clock or "2026-07-14T08:00:00",
+            "location": scene,
+            "participants": who,
+            "known_by": None,
+            "body": "",
+            "summary": "测试布景",
+            "player_input": None,
+            "source": "test",
+        }
+    )
+
+
+def test_lore_subject_injected_when_owner_present(session):
+    """归属条目（subject）：归属角色**在场**即注入，不靠正文点名——
+    "一个 NPC 的信息 = 卡 + 归属条目"才齐全。不占关键词触发名额。"""
+    from app.core.workorder import build_work_order
+    from app.world.models import LoreEntry
+
+    session.ledger.world.lorebook.append(
+        LoreEntry(id="zhu_migraine", keywords=[], body="朱文武常年偏头痛。", subject="朱明")
+    )
+    # 本人不在场（也没人点到名）：归属条目不入——"你爸的病"这种旁敲侧击够不着它
+    order = build_work_order("writer", session.world, session.ledger, "主街")
+    assert "朱文武常年偏头痛" not in order
+
+    _stage_presence(session, "网吧", ["刘星", "朱明"])
+    order = build_work_order("writer", session.world, session.ledger, "网吧")
+    assert "【归属·朱明】" in order
+    assert "朱文武常年偏头痛" in order
+
+    # 关键词名额塞满也挤不掉归属条目：两条通道各自计数
+    for i in range(6):
+        session.ledger.world.lorebook.append(
+            LoreEntry(id=f"lore_kw{i}", keywords=[f"线索{i}"], body=f"背景{i}")
+        )
+    from app.rules.lorebook import merge_active_lore
+
+    session.ledger.save.active_lore_ids = merge_active_lore(
+        [], [f"lore_kw{i}" for i in range(6)]
+    )
+    assert len(session.ledger.save.active_lore_ids) == 5
+    order = build_work_order("writer", session.world, session.ledger, "网吧")
+    assert "朱文武常年偏头痛" in order
+    assert "背景5" not in order  # 第 6 条关键词条目仍被 5 条上限挡住
+
+
+def test_lore_subject_cap_two_per_character(session):
+    """每人归属条目上限 2 条：超出的按录入顺序截断（重要的往上放）。"""
+    from app.core.workorder import build_work_order
+    from app.rules.lorebook import subject_hit_ids
+    from app.world.models import LoreEntry
+
+    for i in range(3):
+        session.ledger.world.lorebook.append(
+            LoreEntry(id=f"zhu_{i}", keywords=[], body=f"朱明的归属背景{i}", subject="朱明")
+        )
+    _stage_presence(session, "网吧", ["刘星", "朱明"])
+
+    assert subject_hit_ids(session.world, ["朱明", "王蓉"]) == ["zhu_0", "zhu_1"]
+    assert subject_hit_ids(session.world, ["王蓉"]) == []  # 本人不在场 → 一条都不进
+
+    order = build_work_order("writer", session.world, session.ledger, "网吧")
+    assert "朱明的归属背景0" in order
+    assert "朱明的归属背景1" in order
+    assert "朱明的归属背景2" not in order

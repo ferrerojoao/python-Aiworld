@@ -135,6 +135,30 @@ def test_validate_assets_rejects_missing_player_card():
     assert any("主角" in p for p in problems)
 
 
+def test_validate_assets_checks_lore_subject():
+    """归属条目（subject，2026-09-13）的两条体检规则：
+
+    - 归属角色不在人物表 → 警告（这条永远不会被自动注入）；
+    - 同一角色超过 2 条 → 警告（生效只取前 2 条）；
+    - 有归属（或常驻）的条目**不再**误报"无关键词永远不会被命中"。
+    """
+    assets = blank_world_assets("w", "W", "刘星")
+    assets["lorebook"] = [
+        {"id": "游魂", "keywords": ["甲"], "body": "x", "subject": "不存在的人"},
+        {"id": "刘星甲", "keywords": [], "body": "a", "subject": "刘星"},
+        {"id": "刘星乙", "keywords": [], "body": "b", "subject": "刘星"},
+        {"id": "刘星丙", "keywords": [], "body": "c", "subject": "刘星"},
+        {"id": "真没关键词", "keywords": [], "body": "d"},
+    ]
+    problems = validate_assets(assets)
+    assert any("不在人物表里" in p and "游魂" in p for p in problems)
+    assert any("超过上限 2" in p and "刘星" in p for p in problems)
+    # 归属条目（哪怕没关键词）不算"永远不会被命中"，纯关键词条目照旧报
+    assert [p for p in problems if "永远不会被命中" in p] == [
+        p for p in problems if "真没关键词" in p
+    ]
+
+
 # ---------------------------------------------------------------------------
 # 起草器
 # ---------------------------------------------------------------------------
