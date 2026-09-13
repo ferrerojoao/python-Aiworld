@@ -451,8 +451,6 @@ function switchDrawerTab(tabName) {
   });
   if (tabName === "debug") {
     loadDebugTrace();
-  } else if (tabName === "player") {
-    loadPlayer();
   } else if (tabName === "settings") {
     loadSettings();
   }
@@ -524,32 +522,6 @@ function debugEntryCard(entry, seq) {
     : "";
 
   return `<details class="dbg-card"><summary>${head}</summary>${msgs}${outHtml}${errHtml}</details>`;
-}
-
-/* ---------- 主角资料 ---------- */
-
-async function loadPlayer() {
-  if (!state.sid) return;
-  const data = await api(`/api/sessions/${state.sid}/player`);
-  $("#player-name").value = data.name || "";
-  $("#player-appearance").value = data.appearance || "";
-  $("#player-persona").value = data.persona || "";
-  $("#player-private-note").value = data.private_note || "";
-  $("#player-secrets").value = data.personal_secrets || "";
-}
-
-async function savePlayer() {
-  await api(`/api/sessions/${state.sid}/player`, {
-    method: "PUT",
-    body: JSON.stringify({
-      name: $("#player-name").value,
-      appearance: $("#player-appearance").value,
-      persona: $("#player-persona").value,
-      private_note: $("#player-private-note").value,
-      personal_secrets: $("#player-secrets").value,
-    }),
-  });
-  alert("主角资料已保存");
 }
 
 /* ---------- 导演对话 ---------- */
@@ -1351,11 +1323,17 @@ function renderEditLore(data) {
   const items = data.lorebook || [];
   $("#world-tab-lore").innerHTML = `
     <h3>世界书</h3>
-    <div class="edit-list" id="edit-lore-list">
-      ${items.map((item, i) => loreCard(item, i)).join("")}
-    </div>
-    <button id="add-lore">添加世界书条目</button>
-  `;
+    <div class="md-pane">
+      <div class="md-side">
+        <input class="md-search" placeholder="搜索条目…" />
+        <div class="md-items"></div>
+        <button id="add-lore" class="md-add">＋ 添加世界书条目</button>
+      </div>
+      <div class="edit-list" id="edit-lore-list">
+        ${items.map((item, i) => loreCard(item, i)).join("")}
+      </div>
+    </div>`;
+  mdRebuild("edit-lore-list");
 }
 
 function loreCard(item, i) {
@@ -1387,11 +1365,17 @@ function renderEditScenes(data) {
   const items = data.scenes || [];
   $("#world-tab-scenes").innerHTML = `
     <h3>场景</h3>
-    <div class="edit-list" id="edit-scene-list">
-      ${items.map((item, i) => sceneCard(item, i)).join("")}
-    </div>
-    <button id="add-scene">添加场景</button>
-  `;
+    <div class="md-pane">
+      <div class="md-side">
+        <input class="md-search" placeholder="搜索场景…" />
+        <div class="md-items"></div>
+        <button id="add-scene" class="md-add">＋ 添加场景</button>
+      </div>
+      <div class="edit-list" id="edit-scene-list">
+        ${items.map((item, i) => sceneCard(item, i)).join("")}
+      </div>
+    </div>`;
+  mdRebuild("edit-scene-list");
 }
 
 function sceneCard(item, i) {
@@ -1426,11 +1410,17 @@ function renderEditNpcs(data) {
   const entries = Object.entries(data.npcs || {});
   $("#world-tab-npcs").innerHTML = `
     <h3>人物</h3>
-    <div class="edit-list" id="edit-npc-list">
-      ${entries.map(([id, card]) => npcCard(id, card)).join("")}
-    </div>
-    <button id="add-npc">添加人物</button>
-  `;
+    <div class="md-pane">
+      <div class="md-side">
+        <input class="md-search" placeholder="搜索人物…" />
+        <div class="md-items"></div>
+        <button id="add-npc" class="md-add">＋ 添加人物</button>
+      </div>
+      <div class="edit-list" id="edit-npc-list">
+        ${entries.map(([id, card]) => npcCard(id, card)).join("")}
+      </div>
+    </div>`;
+  mdRebuild("edit-npc-list");
 }
 
 function npcCard(id, card) {
@@ -1469,7 +1459,7 @@ function npcCard(id, card) {
           <label><input class="edit-field" data-field="has_actor" type="checkbox" ${c.has_actor ? "checked" : ""} /> 使用 Actor</label>
         </div>
         <div class="field">
-          <label><input class="edit-field" data-field="is_player" type="checkbox" ${isPlayer ? "checked" : ""} /> 主角（人物表有且仅有一个）</label>
+          <label><input class="edit-field" data-field="is_player" type="checkbox" ${isPlayer ? "checked" : ""} /> <span class="player-check">主角（人物表有且仅有一个）</span></label>
         </div>
       </div>
       ${
@@ -1485,11 +1475,17 @@ function renderEditAxes(data) {
   const items = data.axes || [];
   $("#world-tab-axes").innerHTML = `
     <h3>数值轴</h3>
-    <div class="edit-list" id="edit-axis-list">
-      ${items.map((item, i) => axisCard(item, i)).join("")}
-    </div>
-    <button id="add-axis">添加数值轴</button>
-  `;
+    <div class="md-pane">
+      <div class="md-side">
+        <input class="md-search" placeholder="搜索数值轴…" />
+        <div class="md-items"></div>
+        <button id="add-axis" class="md-add">＋ 添加数值轴</button>
+      </div>
+      <div class="edit-list" id="edit-axis-list">
+        ${items.map((item, i) => axisCard(item, i)).join("")}
+      </div>
+    </div>`;
+  mdRebuild("edit-axis-list");
 }
 
 function axisCard(item, i) {
@@ -1543,35 +1539,135 @@ function axisCard(item, i) {
   `;
 }
 
+/* ---------- 主从布局（左列表 + 右单卡）助手 ----------
+   所有 .edit-card 常驻 DOM，只是隐藏未选中的——各 read 函数与
+   collectWorldEditData / 脏跟踪因此完全不用改；这里只负责摘要列表的构建、选中与过滤。 */
+function mdBadgeFor(kind, card) {
+  const badge = (cls, text) => `<span class="md-badge${cls ? " " + cls : ""}">${text}</span>`;
+  if (kind === "npc") {
+    if (card.querySelector('[data-field="is_player"]')?.checked) return badge("gold", "主角");
+    if (card.querySelector('[data-field="has_actor"]')?.checked) return badge("", "Actor");
+  } else if (kind === "lore") {
+    if (card.querySelector('[data-field="always_on"]')?.checked) return badge("", "常驻");
+    const kw = splitList(card.querySelector('[data-field="keywords"]')?.value).length;
+    if (kw) return badge("", `${kw} 关键词`);
+  } else if (kind === "scene") {
+    const region = card.querySelector('[data-field="region"]')?.value?.trim();
+    if (region) return badge("", escapeHtml(region));
+  }
+  return "";
+}
+
+function mdRebuild(listId) {
+  const list = $("#" + listId);
+  const pane = list.closest(".md-pane");
+  if (!pane) return;
+  const kind = listId.replace("edit-", "").replace("-list", "");
+  const sel = pane.dataset.sel || "";
+  const rows = [];
+  list.querySelectorAll(".edit-card").forEach((card) => {
+    if (!card.dataset.mdkey) card.dataset.mdkey = `${kind}-${rows.length}`;
+    const name = card.querySelector('[data-field="id"]')?.value?.trim() || "（未命名）";
+    rows.push(
+      `<div class="md-item${card.dataset.mdkey === sel ? " active" : ""}" data-key="${card.dataset.mdkey}">` +
+        `<span class="md-name">${escapeHtml(name)}</span>${mdBadgeFor(kind, card)}` +
+      `</div>`
+    );
+  });
+  pane.querySelector(".md-items").innerHTML = rows.join("");
+  // 选中校验：原选中项已删则回落到第一条
+  const valid = sel && list.querySelector(`.edit-card[data-mdkey="${sel}"]`);
+  mdShow(listId, valid ? sel : list.querySelector(".edit-card")?.dataset.mdkey || "");
+}
+
+function mdShow(listId, key) {
+  const list = $("#" + listId);
+  const pane = list.closest(".md-pane");
+  if (!pane) return;
+  pane.dataset.sel = key || "";
+  list.querySelectorAll(".edit-card").forEach((c) => {
+    c.style.display = c.dataset.mdkey === key ? "" : "none";
+  });
+  pane.querySelectorAll(".md-item").forEach((r) => r.classList.toggle("active", r.dataset.key === key));
+}
+
 function bindEditEvents() {
   document.querySelectorAll(".edit-list").forEach((list) => {
     list.onclick = (e) => {
       const btn = e.target.closest(".remove-item");
-      if (btn) btn.closest(".edit-card").remove();
+      if (!btn) return;
+      btn.closest(".edit-card").remove();
+      mdRebuild(list.id);
+      // 删除是纯 click（无 input/change），必须手动触发脏检查
+      refreshDirty();
     };
     // 主角唯一性（2026-09-13）：勾上任意一张卡的「主角」，其余自动取消；
     // 重渲染人物列表让"删除"按钮随之出现/消失——数据从当前 DOM 读回，编辑不丢。
     // 用 on* 赋值而非 addEventListener：bindEditEvents 会被重复调用，避免监听器堆积。
     list.onchange = (e) => {
       const box = e.target.closest?.('[data-field="is_player"]');
-      if (!box || !box.checked || list.id !== "edit-npc-list") return;
-      list.querySelectorAll('[data-field="is_player"]').forEach((cb) => {
-        if (cb !== box) cb.checked = false;
+      if (box && box.checked && list.id === "edit-npc-list") {
+        const pane = list.closest(".md-pane");
+        const prevIdx = Array.from(list.querySelectorAll(".edit-card")).findIndex(
+          (c) => c.dataset.mdkey && c.dataset.mdkey === pane?.dataset.sel
+        );
+        list.querySelectorAll('[data-field="is_player"]').forEach((cb) => {
+          if (cb !== box) cb.checked = false;
+        });
+        const npcs = readNpcs();
+        renderEditNpcs({ npcs });
+        bindEditEvents();
+        const fresh = Array.from($("#edit-npc-list").querySelectorAll(".edit-card"));
+        const target = fresh[prevIdx >= 0 ? prevIdx : 0];
+        if (target) mdShow("edit-npc-list", target.dataset.mdkey);
+        return;
+      }
+      // 改了 ID：左侧摘要的名字跟着刷新（不动选中项）
+      if (e.target.matches?.('[data-field="id"]')) mdRebuild(list.id);
+    };
+  });
+
+  // 主从交互：点摘要行切详情、搜索框过滤摘要行
+  document.querySelectorAll(".md-pane").forEach((pane) => {
+    const listId = pane.querySelector(".edit-list")?.id;
+    if (!listId) return;
+    pane.onclick = (e) => {
+      const item = e.target.closest(".md-item");
+      if (item) mdShow(listId, item.dataset.key);
+    };
+    pane.oninput = (e) => {
+      if (!e.target.classList?.contains("md-search")) return;
+      const q = e.target.value.trim().toLowerCase();
+      pane.querySelectorAll(".md-item").forEach((row) => {
+        row.style.display = row.textContent.toLowerCase().includes(q) ? "" : "none";
       });
-      const npcs = readNpcs();
-      renderEditNpcs({ npcs });
-      bindEditEvents();
     };
   });
 
   const addLore = $("#add-lore");
-  if (addLore) addLore.onclick = () => $("#edit-lore-list").insertAdjacentHTML("beforeend", loreCard({}, 999));
+  if (addLore) addLore.onclick = () => {
+    $("#edit-lore-list").insertAdjacentHTML("beforeend", loreCard({}, 999));
+    mdRebuild("edit-lore-list");
+    refreshDirty();
+  };
   const addScene = $("#add-scene");
-  if (addScene) addScene.onclick = () => $("#edit-scene-list").insertAdjacentHTML("beforeend", sceneCard({}, 999));
+  if (addScene) addScene.onclick = () => {
+    $("#edit-scene-list").insertAdjacentHTML("beforeend", sceneCard({}, 999));
+    mdRebuild("edit-scene-list");
+    refreshDirty();
+  };
   const addNpc = $("#add-npc");
-  if (addNpc) addNpc.onclick = () => $("#edit-npc-list").insertAdjacentHTML("beforeend", npcCard("", {}));
+  if (addNpc) addNpc.onclick = () => {
+    $("#edit-npc-list").insertAdjacentHTML("beforeend", npcCard("", {}));
+    mdRebuild("edit-npc-list");
+    refreshDirty();
+  };
   const addAxis = $("#add-axis");
-  if (addAxis) addAxis.onclick = () => $("#edit-axis-list").insertAdjacentHTML("beforeend", axisCard({}, 999));
+  if (addAxis) addAxis.onclick = () => {
+    $("#edit-axis-list").insertAdjacentHTML("beforeend", axisCard({}, 999));
+    mdRebuild("edit-axis-list");
+    refreshDirty();
+  };
 }
 
 function splitList(str) {
@@ -1872,8 +1968,7 @@ async function init() {
     await sendDirectorMessage();
   });
   $("#save-preset").addEventListener("click", savePreset);
-  $("#save-player").addEventListener("click", savePlayer);
-  $("#save-settings").addEventListener("click", saveSettings);
+    $("#save-settings").addEventListener("click", saveSettings);
   $("#refresh-usage").addEventListener("click", loadUsage);
   $("#refresh-debug").addEventListener("click", loadDebugTrace);
 

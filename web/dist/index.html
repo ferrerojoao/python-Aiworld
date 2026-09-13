@@ -28,7 +28,6 @@
         <div class="topbar-actions">
           <button id="open-world">世界工作台</button>
           <button data-tab="director">导演</button>
-          <button data-tab="player">主角</button>
           <button data-tab="preset">预设</button>
           <button data-tab="debug">调试</button>
           <button data-tab="settings">设置</button>
@@ -56,7 +55,6 @@
       </div>
       <div class="drawer-tabs">
         <button class="tab active" data-tab="director">导演</button>
-        <button class="tab" data-tab="player">主角</button>
         <button class="tab" data-tab="preset">预设</button>
         <button class="tab" data-tab="debug">调试</button>
         <button class="tab" data-tab="settings">设置</button>
@@ -70,22 +68,6 @@
           <input id="director-input" type="text" placeholder="和导演讨论剧情…" autocomplete="off" />
           <button type="submit">发送</button>
         </form>
-      </div>
-
-      <div id="tab-player" class="tab-panel">
-        <h3>主角资料</h3>
-        <p class="hint">主角就是「人物」表里标着主角的那张卡（有且仅有一张，不可删除）。名字即人物表键，事件日志按此记录；改名只影响此后的日志，旧日志保持原名。</p>
-        <label>名字</label>
-        <input id="player-name" type="text" placeholder="主角真名（如 刘星）" />
-        <label>外貌</label>
-        <textarea id="player-appearance" rows="3" placeholder="外貌描述"></textarea>
-        <label>人格 / 说话风格</label>
-        <textarea id="player-persona" rows="4" placeholder="性格、说话风格等（身份定位/职业也写这里）"></textarea>
-        <label>幕后注</label>
-        <textarea id="player-private-note" rows="2" placeholder="例如：主角其实是镇长的私生子，连他自己都不知道"></textarea>
-        <label>自知隐秘</label>
-        <textarea id="player-secrets" rows="2" placeholder="主角心里的事"></textarea>
-        <button id="save-player">保存主角资料</button>
       </div>
 
       <div id="tab-preset" class="tab-panel">

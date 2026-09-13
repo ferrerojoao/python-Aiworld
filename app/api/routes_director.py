@@ -221,4 +221,13 @@ def _execute_action(session, action_type: str, payload: dict) -> dict:
         ledger.persist_save()
         return {"ok": True, "action": action_type, "event": event}
 
-    raise HTTPException(status_code=400, detail=f"unknown action: {action_type}")
+    # 导演窗口只管改账本（覆写/记忆注入/改判/剧情目标/退场）。模型越权提议
+    # 世界资产动作时，给玩家一句人话并指向正确的入口，而不是裸 400。
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"导演窗口不支持「{action_type}」这个动作。"
+            "改账本的事（覆写 / 记忆注入 / 访问改判 / 剧情目标 / 角色退场）在这里确认后执行；"
+            "人物卡、转正、场景、世界书等世界资产请到「世界工作台」直接编辑。"
+        ),
+    )
