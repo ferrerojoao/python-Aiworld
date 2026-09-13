@@ -8,7 +8,7 @@ def test_present_at_derives_from_narrative(session):
         "kind": "narrative",
         "at": "2026-07-14T10:00:00",
         "location": "网吧",
-        "participants": ["player", "朱明"],
+        "participants": ["刘星", "朱明"],
         "known_by": None,
         "body": "朱明在网吧。",
         "source": "turn",
@@ -25,7 +25,7 @@ def test_where_is_and_present(session):
         "kind": "narrative",
         "at": "2026-07-14T10:00:00",
         "location": "网吧",
-        "participants": ["player", "朱明"],
+        "participants": ["刘星", "朱明"],
         "known_by": None,
         "body": "朱明在网吧。",
         "source": "witness",
@@ -42,7 +42,7 @@ def test_visible_to_respects_known_by(session):
         "kind": "narrative",
         "at": "2026-07-14T10:00:00",
         "location": "网吧",
-        "participants": ["player", "朱明"],
+        "participants": ["刘星", "朱明"],
         "known_by": None,
         "body": "朱明在网吧。",
         "source": "turn",
@@ -52,8 +52,8 @@ def test_visible_to_respects_known_by(session):
         "kind": "narrative",
         "at": "2026-07-14T10:00:00",
         "location": "老巷旧楼",
-        "participants": ["player", "王蓉"],
-        "known_by": ["player", "王蓉"],
+        "participants": ["刘星", "王蓉"],
+        "known_by": ["刘星", "王蓉"],
         "body": "王蓉说了一个秘密。",
         "source": "turn",
     }
@@ -64,7 +64,7 @@ def test_visible_to_respects_known_by(session):
     assert public_ev["id"] in visible_to_zhuming
     assert private_ev["id"] not in visible_to_zhuming
 
-    visible_to_player = {ev["id"] for ev in ledger.visible_to("player")}
+    visible_to_player = {ev["id"] for ev in ledger.visible_to("刘星")}
     assert private_ev["id"] in visible_to_player
 
 
@@ -75,7 +75,7 @@ def test_retired_npc_absent_from_present_at(session):
         "kind": "narrative",
         "at": "2026-07-14T10:00:00",
         "location": "网吧",
-        "participants": ["player", "朱明"],
+        "participants": ["刘星", "朱明"],
         "known_by": None,
         "body": "朱明在网吧。",
         "source": "turn",
@@ -175,7 +175,7 @@ def test_access_rejudge(session):
         "kind": "narrative",
         "at": "2026-07-14T10:00:00",
         "location": "校门口",
-        "participants": ["player", "朱明"],
+        "participants": ["刘星", "朱明"],
         "known_by": None,
         "body": "朱明在学校门口说了一件事。",
         "source": "turn",
@@ -184,7 +184,7 @@ def test_access_rejudge(session):
 
     # 改判私密：名单由玩家/导演直接给定落账（不做检索起草，玩家接受
     # "已传开者收不回"的逻辑代价）——名单外查不到，名单内可引。
-    apply_access_override(ledger, ev["id"], ["player", "朱明"])
+    apply_access_override(ledger, ev["id"], ["刘星", "朱明"])
     assert ev["id"] not in {item["id"] for item in ledger.visible_to("王蓉")}
     assert ev["id"] in {item["id"] for item in ledger.visible_to("朱明")}
 
@@ -197,7 +197,7 @@ def test_event_counter_calibrated_from_stream(session):
         "kind": "narrative",
         "at": "2026-07-14T10:00:00",
         "location": "校门口",
-        "participants": ["player", "朱明"],
+        "participants": ["刘星", "朱明"],
         "known_by": None,
         "body": "朱明在学校门口说了一件事。",
         "source": "turn",
@@ -223,7 +223,7 @@ def test_deferred_events_hit_disk_on_flush(session):
         "kind": "narrative",
         "at": "2026-07-14T10:00:00",
         "location": "网吧",
-        "participants": ["player"],
+        "participants": ["刘星"],
         "known_by": None,
         "body": "测试暂存事件。",
         "source": "turn",
@@ -252,8 +252,8 @@ def test_experiences_recalls_knower_not_participant(session):
         "kind": "narrative",
         "at": "2026-07-14T10:00:00",
         "location": "老巷旧楼",
-        "participants": ["player", "王蓉"],
-        "known_by": ["player", "王蓉"],
+        "participants": ["刘星", "王蓉"],
+        "known_by": ["刘星", "王蓉"],
         "body": "玩家和王蓉在老巷说了一句悄悄话。",
         "summary": "玩家和王蓉说了一句悄悄话。",
         "source": "turn",
@@ -265,12 +265,12 @@ def test_experiences_recalls_knower_not_participant(session):
     assert "悄悄话" not in "\n".join(ledger.experiences("朱明", "朱明"))
 
     # 改判扩名单（朱明被告知）：可见性放开，记忆召回必须同步跟上。
-    apply_access_override(ledger, secret["id"], ["player", "王蓉", "朱明"])
+    apply_access_override(ledger, secret["id"], ["刘星", "王蓉", "朱明"])
     assert secret["id"] in {e["id"] for e in ledger.visible_to("朱明")}
     assert "悄悄话" in "\n".join(ledger.experiences("朱明", "朱明"))
 
     # 改判收名单（朱明被移出）：召回同步撤销，不残留。
-    apply_access_override(ledger, secret["id"], ["player", "王蓉"])
+    apply_access_override(ledger, secret["id"], ["刘星", "王蓉"])
     assert "悄悄话" not in "\n".join(ledger.experiences("朱明", "朱明"))
 
 
@@ -282,8 +282,8 @@ def test_experiences_knower_index_survives_reload(session, tmp_path):
         "kind": "narrative",
         "at": "2026-07-14T10:00:00",
         "location": "老巷旧楼",
-        "participants": ["player", "王蓉"],
-        "known_by": ["player", "王蓉", "朱明"],
+        "participants": ["刘星", "王蓉"],
+        "known_by": ["刘星", "王蓉", "朱明"],
         "body": "玩家和王蓉在老巷说了一句悄悄话。",
         "summary": "玩家和王蓉说了一句悄悄话。",
         "source": "turn",
@@ -312,22 +312,22 @@ def test_known_set_region_boundary(session):
     ev_a = {
         "id": ledger.allocate_event_id(),
         "kind": "narrative", "at": "2026-07-14T10:00:00",
-        "location": "主街", "participants": ["player"],
+        "location": "主街", "participants": ["刘星"],
         "known_by": None, "body": "主街有集市。", "summary": "主街集市热闹。",
         "source": "turn",
     }
     ev_b = {
         "id": ledger.allocate_event_id(),
         "kind": "narrative", "at": "2026-07-14T11:00:00",
-        "location": "网吧", "participants": ["player"],
+        "location": "网吧", "participants": ["刘星"],
         "known_by": None, "body": "网吧举办比赛。", "summary": "网吧举办电竞比赛。",
         "source": "turn",
     }
     ev_priv = {
         "id": ledger.allocate_event_id(),
         "kind": "narrative", "at": "2026-07-14T12:00:00",
-        "location": "主街", "participants": ["player"],
-        "known_by": ["player", "朱明"], "body": "私下给了朱明一样东西。",
+        "location": "主街", "participants": ["刘星"],
+        "known_by": ["刘星", "朱明"], "body": "私下给了朱明一样东西。",
         "summary": "玩家私下给朱明东西。",
         "source": "turn",
     }
@@ -359,7 +359,7 @@ def test_known_set_region_boundary(session):
     ev_exp = {
         "id": ledger.allocate_event_id(),
         "kind": "narrative", "at": "2026-07-14T13:00:00",
-        "location": "主街", "participants": ["player", "朱明"],
+        "location": "主街", "participants": ["刘星", "朱明"],
         "known_by": None, "body": "朱明在主街和玩家碰头。",
         "summary": "朱明与玩家主街碰头。",
         "source": "turn",
@@ -393,7 +393,7 @@ def test_known_set_adhoc_scene_not_hearsay(session):
         "id": ledger.allocate_event_id(),
         "kind": "narrative", "at": "2026-07-14T10:00:00",
         "location": "dark_alley", "location_name": "无名暗巷",
-        "participants": ["player"],
+        "participants": ["刘星"],
         "known_by": None, "body": "暗巷里当街起了冲突。", "summary": "无名暗巷当街冲突。",
         "source": "turn",
     }
@@ -409,7 +409,7 @@ def test_known_set_adhoc_scene_not_hearsay(session):
     ledger.append({
         "id": ledger.allocate_event_id(),
         "kind": "narrative", "at": "2026-07-14T11:00:00",
-        "location": "dark_alley", "participants": ["player", "朱明"],
+        "location": "dark_alley", "participants": ["刘星", "朱明"],
         "known_by": None, "body": "朱明也在暗巷。", "summary": "朱明同在暗巷。",
         "source": "turn",
     })
@@ -422,7 +422,7 @@ def test_known_set_adhoc_scene_not_hearsay(session):
         "id": ledger.allocate_event_id(),
         "kind": "narrative", "at": "2026-07-14T12:00:00",
         "location": "rooftop", "location_name": "楼顶天台",
-        "participants": ["player"],
+        "participants": ["刘星"],
         "known_by": None, "body": "天台上有人喊话。", "summary": "楼顶天台有人喊话。",
         "source": "turn",
     })

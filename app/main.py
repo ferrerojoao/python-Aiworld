@@ -35,21 +35,19 @@ def create_app(settings: Settings | None = None, llm=None) -> FastAPI:
         app.state.sessions: dict[str, GameSession] = {}
         app.state.global_preset = load_global_preset(settings.data_dir / "presets.json")
         # Restore existing saves so the API can list/open them after restart.
+        # 世界=存档 1:1：save.json 就在世界目录本身。
         content_root = Path(settings.content_root)
         if content_root.is_dir():
             for world_dir in content_root.glob("*"):
                 if not (world_dir / "world.json").exists():
                     continue
-                save_root = world_dir / "saves"
-                if not save_root.is_dir():
+                if not (world_dir / "save.json").exists():
                     continue
-                for save_dir in save_root.iterdir():
-                    if (save_dir / "save.json").exists():
-                        try:
-                            session = open_session(save_root, save_dir.name)
-                            app.state.sessions[session.sid] = session
-                        except Exception:
-                            continue
+                try:
+                    session = open_session(world_dir)
+                    app.state.sessions[session.sid] = session
+                except Exception:
+                    continue
 
         if llm is not None:
             app.state.llm = llm

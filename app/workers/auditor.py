@@ -23,7 +23,7 @@ async def run_audit(
     applies the returned AuditOutput (clock, narrative, scene registration,
     goals, lifecycle).
     """
-    system = build_audit_work_order(world, ledger, ledger.save.player_scene)
+    system = build_audit_work_order(world, ledger, ledger.current_scene())
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": f"已采纳正文：\n{prose}\n\n玩家输入：{player_input}"},

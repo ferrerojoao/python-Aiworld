@@ -62,7 +62,7 @@ async def _director_chat(request, session, message: str):
     settings = request.app.state.settings
 
     system = build_director_chat_system(
-        session.world, session.ledger, session.ledger.save.player_scene
+        session.world, session.ledger, session.ledger.current_scene()
     )
     history = session.director_history[-20:]
     messages = [{"role": "system", "content": system}]
@@ -159,7 +159,7 @@ def _execute_action(session, action_type: str, payload: dict) -> dict:
                 ledger,
                 text=text,
                 kind=payload.get("kind") or "small",
-                subject=payload.get("subject") or "player",
+                subject=payload.get("subject") or "",
                 big_goal_id=payload.get("big_goal_id") or None,
                 npc_id=npc_id,
             )
@@ -173,6 +173,11 @@ def _execute_action(session, action_type: str, payload: dict) -> dict:
         npc_id = _resolve_npc_ref(session, payload.get("npc_id", ""))
         if npc_id is None:
             raise HTTPException(status_code=404, detail=f"npc not found: {payload.get('npc_id')}")
+        # 主角不可退场（2026-09-13）：主角已入人物表，退场等于把主角从世界注销。
+        if npc_id == session.world.player_name():
+            raise HTTPException(
+                status_code=400, detail=f"{npc_id}是主角，不能退场（改主角走世界工作台的人物卡）"
+            )
         from app.ledger.save import EntityRuntime
 
         entity = ledger.save.entities.setdefault(npc_id, EntityRuntime())
@@ -183,7 +188,7 @@ def _execute_action(session, action_type: str, payload: dict) -> dict:
             "at": ledger.save.clock,
             "location": None,
             "participants": [npc_id],
-            "known_by": sorted({npc_id, "player"}),
+            "known_by": sorted({npc_id, session.world.player_name()}),
             "body": "",
             "summary": f"{npc_id}退场（永久离开舞台）",
             "player_input": None,

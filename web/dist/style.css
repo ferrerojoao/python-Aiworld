@@ -618,7 +618,17 @@ button:hover {
 
 .modal-tabs {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   border-bottom: 1px solid var(--border);
+}
+
+/* 作用域分组标签（世界资产 / 本存档）——tab 本身只说"哪一页"，这里说"哪个范围" */
+.modal-tabs .tab-group {
+  flex: 0 0 auto;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .modal-tabs .tab {
@@ -628,6 +638,190 @@ button:hover {
   border-radius: 0;
   border-bottom: 2px solid transparent;
   color: var(--muted);
+}
+
+/* 标题栏：上下文（世界名·目录·存档）+ 面板级动作 */
+.wb-context {
+  flex: 1;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wb-header-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.wb-header-actions button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* 切换世界面板：世界列表 + 新建/导入，收纳在这里而不是占一个标签页 */
+.wb-world-panel {
+  display: none;
+  max-height: 55vh;
+  overflow-y: auto;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-2);
+}
+
+.wb-world-panel.open {
+  display: block;
+}
+
+.wb-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.wb-panel-head .muted {
+  color: var(--muted);
+  font-size: 12px;
+  flex: 1;
+}
+
+.wb-panel-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* 面板内按钮统一为紧凑次级样式：全局 button 是 8px 14px 大蓝块，
+   标题栏是 12px 描边小按钮，两者混在面板里格式不一——这里收口 */
+.wb-world-panel button,
+.wb-world-panel .import-label {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.wb-world-panel button:hover,
+.wb-world-panel .import-label:hover {
+  background: var(--input-bg);
+}
+
+.wb-world-panel button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.wb-world-panel button.primary:hover {
+  background: var(--accent-hover);
+}
+
+.wb-world-panel button.danger {
+  border-color: var(--danger);
+  color: #fff;
+  background: var(--danger);
+}
+
+.wb-world-panel button.danger:hover {
+  background: var(--danger);
+  filter: brightness(1.15);
+}
+
+/* 列表行按钮定宽居中：按钮字数不同（打开/校验/删除）也不挤压错位 */
+.world-list-actions button {
+  min-width: 46px;
+  justify-content: center;
+}
+
+/* 保存条：就地编辑的作用域声明 + 待修/未保存计数 */
+.wb-savebar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--panel-2);
+}
+
+.wb-savebar[hidden] {
+  display: none;
+}
+
+.wb-savebar-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.wb-status {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.wb-status.warn {
+  color: var(--danger);
+}
+
+.wb-savebar button {
+  background: var(--panel-4);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.wb-savebar button.primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.wb-savebar button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* 底栏按作用域分三组；危险组靠右 */
+.modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.action-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.action-group-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.action-group-danger {
+  margin-left: auto;
 }
 
 .modal-tabs .tab.active {
@@ -800,13 +994,6 @@ button:hover {
   background: var(--danger);
 }
 
-.modal-actions {
-  display: flex;
-  gap: 8px;
-  padding: 12px 16px;
-  border-top: 1px solid var(--border);
-}
-
 .modal-actions button,
 .modal-actions .import-label {
   padding: 8px 14px;
@@ -882,6 +1069,36 @@ button:hover {
   min-width: 0;
 }
 
+/* 主角标记（2026-09-13）：人物表里认出主角 + 主角卡不可删除 */
+.player-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #c8a24a;
+  color: #1a1206;
+  font-size: 11px;
+  vertical-align: middle;
+}
+
+.edit-card.is-player {
+  border-left: 3px solid #c8a24a;
+}
+
+.player-lock {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 面板内的说明文字（如主角资料说明） */
+.hint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 4px 0 10px;
+}
+
 #director-output {
   font-size: 12px;
   color: var(--muted);
@@ -920,6 +1137,120 @@ button:hover {
 
 .world-list-actions button.danger {
   background: var(--danger);
+}
+
+/* ---------- 新建世界（L1 种子 / L2 一句话草稿） ---------- */
+
+.new-world {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 14px;
+}
+
+.nw-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.nw-row label {
+  flex: 1 1 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+/* 全宽 label 在纵向 flex 里不能带 220px 基线（会变成高度基线，把 textarea 撑出一大截空白） */
+.new-world > label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.new-world input,
+.new-world textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.new-world .muted {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: normal;
+}
+
+.nw-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.draft-preview {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.draft-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.draft-block b {
+  font-size: 13px;
+}
+
+.draft-block pre {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  color: var(--muted);
+  font-family: inherit;
+}
+
+.chip {
+  display: inline-block;
+  margin: 3px 6px 0 0;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 12px;
+  background: var(--panel-4);
+}
+
+.warn-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  background: var(--danger);
+  color: #fff;
+}
+
+.warn-text {
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-top: 4px;
+}
+
+.ok-text {
+  color: var(--accent);
+  font-size: 12px;
 }
 
 /* 亮色主题下的文字修正 */

@@ -26,7 +26,8 @@ def test_export_save_includes_events(tmp_path):
         names = zf.namelist()
         assert "save.json" in names
         assert "events.jsonl" in names
-        assert any(n.startswith("world/") for n in names)  # 世界实例一并导出
+        assert "world.json" in names  # 世界资产在根层（世界=存档）
+        assert any(n.startswith("npcs/") for n in names)
         # 候选是临时态，不入备份
         assert not any(n.startswith("candidates/") for n in names)
 
@@ -41,9 +42,10 @@ def test_export_save_includes_events(tmp_path):
 
 
 def test_import_save_roundtrip(tmp_path):
-    """Export then import: the save lands under content/<world>/saves/ with its
-    event log intact; a name clash gets renamed instead of overwriting."""
+    """导出→导入往返：世界已有进行中的存档 → 409 拒绝（绝不覆盖正在玩的
+    世界）；删掉坏世界后导入即可原样恢复（世界=存档，落点是世界目录本身）。"""
     import base64
+    import shutil as _shutil
 
     from tests.test_api import _make_client
 
@@ -59,7 +61,15 @@ def test_import_save_roundtrip(tmp_path):
 
         blob = client.get(f"/api/sessions/{sid}/export").content
 
-        # 导入同一份存档：已存在同名 → 自动改名，不覆盖原存档。
+        # 该世界已有进行中的存档 → 导入被拒绝，不覆盖。
+        resp = client.post(
+            "/api/saves/import",
+            json={"filename": "save.zip", "content": base64.b64encode(blob).decode()},
+        )
+        assert resp.status_code == 409
+
+        # 模拟"世界改坏了"：删掉世界目录，再导入备份恢复。
+        _shutil.rmtree(tmp_path / "qinghsi")
         resp = client.post(
             "/api/saves/import",
             json={"filename": "save.zip", "content": base64.b64encode(blob).decode()},
@@ -67,8 +77,7 @@ def test_import_save_roundtrip(tmp_path):
         assert resp.status_code == 200
         data = resp.json()
         assert data["world_id"] == "qinghsi"
-        assert data["save_name"].startswith("main_")  # 改名后的新存档
-        assert data["sid"] == f"qinghsi:{data['save_name']}"
+        assert data["save_name"] == "main"
 
         # 导入的存档可打开：主角资料与事件日志都在。
         player = client.get(f"/api/sessions/{data['sid']}/player").json()
@@ -87,8 +96,9 @@ def test_import_save_roundtrip(tmp_path):
 
 
 def test_import_save_creates_missing_world(tmp_path):
-    """导入的存档若指向本机不存在的世界，用包内 world/ 资产建档。"""
+    """导入的存档若指向本机不存在的世界，用包内资产建档（换机场景）。"""
     import base64
+    import shutil as _shutil
 
     from tests.test_api import _make_client
 
@@ -97,9 +107,7 @@ def test_import_save_creates_missing_world(tmp_path):
         sid = r.json()["sid"]
         blob = client.get(f"/api/sessions/{sid}/export").content
 
-        # 删掉世界目录，模拟换机（只有存档包）。
-        import shutil as _shutil
-
+        # 删掉世界目录，模拟换机（只有备份包）。
         _shutil.rmtree(tmp_path / "qinghsi")
         assert not (tmp_path / "qinghsi").exists()
 
@@ -111,7 +119,7 @@ def test_import_save_creates_missing_world(tmp_path):
         data = resp.json()
         assert data["world_id"] == "qinghsi"
         assert (tmp_path / "qinghsi" / "world.json").exists()
-        assert (tmp_path / "qinghsi" / "saves" / data["save_name"] / "events.jsonl").exists()
+        assert (tmp_path / "qinghsi" / "events.jsonl").exists()
         # 世界资产从包内恢复（NPC 卡可读）
         world = client.get(f"/api/sessions/{data['sid']}/world").json()
         assert world["npcs"]

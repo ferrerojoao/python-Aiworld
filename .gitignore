@@ -15,3 +15,5 @@ scratch_saves/
 bt_all/
 bt_tt/
 data/settings.json
+backup_content_*.tar.gz
+backup_content_*.zip

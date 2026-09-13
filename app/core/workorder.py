@@ -53,18 +53,25 @@ def world_summary_block(world: WorldContent) -> list[str]:
 
 
 def character_block(world: WorldContent, ledger: Ledger, present_ids: list[str], include_ids: bool = False) -> list[str]:
-    """玩家资料 + 在场 NPC 名片（含 Actor 档位标注，可选附带 id）。
+    """主角资料 + 在场 NPC 名片（含 Actor 档位标注，可选附带 id）。
 
-    玩家与 NPC 分两段，避免「角色」笼统概念混用。主角与 NPC 字段一致：
-    名字/外貌/人格 + 幕后注/自知隐秘（见 private_notes_block）。
+    主角与 NPC 分两段（2026-09-13 主角入人物表后仍保留）：主角是对话对象，
+    有独立视角，混在"在场 NPC"里读起来会像第三方。主角卡在 NPC 段被跳过。
     """
-    player = ledger.save.player
+    player = world.player()
+    player_name = world.player_name()
     lines = ["玩家资料："]
-    lines.append(
-        f"[主角] 名字：{player.name}；外貌：{player.appearance or '未设定'}；人格：{player.persona or '未设定'}"
-    )
+    if player is not None:
+        lines.append(
+            f"[主角] 名字：{player.id}；外貌：{player.appearance or '未设定'}；"
+            f"人格：{player.persona or '未设定'}"
+        )
+    else:
+        lines.append(f"[主角] 名字：{player_name}；外貌：未设定；人格：未设定")
     npc_lines = []
     for pid in present_ids:
+        if pid == player_name:
+            continue  # 主角另有独立段，不重复列
         npc = world.npcs.get(pid)
         if npc:
             ticket = "（配 Actor）" if npc.has_actor else "（导演代笔）"
@@ -104,12 +111,7 @@ def event_log_block(world: WorldContent, ledger: Ledger, limit: int = 10, recent
             parts.append(where)
         pids = ev.get("participants", [])
         if pids:
-            names = [
-                ledger.save.player.name if pid == "player"
-                else (pid)
-                for pid in pids
-            ]
-            parts.append("在场者：" + "、".join(names))
+            parts.append("在场者：" + "、".join(pids))
         return f"（{' · '.join(parts)}）" if parts else ""
 
     def _summary_line(ev: dict) -> str:
@@ -153,12 +155,13 @@ def _rel_seen(clock: str, at: str) -> str:
 
 
 def player_display_name(ledger: Ledger) -> str:
-    """玩家在名单里的显示名。
+    """主角在名单/契约里的显示名。
 
-    主角名是占位符「你」时退化为「玩家」——否则 Actor 视图里会出现
-    「你（玩家）」，与契约「你 = 你自己」正面打架（2026-09-11）。
+    主角是人物表里的一员（2026-09-13），名字就是他自己的中文名。唯一保留的
+    退化：作者若把主角名写成占位符「你」，Actor 视图里会出现「你（玩家）」，
+    与契约「你 = 你自己」正面打架——此时退化为「玩家」（2026-09-11 原逻辑）。
     """
-    name = (ledger.save.player.name or "").strip()
+    name = ledger.world.player_name().strip()
     return name if name and name != "你" else "玩家"
 
 
@@ -170,20 +173,31 @@ def scene_snapshot_block(
 ) -> list[str]:
     """场景快照：当前时间 / 在场名单 / 当前场景 / 可感知区。
 
-    玩家无条件列在名单最前并标注「（玩家）」——`present_at` 只遍历 NPC 卡，
-    玩家永远不在返回值里；Actor 视图据此认出谁是对话对象（2026-09-11）。
+    主角是人物表里的普通一员（2026-09-13），其位置同样由事件流水推导，因此
+    名单里正常就有他，只是**多一个「（玩家）」标注**——Actor 视图据此认出谁是
+    对话对象。真正的特例只剩"移动途中"：工作单的 scene 是本场正要写的场景
+    （可能是本轮才解析出的目的地），主角的位置事实还停在旧场景，此时把他补进
+    名单最前——工作单永远是主角所在场景的工作单。
+
     ``exclude`` 供 Actor 视图剔掉自己。
     """
     scene = next((s for s in world.scenes if s.id == scene_id), None)
     skip = set(exclude or ())
+    player = ledger.world.player_name()
     present_ids = [pid for pid in ledger.present_at(scene_id) if pid not in skip]
+    if player not in present_ids and player not in skip:
+        present_ids = [player, *present_ids]
     clock = ledger.save.clock or ""
     name = player_display_name(ledger)
-    parts = ["玩家" if name == "玩家" else f"{name}（玩家）"]
+    parts = []
     for pid in present_ids:
         ev = ledger.where_is(pid)
         seen = _rel_seen(clock, ev.get("at", "")) if ev else ""
-        parts.append(f"{pid}（最后目击：{seen}）" if seen else pid)
+        if pid == player:
+            label = name if name == "玩家" else f"{pid}（玩家）"
+        else:
+            label = pid
+        parts.append(f"{label}（最后目击：{seen}）" if seen else label)
     return [
         "当前时间：" + (clock or "-"),
         "在场（括号内 = 该角色最后被记录在此的时刻，久未见面的要考虑他是否还在）："
@@ -199,7 +213,10 @@ def known_set_block(world: WorldContent, ledger: Ledger, present_ids: list[str],
     取代旧"近况块"——写手与 QC 共用同一份清单，单一事实源。
     """
     lines = []
+    player_name = ledger.world.player_name()
     for pid in present_ids:
+        if pid == player_name:
+            continue  # 主角另有独立段，不重复列
         npc = ledger.world.npcs.get(pid)
         if npc is None:
             continue
@@ -224,15 +241,18 @@ def private_notes_block(world: WorldContent, ledger: Ledger, present_ids: list[s
     保密要求由抬头统一声明一次，各条目只列内容（2026-09-11 去重）。
     """
     notes_lines: list[str] = []
-    player = ledger.save.player
-    if player.private_note or player.personal_secrets:
+    player = world.player()
+    player_name = world.player_name()
+    if player is not None and (player.private_note or player.personal_secrets):
         notes = []
         if player.private_note:
             notes.append(player.private_note)
         if player.personal_secrets:
-            notes.append(f"[{player.name} 自知] {player.personal_secrets}")
-        notes_lines.append(f"[主角·{player.name}] {'；'.join(notes)}")
+            notes.append(f"[{player.id} 自知] {player.personal_secrets}")
+        notes_lines.append(f"[主角·{player.id}] {'；'.join(notes)}")
     for pid in present_ids:
+        if pid == player_name:
+            continue  # 主角的幕后注已在上面独立成条
         npc = world.npcs.get(pid)
         if npc and (npc.private_note or npc.personal_secrets):
             notes = []
@@ -276,10 +296,14 @@ def active_lore_block(ledger: Ledger) -> list[str]:
 
 
 def goal_brief(ledger: Ledger, goal, *, include_ids: bool = False) -> str:
-    """单个目标的单行摘要：``[id] [大目标/主线·玩家] 文本（关联：X）``。"""
+    """单个目标的单行摘要：``[id] [大目标/主线·玩家] 文本（关联：X）``。
+
+    subject 空串 = 主角的目标（默认），否则是该角色的中文名（2026-09-13 改口径，
+    此前是魔法串 "player"）。
+    """
     id_part = f"[{goal.id}] " if include_ids else ""
     tag = "大目标/主线" if goal.kind == "big" else "小目标/支线"
-    owner = "玩家" if goal.subject in {"", "player"} else goal.subject
+    owner = goal.subject or "玩家"
     npc_tag = (
         f"（关联：{goal.npc_id}）"
         if goal.npc_id and goal.npc_id in ledger.world.npcs
@@ -392,7 +416,7 @@ def writer_identity() -> list[str]:
     ]
 
 
-def writer_story_rules(player_name: str = "玩家", roster: list[str] | None = None) -> list[str]:
+def writer_story_rules(roster: list[str] | None = None) -> list[str]:
     """二级 · 情节合理性：信息边界 / 抉择归属 / 设定一致 / 连续性 / 不出戏。
 
     2026-09-11 由「金科玉律（绝对不可违背）」改名并**降级**：这些规则违反会让
@@ -400,14 +424,14 @@ def writer_story_rules(player_name: str = "玩家", roster: list[str] | None = N
     格式同处「绝对不可违背」的等级。段落抬头只保留等级名，**不带解释句**
     （同日用户判定：抬头的自我说明是废话，等级靠位置与命名即可读出来）。
 
-    ``player_name`` 走 ``player_display_name``：context 里提到玩家一律写其**姓名**
-    （同日用户改口径，此前是写「玩家」）；主角名未设定时退化为「玩家」。
-
     ``roster`` 是**本轮可上缴名单**（在场 ∩ 配 Actor，由 ``build_work_order`` 算）。
     这份名单必须显式下发：此前编剧只能自己聚合各人名后「（配 Actor）/（导演代笔）」
     的括号去推谁不能上缴，推错一格就会把无票角色的深抉择上缴上去，而引擎按票
     丢弃 → 那一拍永远是空的（同日用户报的第二类漏洞）。字段结构不在这里讲——
     那属于一级「输出格式」。
+
+    ``player_name`` 参数已于 2026-09-13 移除：context 的人称约定是**字段写法**，
+    随字段定义一起搬到一级（二级先于一级，在这里提 context 时它还没被定义）。
 
     2026-09-12 去否定化：本节原有多处"不得 / 不要 / 绝不能"与枚举式禁令
     （最重的是「不出戏」里逐一列出 AIWorld、系统、编剧、玩家输入四个禁词），
@@ -415,10 +439,6 @@ def writer_story_rules(player_name: str = "玩家", roster: list[str] | None = N
     用户实测：否定措辞越多的提示词，模型表现越差——枚举禁词等于把禁项递到
     模型眼前，注意力从写作挪去自查。
     """
-    if player_name == "玩家":
-        ctx_clause = "「玩家」"
-    else:
-        ctx_clause = f"玩家姓名「{player_name}」"
     if roster:
         roster_clause = (
             "本轮可上缴深抉择的角色：" + "、".join(roster) + "。"
@@ -432,13 +452,13 @@ def writer_story_rules(player_name: str = "玩家", roster: list[str] | None = N
         "每个角色开口前核对台词是否在他已知范围内（在场 NPC 见工作单「已知集」清单）；"
         "真相只经由知情者之口进入正文（知情者当场坦白，那是新戏）；"
         "无人物卡的即兴角色只知道眼前可见的东西。",
+        # actor_questions / context 的**字段写法**不在这里展开（2026-09-13 用户指出：
+        # 二级先于一级，此处提到 context 时它还没被定义）——只讲机制并指向一级。
         "抉择归属：标（配 Actor）的角色撞上深抉择（内心判断 / 涉密反应 / 是否信任）时，"
-        "把这一拍写到抉择点为止，在 actor_questions 里上缴——这一拍交给他的 Actor 决定，"
-        "引擎决定后再把整场写全；标（导演代笔）的角色或普通对话由你直接写出来。"
-        + roster_clause
-        + f"context 的人称约定（只约束该字段，正文照旧）：以该 NPC 为「你」，提到玩家一律写{ctx_clause}，"
-        "一句只用一个人称；context 的范围就是该 NPC 本人会知道的情境——"
-        "你的判断、私密与幕后注留在戏外。",
+        "把这一拍写到抉择点为止，在 actor_questions 里上缴（字段写法见「一级 · 输出格式」）——"
+        "这一拍交给他的 Actor 决定，引擎决定后再把整场写全；"
+        "标（导演代笔）的角色或普通对话由你直接写出来。"
+        + roster_clause,
         "设定一致（位置）：在场名单是最近一次记录的快照，可能已过期——结合每人最后被目击的时刻"
         "与其人物卡合理推断他此刻在哪，找到、扑空、他挪了地方都是合理的叙事。",
         "连续性：玩家已经历过的事属于背景，直接接续当下的戏，只处理本回合的输入。",
@@ -467,7 +487,7 @@ def writer_style_block(preset: NarrativePreset) -> list[str]:
     return lines
 
 
-def writer_output_format() -> list[str]:
+def writer_output_format(player_name: str = "玩家") -> list[str]:
     """一级 · 输出格式：最硬的一级（2026-09-11 用户定级）。
 
     格式一旦出错，前端直接解析失败、玩家看不到正文也无法继续——这一级没有
@@ -480,9 +500,20 @@ def writer_output_format() -> list[str]:
     同日迁入：``actor_questions`` 的**条目结构**。此前字段名塞在二级的括号里、
     模板里只有一个空数组，模型得自己猜 ``npc_id`` 填什么——填「你」「玩家」或
     自造 id 都能通过校验，然后静默匹配不上（用户追问点）。字段结构属于格式层，
-    迁到一级并给出带值的样例。``prose`` 一节补写「全文 / 不是续写」，用于压住
-    改稿时只写后半段的倾向。
+    迁到一级并给出带值的样例。
+
+    2026-09-13 再迁入：``context`` 的**人称约定与范围**。用户指出二级先于一级，
+    读到"context 的人称约定"时 context 还没被定义（前向引用）——字段写法就该
+    贴着字段定义。二级只留机制（何时停笔上缴）并指向本节。
+
+    ``player_name`` 走 ``player_display_name``：context 里提到玩家一律写其
+    **姓名**（2026-09-11 用户改口径，此前是写「玩家」）；主角名未设定时退化
+    为「玩家」。
     """
+    if player_name == "玩家":
+        ctx_clause = "「玩家」"
+    else:
+        ctx_clause = f"玩家姓名「{player_name}」"
     return [
         "【一级 · 输出格式】",
         "输出必须是 JSON 对象，字段：",
@@ -490,8 +521,12 @@ def writer_output_format() -> list[str]:
         ' "actor_questions": [{"npc_id": "朱明", "question": "…", "context": "…"}]}',
         "prose：本场戏正文全文——从第一句话写到本场结束（每稿都是完整全文）。",
         "summary：本场戏从头到尾的核心事件摘要，供事件日志使用（与 prose 同样覆盖整场）。",
-        "actor_questions：每项都要写全 npc_id / question / context；npc_id 必须是在场名单方括号里"
-        "逐字出现的角色名（如 朱明）；没有深抉择时给空数组 []。",
+        "actor_questions：深抉择的提问清单，没有时给空数组 []；每项三个字段：",
+        "  · npc_id：必须是在场名单方括号里逐字出现的角色名（如 朱明）。",
+        "  · question：你要问他的那个抉择本身。",
+        f"  · context：人称约定只约束这个字段（正文照旧）——以该 NPC 为「你」，"
+        f"提到玩家一律写{ctx_clause}，一句只用一个人称；这个字段的范围就是该 NPC "
+        "本人会知道的情境，你的判断、私密与幕后注留在戏外。",
         "时间、地点、在场者、私密情境等世界变化都由引擎从你的正文里结算——你只把变化写清楚"
         "（如「天黑了」「走出网吧」）。输出字段以上面三个为准。",
     ]
@@ -544,7 +579,8 @@ def build_actor_work_order(
     ]
     if npc.personal_secrets:
         parts.append(f"你心里的事（只有你自己知道）：{npc.personal_secrets}")
-    # 在场名单剔掉自己，并显式补上玩家（Actor 要认出谁是对话对象）
+    # 在场名单剔掉自己；主角在名单里自带「（玩家）」标注，Actor 据此认人
+    #（2026-09-13 主角入人物表后不再需要"显式补上玩家"那一步）。
     parts += scene_snapshot_block(world, ledger, scene_id, exclude=[npc_id])
     # 记忆口径与写手/QC 一致：known_set（亲历 ∪ known_by 含己 ∪ 听域内公开），
     # 条数上限统一由 world.meta.memory_limit 管，不再有第二处硬编码。
@@ -565,7 +601,7 @@ def build_director_chat_system(
     backstage actions the player may request and the requirement to end a
     discussion with a copyable input suggestion.
     """
-    scene_id = scene_id or ledger.save.player_scene or "main_street"
+    scene_id = scene_id or ledger.current_scene()
     present_ids = ledger.present_at(scene_id)
     scene = next((s for s in world.scenes if s.id == scene_id), None)
     names = [pid for pid in present_ids]
@@ -582,7 +618,7 @@ def build_director_chat_system(
     # include_ids=True：导演要靠 id 废弃目标、把子目标挂到某个大目标下
     #（2026-09-12 之前一律不吐 id，导致 set_goal 的废弃/挂父实际填不出来）。
     parts += goals_block(ledger, include_ids=True)
-    parts += known_set_block(world, ledger, present_ids, ledger.save.player_scene)
+    parts += known_set_block(world, ledger, present_ids, scene_id)
     parts += active_lore_block(ledger)
     parts += private_notes_block(world, ledger, present_ids)
     parts += character_block(world, ledger, present_ids, include_ids=True)
@@ -594,8 +630,8 @@ def build_director_chat_system(
         "- 静默覆写 override：玩家声明某人/某物在哪或去做某事 → payload {subject, location}",
         "- 记忆注入 inject_memory：玩家要求给某 NPC 私下注入一条记忆 → payload {npc_id, memory}（只有他知道）",
         "- 事件访问改判 access_rejudge：玩家要求某事件公开或私密 → payload {event_id, known_by: [知情者...] 或 null}",
-        "- 剧情目标 set_goal：玩家要求设立/废弃剧情目标 → payload {text, kind: big|small, subject?: player|npc_id, big_goal_id?, npc_id?}（设立）或 {goal_id, status: abandoned}（废弃）；"
-        "大目标=主线（章节，往哪去），小目标=支线（节拍，下一步做什么）；subject=目标归属者（默认 player，玩家替 NPC 设立时给该 NPC id）；"
+        "- 剧情目标 set_goal：玩家要求设立/废弃剧情目标 → payload {text, kind: big|small, subject?, big_goal_id?, npc_id?}（设立）或 {goal_id, status: abandoned}（废弃）；"
+        "大目标=主线（章节，往哪去），小目标=支线（节拍，下一步做什么）；subject=目标归属者（留空=主角的目标，玩家替某角色设立时给该角色的中文名）；"
         "小目标要用 big_goal_id 挂到某个大目标下（挂靠后才能多挂，也才能被编剧当作主线的下一步推进）；"
         "额度：大目标上限 2 条、单个大目标下子目标上限 3 条、未挂靠支线上限 2 条；大目标完成/废弃时其下子目标一并撤下；"
         "设立大目标不需要 big_goal_id（层级只有一层）",
@@ -622,7 +658,8 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
     vs registered scenes from the narrative, then judges goal completion
     (M14 剧情目标) and lifecycle.
     """
-    scene_id = scene_id or ledger.save.player_scene or "main_street"
+    scene_id = scene_id or ledger.current_scene()
+    player_name = world.player_name()
     scene = next((s for s in world.scenes if s.id == scene_id), None)
     present_ids = ledger.present_at(scene_id)
     names = [pid for pid in present_ids]
@@ -632,10 +669,10 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
             "你是 AIWorld 的世界审计：玩家采纳一条正文后，你从正文里结算世界的副作用，并判定剧情目标与生命周期。",
             "只返回 JSON，格式如下：",
             '{"location": "场景id", "scene_name": "地点名（新地点给中文名）", "register_scene": false,'
-            ' "participants": ["player", "朱明"], "private": false, "delta_minutes": 0,'
+            f' "participants": ["{player_name}", "朱明"], "private": false, "delta_minutes": 0,'
             ' "npc_moves": [{"npc_id": "朱明", "location": "朱明家"}],'
             ' "clock_to": "",'
-            ' "completed_goal_ids": ["达成目标id"], "lifecycle": [{"npc_id": "npc_zhuming", "status": "retired"}]}',
+            ' "completed_goal_ids": ["达成目标id"], "lifecycle": [{"npc_id": "朱明", "status": "retired"}]}',
             "判定规则：",
             "- location：正文里玩家此刻所在之处。玩家在正文中明确移动（离开/去别处/回家）时更新，否则保持当前场景。",
             "- participants（与 location 联动，二选一）：",
@@ -702,7 +739,7 @@ def build_work_order(
     viewer="actor_<npc_id>": physically isolated NPC deep-choice view.
     """
     if viewer == "writer":
-        scene_id = scene_id or ledger.save.player_scene or "main_street"
+        scene_id = scene_id or ledger.current_scene()
         preset = preset or world.presets
         present_ids = ledger.present_at(scene_id)
 
@@ -713,16 +750,21 @@ def build_work_order(
         # 二级 · 情节合理性（信息边界 / 抉择归属 / 设定一致 / 连续性 / 不出戏）
         # roster = 在场 ∩ 配 Actor：本轮谁可以被上缴深抉择（零 LLM 的配置量）。
         # 编剧据此决定该不该为某个角色的抉择停笔，引擎事后也按同一份名单裁决。
+        # 主角恒不在名单里：他的抉择只能由玩家给（2026-09-13 主角入人物表后显式排除，
+        # 不再依赖"主角卡没勾 Actor"这一约定）。
         roster = [
             pid
             for pid in present_ids
-            if (npc := world.npcs.get(pid)) is not None and npc.has_actor
+            if pid != world.player_name()
+            and (npc := world.npcs.get(pid)) is not None
+            and npc.has_actor
         ]
-        parts += writer_story_rules(player_display_name(ledger), roster)
+        parts += writer_story_rules(roster)
         # 三级 · 文风与剧情倾向（预设；默认遵循，可灵活）
         parts += writer_style_block(preset)
-        # 一级 · 输出格式（全表唯一的硬边界）
-        parts += writer_output_format()
+        # 一级 · 输出格式（全表唯一的硬边界；context 的人称约定随字段定义在此，
+        # 2026-09-13 由二级迁入——避免二级先引用了尚未定义的 context）
+        parts += writer_output_format(player_display_name(ledger))
         # ── 资料区：以下与事件日志同性质，都是写作取材，一律不标规则等级 ──
         # 世界概要（常驻，永不裁剪）
         parts += world_summary_block(world)
@@ -745,7 +787,7 @@ def build_work_order(
     if viewer.startswith("actor_"):
         npc_id = viewer[len("actor_"):]
         return build_actor_work_order(
-            world, ledger, npc_id, scene_id or ledger.save.player_scene or "main_street"
+            world, ledger, npc_id, scene_id or ledger.current_scene()
         )
 
     raise ValueError(f"unknown viewer: {viewer}")

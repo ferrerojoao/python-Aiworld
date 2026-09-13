@@ -174,6 +174,18 @@ class TurnRunner:
                     own.append((q.npc_id or "未署名角色", q.question))
                     continue
                 npc = self.session.world.npcs[npc_id]
+                if npc_id == self.session.ledger.player_name():
+                    # 编剧把主角自己上缴了：主角的抉择只能由玩家给（本就写进正文的
+                    # 玩家输入），引擎恒不派 Actor。留痕不静默。
+                    notes.append(
+                        {
+                            "level": "info",
+                            "desc": f"编剧上缴了主角「{npc_id}」的抉择——主角不派 Actor，"
+                            "该拍由编剧依玩家输入落笔",
+                        }
+                    )
+                    own.append((npc_id, q.question))
+                    continue
                 if npc.has_actor and npc_id in present:
                     dispatch.append((npc_id, q))
                     continue
@@ -266,7 +278,7 @@ class TurnRunner:
         player_input, writer_directive = _extract_directive(player_input)
 
         route = classify_input(player_input, self.session.world)
-        scene = self.session.ledger.save.player_scene
+        scene = self.session.ledger.current_scene()
         rule_bundle: dict = {"route": route, "scene": scene}
 
         # Rule pre-solve for move: only when the destination actually
@@ -304,12 +316,13 @@ class TurnRunner:
             writer_directive=writer_directive,
         )
         out = result.output
+        player = self.session.ledger.player_name()
 
         if self.settings.qc_enabled:
             await self._progress("qc", "质检员审校中")
             # 两稿上缴过的角色都进比对基准：二稿不再提，不代表这一拍没发生过
             # （诊断成因 #6：participants 侧漏会让相关 NPC 从质检里掉出去）。
-            qc_participants = ["player"] + [pid for pid in result.participants if pid != "player"]
+            qc_participants = [player] + [pid for pid in result.participants if pid != player]
             qc = await run_qc(
                 self.llm,
                 self.session.world,
@@ -371,7 +384,7 @@ class TurnRunner:
         scene = (
             latest.side_effects.narrative.get("location")
             if latest.side_effects.narrative
-            else self.session.ledger.save.player_scene
+            else self.session.ledger.current_scene()
         )
         rewrite_note = ""
         if mode in {"rephrase", "retarget"}:

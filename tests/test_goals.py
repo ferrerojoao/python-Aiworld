@@ -7,7 +7,7 @@ from app.ledger.goals import abandon_goal, add_goal, complete_goals
 
 
 def _ev():
-    return {"at": "2026-07-14T08:00:00", "participants": ["player", "朱明"]}
+    return {"at": "2026-07-14T08:00:00", "participants": ["刘星", "朱明"]}
 
 
 def test_goal_add_complete_cascades_and_abandon(session):

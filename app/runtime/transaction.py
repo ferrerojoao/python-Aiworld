@@ -155,10 +155,15 @@ class Transaction:
 
         # Narrative record: rule-solved location wins; audit fills the rest.
         narrated = candidate.side_effects.narrative or {}
-        location = narrated.get("location") or (audit_out.location if audit_out else None) or self.ledger.save.player_scene
-        participants = (audit_out.participants if audit_out and audit_out.participants else None) or ["player"]
-        # 玩家是每条事件的产生者，恒在参与者名单（审计漏报时兜底）。
-        participants = sorted(set(participants) | {"player"})
+        player = self.ledger.player_name()
+        location = (
+            narrated.get("location")
+            or (audit_out.location if audit_out else None)
+            or self.ledger.current_scene()
+        )
+        participants = (audit_out.participants if audit_out and audit_out.participants else None) or [player]
+        # 主角是每条事件的产生者，恒在参与者名单（审计漏报时兜底）。
+        participants = sorted(set(participants) | {player})
         private = bool(audit_out.private) if audit_out else False
         known_by = participants if private else None
 
@@ -215,11 +220,12 @@ class Transaction:
         # NPC 离场落账：正文明确写出某人离开去了别处 → 轻量位置事件，快照随之更新。
         # （离场者不是主事件的参与者之外的更新渠道——快照只能被事件改变；去向未注册
         # 也无妨：present_at 永远匹配不上它，即"不在任何已注册场景"的机械表达。）
+        # 主角不走这条：主角的移动就是主事件本身，被记进 npc_moves 说明审计写反了。
         for mv in (audit_out.npc_moves if audit_out else []):
             mv = mv or {}
             npc_id = mv.get("npc_id") or ""
             dest = mv.get("location") or ""
-            if not dest or npc_id == "player" or npc_id not in self.ledger.world.npcs:
+            if not dest or npc_id == player or npc_id not in self.ledger.world.npcs:
                 continue
             dest = _resolve_scene(dest, mv.get("scene_name") or "")
             self.ledger.append(
@@ -229,7 +235,7 @@ class Transaction:
                     "at": clock,
                     "location": dest,
                     "participants": [npc_id],
-                    "known_by": sorted({npc_id, "player"}),
+                    "known_by": sorted({npc_id, player}),
                     "body": "",
                     "summary": f"{npc_id}前往{dest}",
                     "source": "turn",
@@ -249,6 +255,10 @@ class Transaction:
             for item in audit_out.lifecycle or []:
                 npc_id = str(item.get("npc_id") or item.get("id") or "")
                 status = str(item.get("status") or "")
+                # 主角不可退场（2026-09-13）：主角已是人物表里的一员，若不排除，
+                # 审计一句"她离开了"就能把主角从世界里注销。
+                if npc_id == player:
+                    continue
                 if npc_id in self.ledger.world.npcs and status == "retired":
                     from app.ledger.save import EntityRuntime
 
@@ -265,7 +275,7 @@ class Transaction:
                             "at": clock,
                             "location": None,
                             "participants": [npc_id],
-                            "known_by": sorted({npc_id, "player"}),
+                            "known_by": sorted({npc_id, player}),
                             "body": "",
                             "summary": f"{npc_id}退场（永久离开舞台）",
                             "player_input": None,

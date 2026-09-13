@@ -14,6 +14,7 @@ from app.core.workorder import (
     build_actor_work_order,
     build_work_order,
     scene_snapshot_block,
+    writer_output_format,
     writer_story_rules,
 )
 from app.workers.actor import clean_context
@@ -37,42 +38,50 @@ def _narrative(ledger, *, location, participants, body, summary, at="2026-07-14T
     return event
 
 
+def _rename_player(world, new_id: str) -> None:
+    """改主角名 = 换人物表键（主角就是表里 is_player 的那张卡）。"""
+    card = world.player()
+    world.npcs.pop(card.id, None)
+    card.id = new_id
+    world.npcs[new_id] = card
+
+
 def _presence_line(text: str) -> str:
     """取场景快照块的在场行（写手工作单里另有「在场 NPC：」行，须区分）。"""
     return next(line for line in text.splitlines() if line.startswith("在场（"))
 
 
 def test_actor_view_lists_player_and_excludes_self(session):
-    """在场名单必须含玩家（对话对象），且不言 Actor 自己。"""
+    """在场名单必须含主角（对话对象）并标注（玩家），且不言 Actor 自己。"""
     ledger = session.ledger
-    _narrative(ledger, location="主街", participants=["player", "朱明"], body="两人在街上碰面。", summary="碰面")
+    _narrative(ledger, location="主街", participants=["刘星", "朱明"], body="两人在街上碰面。", summary="碰面")
 
     order = build_actor_work_order(session.world, ledger, "朱明", "主街")
     line = _presence_line(order)
-    assert "玩家" in line
+    assert "刘星（玩家）" in line
     assert "朱明" not in line
 
 
 def test_writer_view_also_lists_player(session):
-    """写手侧走同一个快照块，玩家同样在名单里。"""
+    """写手侧走同一个快照块，主角同样在名单里。"""
     ledger = session.ledger
-    _narrative(ledger, location="主街", participants=["player", "朱明"], body="两人在街上碰面。", summary="碰面")
+    _narrative(ledger, location="主街", participants=["刘星", "朱明"], body="两人在街上碰面。", summary="碰面")
 
     order = build_work_order("writer", session.world, ledger, "主街")
-    assert "玩家" in _presence_line(order)
+    assert "刘星（玩家）" in _presence_line(order)
 
 
 def test_player_name_placeholder_falls_back_to_player(session):
     """主角名是占位符「你」时只写「玩家」，避免与「你 = 你自己」打架。"""
+    world = session.world
     ledger = session.ledger
 
-    ledger.save.player.name = "你"
-    line = _presence_line("\n".join(scene_snapshot_block(session.world, ledger, "主街")))
+    _rename_player(world, "你")
+    line = _presence_line("\n".join(scene_snapshot_block(world, ledger, "主街")))
     assert "玩家" in line
-    assert "你" not in line
 
-    ledger.save.player.name = "刘星"
-    line = _presence_line("\n".join(scene_snapshot_block(session.world, ledger, "主街")))
+    _rename_player(world, "刘星")
+    line = _presence_line("\n".join(scene_snapshot_block(world, ledger, "主街")))
     assert "刘星（玩家）" in line
 
 
@@ -87,7 +96,7 @@ def test_known_set_includes_global_public_event(session):
 def test_memory_limit_zero_omits_memory_block(session):
     """memory_limit=0 = 不开记忆：条目块整块消失（[-0:] 守卫）。"""
     ledger = session.ledger
-    _narrative(ledger, location="主街", participants=["player", "朱明"], body="两人在街上碰面。", summary="碰面")
+    _narrative(ledger, location="主街", participants=["刘星", "朱明"], body="两人在街上碰面。", summary="碰面")
     session.world.meta.memory_limit = 0
 
     order = build_actor_work_order(session.world, ledger, "朱明", "主街")
@@ -103,27 +112,47 @@ def test_clean_context_does_not_rewrite_pronouns():
 
 
 def test_writer_contract_pins_context_pronouns():
-    """编剧契约必须把 context 的人称定死（只约束该字段，正文照旧）：
-    以该 NPC 为「你」，提到玩家写其**姓名**、不写「玩家」（2026-09-11 改口径）。"""
-    rules = "\n".join(writer_story_rules("刘星"))
-    assert "context 的人称约定" in rules
-    assert "以该 NPC 为「你」" in rules
-    assert "一律写玩家姓名「刘星」" in rules
-    # 2026-09-12 去否定化：人称约定改成正向陈述，不再出现"不要写成…"。
-    assert "一句只用一个人称" in rules
+    """context 的人称约定必须贴着字段定义（2026-09-11 定口径，2026-09-13 迁位）：
+    以该 NPC 为「你」，提到玩家写其**姓名**、不写「玩家」。
+
+    位置要求来自用户 2026-09-13 的观察：二级先于一级，若在二级写"context 的
+    人称约定"，读到那行时 context 还没被定义（前向引用）。字段写法属格式层，
+    随 actor_questions 一起放在一级。
+    """
+    fmt = "\n".join(writer_output_format("刘星"))
+    assert "· context：" in fmt
+    assert "以该 NPC 为「你」" in fmt
+    assert "一律写玩家姓名「刘星」" in fmt
+    assert "一句只用一个人称" in fmt
+    assert "只约束这个字段" in fmt
+
+    # 二级不再提前展开字段写法，只留机制并指向一级。
+    rules = "\n".join(writer_story_rules(["朱明"]))
+    assert "把这一拍写到抉择点为止" in rules
+    assert "见「一级 · 输出格式」" in rules
+    assert "context 的人称约定" not in rules
     assert "不要写成" not in rules
 
     # 主角名未设定（占位符「你」）时退化为「玩家」，不出现自相矛盾的措辞。
-    fallback = "\n".join(writer_story_rules("玩家"))
+    fallback = "\n".join(writer_output_format("玩家"))
     assert "一律写「玩家」" in fallback
     assert "不要写成" not in fallback
+
+
+def test_context_rule_appears_after_field_definition(session):
+    """结构性回归：工作单里 context 的写法规则必须排在字段定义之后
+    （字段定义在 JSON 模板的 actor_questions 里），不再有前向引用。"""
+    order = build_work_order("writer", session.world, session.ledger, "网吧")
+    assert '"actor_questions": [{"npc_id"' in order  # 字段定义
+    assert order.index('"actor_questions": [{"npc_id"') < order.index("· context：")
+    # 二级里那份"提前讲写法"的旧文案已迁走，全文只出现一次 context 人称约定。
+    assert order.count("以该 NPC 为「你」") == 1
 
 
 def test_writer_prompt_is_tiered(session):
     """三级分层（2026-09-11）：二级 → 三级 → 一级 连成梯形排在身份之后、
     资料区之前；抬头只留等级名、不带解释句。世界概要降级为资料、不标等级。"""
     session.world.presets.writer_guidelines = "文风偏好：白描为主，少形容词。"
-    session.ledger.save.player.name = "刘星"
     order = build_work_order("writer", session.world, session.ledger, "网吧")
 
     # 三级标记齐全，顺序为 二级 < 三级 < 一级，且整体在资料区之前（不切开资料区）。
@@ -181,7 +210,7 @@ def test_writer_roster_clause_follows_presence_and_tickets(session):
     _narrative(
         ledger,
         location="网吧",
-        participants=["player", "朱明", "王蓉"],
+        participants=["刘星", "朱明", "王蓉"],
         body="三人在网吧碰头。",
         summary="网吧聚齐",
     )
@@ -209,7 +238,6 @@ def test_actor_contract_explains_pronouns():
 
 def test_actor_work_order_injects_player_name(session):
     """Actor 工作单里的对话对象必须写成主角真名（不再写「玩家」）。"""
-    session.ledger.save.player.name = "刘星"
     order = build_actor_work_order(session.world, session.ledger, "朱明", "主街")
     assert "「刘星」= 你的对话对象" in order
     assert "刘星的抉择留给本人" in order

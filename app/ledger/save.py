@@ -22,7 +22,7 @@ class Goal(BaseModel):
     编剧写作时向目标引导。钩子台账已废弃（2026-09-07）。
 
     kind: big=大目标（主线）/ small=小目标（支线/节点）
-    subject: 目标归属者——"player"=玩家的目标；"npc_xxx"=该 NPC 的目标
+    subject: 目标归属者——空串=主角的目标（默认）；否则是该角色的中文名
              （由玩家与导演讨论时替 NPC 设立，剧情里由该 NPC 主动推进）
     status: active | done | abandoned
     big_goal_id: 小目标挂靠的大目标（仅展示层级，不参与判定）
@@ -32,7 +32,7 @@ class Goal(BaseModel):
     id: str
     text: str
     kind: str = "small"  # big | small
-    subject: str = "player"  # player | npc_xxx（目标归属者）
+    subject: str = ""  # ""=主角；否则角色中文名（归属者）
     status: str = "active"  # active | done | abandoned
     big_goal_id: str | None = None
     npc_id: str | None = None
@@ -40,27 +40,12 @@ class Goal(BaseModel):
     done_at: str | None = None
 
 
-class PlayerProfile(BaseModel):
-    """主角资料：与 NPC 人物卡基本一致（无 has_actor，无引擎调度）。
-
-    private_note = 作者底牌（无人知道的真相，含主角自己也不知道的）；
-    personal_secrets = 主角自知的隐秘/心结/前史（玩家心里的事）。
-    """
-
-    id: str = "player"
-    name: str = "你"
-    appearance: str = ""
-    persona: str = ""
-    private_note: str | None = None
-    personal_secrets: str | None = None
-    attributes: dict[str, int] = Field(default_factory=dict)  # 二期预留
-
-
 class SaveData(BaseModel):
     meta: SaveMeta
     clock: str = ""
-    player_scene: str = "main_street"
-    player: PlayerProfile = Field(default_factory=PlayerProfile)
+    # 镜头位置：与主角最近所在场景一致（主角自身的位置事实在事件流水里，
+    # 由 present_at 推导；此处是持久化的小抄，2026-09-13 保留原语义）。
+    player_scene: str = ""
     narrative_preset: NarrativePreset = Field(default_factory=NarrativePreset)
     entities: dict[str, EntityRuntime] = Field(default_factory=dict)
     axes: dict[str, int] = Field(default_factory=dict)  # 二期预留

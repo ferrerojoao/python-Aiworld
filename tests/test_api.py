@@ -235,12 +235,17 @@ def test_director_retire_marks_lifecycle(tmp_path):
 
 
 def test_player_profile_update(tmp_path):
+    """主角就是人物表里的 is_player 卡：读回来的名字即卡键，改名走改名路径。"""
     with _make_client(tmp_path) as client:
         r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
         sid = r.json()["sid"]
 
         player = client.get(f"/api/sessions/{sid}/player").json()
-        assert player["name"] == "你"
+        assert player["name"] == "刘星"
+        assert player["is_player"] is True
+        # 主角也是世界人物表里的一员（前端"人物"页能看到主角）。
+        npcs = client.get(f"/api/sessions/{sid}/world").json()["npcs"]
+        assert npcs["刘星"]["is_player"] is True
 
         put = client.put(
             f"/api/sessions/{sid}/player",
@@ -253,11 +258,71 @@ def test_player_profile_update(tmp_path):
             },
         )
         assert put.status_code == 200
+        assert put.json()["name"] == "林晓"
 
         player = client.get(f"/api/sessions/{sid}/player").json()
         assert player["name"] == "林晓"
         assert player["private_note"] == "其实是镇长的私生子"
         assert player["personal_secrets"] == "欠了赌债"
+        # 改名 = 换人物表键：旧键消失，新键带着主角标记留下。
+        npcs = client.get(f"/api/sessions/{sid}/world").json()["npcs"]
+        assert "刘星" not in npcs
+        assert npcs["林晓"]["is_player"] is True
+
+
+def test_opening_event_anchors_player_at_start_scene(tmp_path):
+    """开场就是主角的第一条位置事实——否则第一轮工作单的在场名单里没有主角。"""
+    with _make_client(tmp_path) as client:
+        r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
+        sid = r.json()["sid"]
+        events = client.get(f"/api/sessions/{sid}/ledger/events").json()["events"]
+        assert events[0]["location"] == "主街"
+        assert events[0]["participants"] == ["刘星"]
+        state = client.get(f"/api/sessions/{sid}/state").json()
+        assert state["scene_id"] == "主街"
+        # 状态栏的「在场」是"还有谁在"——主角不列进自己的视野
+        assert state["present"] == []
+        assert state["scene"].startswith("这里是主街。")
+
+
+def test_player_cannot_be_retired(tmp_path):
+    """主角不可退场：他是人物表里的一员，退场等于把主角从世界注销。"""
+    with _make_client(tmp_path) as client:
+        r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
+        sid = r.json()["sid"]
+
+        act = client.post(
+            f"/api/sessions/{sid}/director",
+            json={"topic": "confirm", "action": {"type": "retire", "payload": {"npc_id": "刘星"}}},
+        )
+        assert act.status_code == 400
+        assert "主角" in act.json()["detail"]
+
+        # 普通 NPC 照旧可退场
+        act = client.post(
+            f"/api/sessions/{sid}/director",
+            json={"topic": "confirm", "action": {"type": "retire", "payload": {"npc_id": "朱明"}}},
+        )
+        assert act.status_code == 200
+
+
+def test_world_edit_requires_exactly_one_player(tmp_path):
+    """主角不可删掉（服务端兜底）：保存世界资产时没有主角卡 → 400。"""
+    with _make_client(tmp_path) as client:
+        r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
+        sid = r.json()["sid"]
+        world = client.get(f"/api/sessions/{sid}/world").json()
+
+        payload = {
+            "overview": world["overview"],
+            "lorebook": world["lorebook"],
+            "scenes": world["scenes"],
+            "npcs": {"朱明": world["npcs"]["朱明"]},  # 把主角卡删掉
+            "axes": world["axes"],
+        }
+        put = client.put(f"/api/sessions/{sid}/world", json=payload)
+        assert put.status_code == 400
+        assert "主角" in put.json()["detail"]
 
 
 def test_debug_trace_available_after_turn(tmp_path):
@@ -276,7 +341,7 @@ def test_world_edit_and_save_as(tmp_path):
         sid = r.json()["sid"]
         world = client.get(f"/api/sessions/{sid}/world").json()
 
-        # Design C: editing writes the save's world instance, never the asset.
+        # 单一真相源：编辑写的就是 content/<world>/ 本身，即时生效。
         payload = {
             "overview": world["overview"],
             "lorebook": world["lorebook"],
@@ -289,15 +354,14 @@ def test_world_edit_and_save_as(tmp_path):
         assert r.status_code == 200
         world2 = client.get(f"/api/sessions/{sid}/world").json()
         assert world2["overview"]["name"] == "青石镇（已改）"
-        # The content-pack template itself is untouched.
         import json as _json
 
         from pathlib import Path as _Path
 
-        template = _json.loads(_Path(tmp_path / "qinghsi" / "world.json").read_text(encoding="utf-8"))
-        assert template["name"] == "青石镇"
+        on_disk = _json.loads(_Path(tmp_path / "qinghsi" / "world.json").read_text(encoding="utf-8"))
+        assert on_disk["name"] == "青石镇（已改）"
 
-        # Save-as promotes the instance (with evolution) to a new template.
+        # Save-as 复制当前世界（含演化）为新内容包——fork，不动原世界。
         r = client.post(
             f"/api/sessions/{sid}/world/save-as",
             json={"new_world_id": "qinghsi_edit", **payload},
@@ -305,6 +369,7 @@ def test_world_edit_and_save_as(tmp_path):
         assert r.status_code == 200
         worlds = client.get("/api/worlds").json()["worlds"]
         assert any(w["id"] == "qinghsi_edit" for w in worlds)
+        assert any(w["id"] == "qinghsi" and w["name"] == "青石镇（已改）" for w in worlds)
 
 
 def test_delete_world_removes_save(tmp_path):
@@ -411,12 +476,22 @@ def test_world_start_time_roundtrip(tmp_path):
         state = client.get(f"/api/sessions/{sid}/state").json()
         assert state["clock"] == "2026-07-14T08:00:00"
 
-        # 空 start_time 回退引擎默认：直接改内容包再建新存档。
-        world_json = _Path(tmp_path / "qinghsi" / "world.json")
+        # 空 start_time 回退引擎默认：复制一个去掉 start_time 的新世界再开档
+        # （世界=存档 1:1，同一世界不能开第二档）。
+        import shutil as _shutil
+
+        dst = _Path(tmp_path / "qinghsi_nost")
+        _shutil.copytree(
+            _Path(tmp_path / "qinghsi"),
+            dst,
+            ignore=_shutil.ignore_patterns("candidates", "save.json", "events.jsonl"),
+        )
+        world_json = dst / "world.json"
         data = _json.loads(world_json.read_text(encoding="utf-8"))
         data.pop("start_time", None)
+        data["id"] = "qinghsi_nost"
         world_json.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        r2 = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main2"})
+        r2 = client.post("/api/sessions", json={"world_id": "qinghsi_nost"})
         sid2 = r2.json()["sid"]
         state2 = client.get(f"/api/sessions/{sid2}/state").json()
         assert state2["clock"] == "2026-07-14T08:00:00"
@@ -469,7 +544,7 @@ def test_director_chat_pending_action_confirm(tmp_path):
         goal = confirm.json()["goal"]
         assert goal["status"] == "active"
         assert goal["kind"] == "big"
-        assert goal["subject"] == "player"
+        assert goal["subject"] == ""  # 空串哨兵 = 主角的目标（2026-09-13 改口径）
         assert goal["npc_id"] == "朱明"
 
         state = client.get(f"/api/sessions/{sid}/state").json()
@@ -758,6 +833,209 @@ def test_settings_persist_across_restart(tmp_path):
         state = client.get("/api/settings").json()
         assert state["reasoning_effort"] == "high"
         assert state["qc_enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# 快速造世界：L1 种子 / L2 一句话草稿（2026-09-13）
+# ---------------------------------------------------------------------------
+
+
+def test_create_blank_world_is_immediately_playable(tmp_path):
+    with _make_client(tmp_path) as client:
+        r = client.post(
+            "/api/worlds/new",
+            json={
+                "world_id": "blank1",
+                "name": "空白镇",
+                "player_name": "刘星",
+                "start_scene": "主街",
+            },
+        )
+        assert r.status_code == 200, r.text
+        assert r.json() == {"ok": True, "world_id": "blank1", "problems": []}
+
+        data = json.loads((tmp_path / "blank1" / "world.json").read_text(encoding="utf-8"))
+        assert data["name"] == "空白镇"
+        assert data["start_scene"] == "主街"
+        assert (tmp_path / "blank1" / "npcs" / "刘星.json").exists()
+
+        # 列表读 world.json 的 name（此前一律显示目录名），并带校验结论
+        entry = next(
+            w for w in client.get("/api/worlds").json()["worlds"] if w["id"] == "blank1"
+        )
+        assert entry["name"] == "空白镇"
+        assert entry["ok"] is True and entry["problems"] == []
+
+        # 校验接口（check_world 此前只挂在 loader CLI 上）
+        assert client.get("/api/worlds/blank1/check").json() == {
+            "ok": True,
+            "problems": [],
+        }
+
+        # 几分钟开一局：新世界立刻能建档开局，开场事件把主角锚在开局场景
+        sid = client.post(
+            "/api/sessions", json={"world_id": "blank1", "save_name": "main"}
+        ).json()["sid"]
+        events = client.get(f"/api/sessions/{sid}/ledger/events").json()["events"]
+        assert len(events) == 1
+        assert events[0]["location"] == "主街"
+        assert events[0]["participants"] == ["刘星"]
+
+
+def test_create_world_rejects_bad_id_missing_player_and_duplicate(tmp_path):
+    with _make_client(tmp_path) as client:
+        bad_id = client.post(
+            "/api/worlds/new", json={"world_id": "坏 id", "player_name": "刘星"}
+        )
+        assert bad_id.status_code == 400
+        assert not (tmp_path / "坏 id").exists()
+
+        no_player = client.post("/api/worlds/new", json={"world_id": "ok1"})
+        assert no_player.status_code == 400
+        assert not (tmp_path / "ok1").exists()
+
+        assert (
+            client.post(
+                "/api/worlds/new", json={"world_id": "ok1", "player_name": "刘星"}
+            ).status_code
+            == 200
+        )
+        dup = client.post(
+            "/api/worlds/new", json={"world_id": "ok1", "player_name": "刘星"}
+        )
+        assert dup.status_code == 409
+
+
+def test_create_world_from_draft_payload(tmp_path):
+    payload = {
+        "overview": {
+            "name": "草稿镇",
+            "summary": ["九十年代的县城"],
+            "opening": "你站在主街上。",
+            "start_time": "",
+            "start_scene": "主街",
+            "memory_limit": 50,
+        },
+        "lorebook": [],
+        "scenes": [{"id": "主街", "aliases": [], "perceivable": "", "region": ""}],
+        "npcs": {
+            "刘星": {"id": "刘星", "is_player": True},
+            "朱明": {"id": "朱明", "has_actor": True},
+        },
+        "axes": [],
+    }
+    with _make_client(tmp_path) as client:
+        r = client.post(
+            "/api/worlds/new", json={"world_id": "draft1", "payload": payload}
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["problems"] == []
+        data = json.loads((tmp_path / "draft1" / "world.json").read_text(encoding="utf-8"))
+        assert data["name"] == "草稿镇"
+        assert set(
+            p.stem for p in (tmp_path / "draft1" / "npcs").glob("*.json")
+        ) == {"刘星", "朱明"}
+
+
+def test_create_world_rejects_unclean_assets_before_writing(tmp_path):
+    payload = {
+        "overview": {"name": "坏包", "start_scene": "不存在的地方"},
+        "lorebook": [],
+        "scenes": [{"id": "主街"}],
+        "npcs": {"刘星": {"id": "刘星", "is_player": True}},
+        "axes": [],
+    }
+    with _make_client(tmp_path) as client:
+        r = client.post("/api/worlds/new", json={"world_id": "bad1", "payload": payload})
+        assert r.status_code == 400
+        assert "start_scene" in r.json()["detail"]
+        assert not (tmp_path / "bad1").exists()  # 坏包根本不进 content/
+
+
+def test_draft_endpoint_previews_without_writing(tmp_path):
+    llm = FakeLLM(
+        {
+            "*": {
+                "name": "草稿镇",
+                "player_name": "刘星",
+                "start_scene": "主街",
+                "scenes": [{"id": "主街"}, {"id": "朱明家"}],
+                "npcs": [{"id": "朱明", "persona": "同桌", "has_actor": True}],
+                "lorebook": [{"id": "镇子", "keywords": ["青石镇"], "body": "县城"}],
+            }
+        }
+    )
+    with _make_client(tmp_path, llm=llm) as client:
+        r = client.post(
+            "/api/worlds/draft",
+            json={"premise": "县城高中暑假", "world_id": "draft2", "player_name": "刘星"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["problems"] == []
+        assert body["assets"]["overview"]["name"] == "草稿镇"
+        assert set(body["assets"]["npcs"]) == {"刘星", "朱明"}
+        assert not (tmp_path / "draft2").exists()  # 预览不落盘
+
+        assert client.post("/api/worlds/draft", json={"premise": "  "}).status_code == 400
+
+
+def test_world_edit_soft_warns_and_hard_blocks(tmp_path):
+    """就地编辑的两级校验（2026-09-13）：语义问题随响应带回（软警告），
+    不变量（主角卡）先于落盘硬拦——坏数据存进去引擎就崩的，一个字节都不写。"""
+    with _make_client(tmp_path) as client:
+        r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
+        sid = r.json()["sid"]
+        world = client.get(f"/api/sessions/{sid}/world").json()
+        payload = {
+            "overview": world["overview"],
+            "lorebook": world["lorebook"],
+            "scenes": world["scenes"],
+            "npcs": world["npcs"],
+            "axes": world["axes"],
+        }
+
+        # 软警告：start_scene 指向不存在的场景 → 存进去能跑，但必须被看见
+        payload["overview"]["start_scene"] = "不存在的地方"
+        put = client.put(f"/api/sessions/{sid}/world", json=payload)
+        assert put.status_code == 200
+        assert any("start_scene" in p for p in put.json()["problems"])
+
+        # 硬拦：删掉主角卡 → 400，且原文件不动
+        bad = dict(payload)
+        bad["npcs"] = {"朱明": world["npcs"]["朱明"]}
+        blocked = client.put(f"/api/sessions/{sid}/world", json=bad)
+        assert blocked.status_code == 400
+        assert "主角" in blocked.json()["detail"]
+        assert client.get(f"/api/sessions/{sid}/world").json()["npcs"].get("刘星")
+
+
+def test_world_check_targets_the_save_instance_not_the_template(tmp_path):
+    """单一真相源：工作台 PUT 写的就是 content/<world>/ 本身，所以工作台
+    体检与世界列表体检看到同一个文件——待修状态即时反映到世界列表。"""
+    with _make_client(tmp_path) as client:
+        r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
+        sid = r.json()["sid"]
+        world = client.get(f"/api/sessions/{sid}/world").json()
+        payload = {
+            "overview": world["overview"],
+            "lorebook": world["lorebook"],
+            "scenes": world["scenes"],
+            "npcs": world["npcs"],
+            "axes": world["axes"],
+        }
+        payload["overview"]["start_scene"] = "不存在的地方"
+        assert client.put(f"/api/sessions/{sid}/world", json=payload).status_code == 200
+
+        via_session = client.get(f"/api/sessions/{sid}/world/check").json()
+        assert via_session["ok"] is False
+        assert any("start_scene" in p for p in via_session["problems"])
+
+        # 同一份文件：世界列表的体检结论同步变红。
+        via_list = client.get("/api/worlds/qinghsi/check").json()
+        assert via_list == via_session
+        listed = client.get("/api/worlds").json()["worlds"]
+        assert any(w["id"] == "qinghsi" and w["ok"] is False for w in listed)
 
 
 def _candidate_id_from_sse(text: str) -> str:

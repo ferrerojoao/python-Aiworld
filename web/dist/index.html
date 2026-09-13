@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AIWorld</title>
-  <link rel="stylesheet" href="style.css?v=49" />
+  <link rel="stylesheet" href="style.css?v=52" />
 </head>
 <body>
   <div id="app">
@@ -26,7 +26,7 @@
         <span id="clock">-</span>
         <span id="scene">-</span>
         <div class="topbar-actions">
-          <button id="open-world">世界</button>
+          <button id="open-world">世界工作台</button>
           <button data-tab="director">导演</button>
           <button data-tab="player">主角</button>
           <button data-tab="preset">预设</button>
@@ -74,8 +74,9 @@
 
       <div id="tab-player" class="tab-panel">
         <h3>主角资料</h3>
+        <p class="hint">主角就是「人物」表里标着主角的那张卡（有且仅有一张，不可删除）。名字即人物表键，事件日志按此记录；改名只影响此后的日志，旧日志保持原名。</p>
         <label>名字</label>
-        <input id="player-name" type="text" placeholder="你" />
+        <input id="player-name" type="text" placeholder="主角真名（如 刘星）" />
         <label>外貌</label>
         <textarea id="player-appearance" rows="3" placeholder="外貌描述"></textarea>
         <label>人格 / 说话风格</label>
@@ -146,50 +147,67 @@
       </div>
     </div>
 
-    <!-- 世界浏览器弹窗 -->
+    <!-- 世界工作台弹窗 -->
     <div id="world-modal" class="modal">
       <div class="modal-content">
         <div class="modal-header">
-          <span>世界浏览器</span>
-          <button id="close-world">✕</button>
+          <span>世界工作台</span>
+          <span id="wb-context" class="wb-context"></span>
+          <div class="wb-header-actions">
+            <button id="wb-switch-world">切换世界 ▾</button>
+            <button id="wb-refresh">刷新</button>
+            <button id="close-world">✕</button>
+          </div>
         </div>
+
+        <div id="wb-world-panel" class="wb-world-panel"></div>
+
         <div class="modal-tabs">
-          <button class="tab active" data-tab="list">世界列表</button>
-          <button class="tab" data-tab="overview">概览</button>
+          <button class="tab active" data-tab="overview">概览</button>
           <button class="tab" data-tab="lore">世界书</button>
           <button class="tab" data-tab="scenes">场景</button>
           <button class="tab" data-tab="npcs">人物</button>
-          <button class="tab" data-tab="axes">数值属性</button>
+          <button class="tab" data-tab="axes">数值轴</button>
           <button class="tab" data-tab="events">事件日志</button>
         </div>
-        <div id="world-tab-list" class="world-tab active"></div>
-        <div id="world-tab-overview" class="world-tab"></div>
+        <div id="world-tab-overview" class="world-tab active"></div>
         <div id="world-tab-lore" class="world-tab"></div>
         <div id="world-tab-scenes" class="world-tab"></div>
         <div id="world-tab-npcs" class="world-tab"></div>
         <div id="world-tab-axes" class="world-tab"></div>
         <div id="world-tab-events" class="world-tab"></div>
+
+        <div id="wb-savebar" class="wb-savebar" hidden>
+          <span id="wb-status" class="wb-status"></span>
+          <span class="wb-savebar-actions">
+            <button id="wb-check">校验</button>
+            <button id="wb-discard">放弃改动</button>
+            <button id="wb-save" class="primary">保存</button>
+          </span>
+        </div>
+
         <div class="modal-actions">
-          <button id="toggle-edit">编辑模式</button>
-          <button id="refresh-world">刷新</button>
-          <button id="save-world-edit" style="display:none">保存修改</button>
-          <button id="save-as-world" style="display:none">另存为新世界</button>
-          <button id="export-world">导出资产包</button>
-          <label class="import-label">
-            导入资产包
-            <input id="import-world" type="file" accept=".zip" hidden />
-          </label>
-          <button id="export-save">导出存档（含事件日志）</button>
-          <label class="import-label" id="import-save-label">
-            导入存档
-            <input id="import-save" type="file" accept=".zip" hidden />
-          </label>
-          <button id="reset-world" class="danger">重置当前世界</button>
+          <div class="action-group">
+            <span class="action-group-label">备份与复制</span>
+            <button id="export-world">导出资产包</button>
+            <button id="save-as-world">复制为新世界</button>
+          </div>
+          <div class="action-group">
+            <span class="action-group-label">全量备份</span>
+            <button id="export-save">导出完整备份</button>
+            <label class="import-label">
+              导入备份
+              <input id="import-save" type="file" accept=".zip" hidden />
+            </label>
+          </div>
+          <div class="action-group action-group-danger">
+            <button id="reset-world" class="danger">重置剧情</button>
+          </div>
         </div>
       </div>
     </div>
   </div>
 
-  <script src="app.js?v=55"></script>
+  <script src="app.js?v=62"></script>
 </body>
 </html>

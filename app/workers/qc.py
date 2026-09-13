@@ -17,24 +17,26 @@ def build_qc_reference(world: WorldContent, ledger: Ledger, participants: list[s
     Set them as forbidden zones the QC must never see leaked.
     """
     blocks = []
-    scene_id = ledger.save.player_scene
+    scene_id = ledger.current_scene()
     scene = next((s for s in world.scenes if s.id == scene_id), None)
     if scene:
         blocks.append(f"当前场景（{scene.id}）：{scene.perceivable}")
 
-    player = ledger.save.player
-    if player.personal_secrets:
+    player = world.player()
+    if player is not None and player.personal_secrets:
         blocks.append(
             f"主角自知隐秘（只有玩家自己知道，任何 NPC 说出或提及都算泄漏，"
             f"必须脱敏：{player.personal_secrets}"
         )
-    if player.private_note:
+    if player is not None and player.private_note:
         blocks.append(
             f"主角幕后注（连玩家也不知道的背景，只作暗示铺垫用，只有编剧心里有数："
             f"{player.private_note}"
         )
 
     for pid in participants or []:
+        if pid == world.player_name():
+            continue  # 主角的知识边界就是事件日志本身，不算"某角色的已知集"
         npc = world.npcs.get(pid)
         if npc is None:
             continue

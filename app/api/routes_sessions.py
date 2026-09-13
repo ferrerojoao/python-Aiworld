@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import re
 import shutil
 import zipfile
 from pathlib import Path
@@ -14,19 +15,24 @@ from pydantic import BaseModel
 from app.core.presets import save_global_preset
 from app.core.store import write_json_atomic
 from app.runtime.session import create_session, open_session
-from app.world.loader import save_world_assets
+from app.world.draft import blank_world_assets, check_assets, validate_assets
+from app.world.loader import check_world, save_world_assets
+from app.workers.drafter import run_world_draft
 
 router = APIRouter(prefix="/api")
+
+# 世界 id = content/ 下的目录名，所以只收目录友好的字符（2026-09-13）。
+_WORLD_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class CreateSessionBody(BaseModel):
     world_id: str
-    save_name: str
+    save_name: str = "main"  # 保留字段（进 save.json meta 与 sid），世界=存档后 UI 不再问存档名
 
 
 class OpenSessionBody(BaseModel):
     world_id: str
-    save_name: str
+    save_name: str = ""  # 兼容旧调用方；世界=存档 1:1 后不再区分存档名
 
 
 class ImportWorldBody(BaseModel):
@@ -46,15 +52,33 @@ class SaveAsWorldBody(WorldAssetData):
     new_world_id: str
 
 
+class NewWorldBody(BaseModel):
+    """快速造世界（2026-09-13）。
+
+    ``payload`` 给了就按它落盘（L2 草稿的确认落盘），否则按 L1 种子字段造一个
+    最小可玩包。两条路都先过 ``validate_assets`` 才写 content/。
+    """
+
+    world_id: str
+    name: str = ""
+    player_name: str = ""
+    start_scene: str = ""
+    opening: str = ""
+    payload: dict | None = None
+
+
+class WorldDraftBody(BaseModel):
+    premise: str
+    world_id: str = ""
+    name: str = ""
+    player_name: str = ""
+
+
 def _world_root(request: Request, world_id: str) -> Path:
     root = Path(request.app.state.settings.content_root) / world_id
     if not root.is_dir():
         raise HTTPException(status_code=404, detail=f"world not found: {world_id}")
     return root
-
-
-def _save_root(request: Request, world_id: str) -> Path:
-    return _world_root(request, world_id) / "saves"
 
 
 def _get_session(request: Request, sid: str):
@@ -64,26 +88,138 @@ def _get_session(request: Request, sid: str):
     return session
 
 
+def _read_world_name(root: Path) -> str:
+    """世界名取 world.json 的 name（目录名只是 id）。读不出来就退回目录名。"""
+    try:
+        raw = json.loads((root / "world.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return root.name
+    name = raw.get("name") if isinstance(raw, dict) else ""
+    return name.strip() if isinstance(name, str) and name.strip() else root.name
+
+
 @router.get("/worlds")
 async def list_worlds(request: Request):
+    """世界列表 = 存档列表（世界=存档 1:1）。每项带世界名与体检结论，
+    有进行中存档的再带时钟（「昨天关机时的状态」）。"""
     content_root = Path(request.app.state.settings.content_root)
     worlds = []
     for path in sorted(content_root.glob("*")):
         if path.is_dir() and (path / "world.json").exists():
-            worlds.append({"id": path.name, "name": path.name})
+            problems = check_world(path)
+            item = {
+                "id": path.name,
+                "name": _read_world_name(path),
+                "ok": not problems,
+                "problems": problems,
+            }
+            raw_save = _read_save_meta(path)
+            if raw_save is not None:
+                item["save_name"] = str(raw_save.get("save_name") or "")
+                item["clock"] = str(raw_save.get("clock") or "")
+            worlds.append(item)
     return {"worlds": worlds}
+
+
+def _read_save_meta(world_root: Path) -> dict | None:
+    try:
+        raw = json.loads((world_root / "save.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+@router.get("/worlds/{world_id}/check")
+async def check_world_assets(request: Request, world_id: str):
+    """发布前的体检闸门：``check_world`` 此前只挂在 loader.py 的 CLI 上，
+    API 与前端从不调用，于是保存是静默的（2026-09-13 暴露出来）。"""
+    problems = check_world(_world_root(request, world_id))
+    return {"ok": not problems, "problems": problems}
+
+
+def _assets_from_body(body: NewWorldBody, world_id: str) -> dict:
+    """草稿落盘路：以 payload 为准，顺手钉死 id/name（目录名说了算）。"""
+    assets = dict(body.payload or {})
+    overview = dict(assets.get("overview") or {})
+    overview["id"] = world_id
+    overview["name"] = (
+        body.name.strip() or str(overview.get("name") or "").strip() or world_id
+    )
+    assets["overview"] = overview
+    return assets
+
+
+@router.post("/worlds/new")
+async def create_world(request: Request, body: NewWorldBody):
+    """L1 种子 / L2 草稿落盘：先体检、后落盘，坏包不进 content/。"""
+    world_id = body.world_id.strip()
+    if not _WORLD_ID_RE.match(world_id):
+        raise HTTPException(
+            status_code=400,
+            detail="world_id 只能是英文/数字/下划线/连字符（它是 content/ 下的目录名）",
+        )
+    dest = Path(request.app.state.settings.content_root) / world_id
+    if dest.exists():
+        raise HTTPException(status_code=409, detail=f"世界已存在：{world_id}")
+    if body.payload:
+        assets = _assets_from_body(body, world_id)
+    else:
+        player_name = body.player_name.strip()
+        if not player_name:
+            raise HTTPException(
+                status_code=400, detail="主角名不能为空（事件日志按此名记录）"
+            )
+        assets = blank_world_assets(
+            world_id, body.name, player_name, body.start_scene, body.opening
+        )
+    problems = validate_assets(assets)
+    if problems:
+        raise HTTPException(
+            status_code=400, detail="未通过校验：" + "；".join(problems)
+        )
+    save_world_assets(dest, assets)
+    return {"ok": True, "world_id": world_id, "problems": check_world(dest)}
+
+
+@router.post("/worlds/draft")
+async def draft_world(request: Request, body: WorldDraftBody):
+    """L2 一句话草稿：LLM 出一整包，**先预览不落盘**。
+
+    返回的 assets 就是 ``POST /worlds/new`` 的 payload 形状——玩家在工作台
+    改完、点确认，才走落盘那条路。
+    """
+    premise = body.premise.strip()
+    if not premise:
+        raise HTTPException(status_code=400, detail="premise is required")
+    settings = request.app.state.settings
+    world_id = body.world_id.strip() or "draft"
+    try:
+        draft, assets, problems = await run_world_draft(
+            request.app.state.llm,
+            premise,
+            world_id=world_id,
+            name=body.name,
+            player_name=body.player_name,
+            model=settings.resolved_model("story"),
+            temperature=settings.temp_writer,
+        )
+    except Exception as exc:  # LLM 侧的失败如实转告，不吞
+        raise HTTPException(status_code=502, detail=f"起草失败：{exc}") from exc
+    return {"draft": draft.model_dump(), "assets": assets, "problems": problems}
 
 
 @router.get("/worlds/{world_id}")
 async def get_world(request: Request, world_id: str):
+    """世界详情：has_save = 是否已有进行中的存档（世界=存档 1:1）。"""
     world_root = _world_root(request, world_id)
-    save_root = _save_root(request, world_id)
-    saves = []
-    if save_root.is_dir():
-        saves = sorted(
-            p.name for p in save_root.iterdir() if (p / "save.json").exists()
-        )
-    return {"id": world_id, "saves": saves}
+    raw_save = _read_save_meta(world_root)
+    return {
+        "id": world_id,
+        "name": _read_world_name(world_root),
+        "has_save": raw_save is not None,
+        "save_name": str(raw_save.get("save_name") or "") if raw_save else "",
+        "clock": str(raw_save.get("clock") or "") if raw_save else "",
+    }
 
 
 @router.delete("/worlds/{world_id}")
@@ -106,19 +242,39 @@ async def update_world_assets(request: Request, world_id: str, body: WorldAssetD
 
 @router.put("/sessions/{sid}/world")
 async def update_session_world(request: Request, sid: str, body: WorldAssetData):
-    """Edit the save's writable world instance (design C)."""
+    """就地编辑当前世界（单一真相源：写的就是 ``content/<world>/``，即时生效）。
+
+    校验分两级（2026-09-13）：
+
+    - **不变量级**（人物表恰好一张主角卡）先于落盘硬拦 400——存进去引擎就崩。
+    - **语义问题**（``start_scene`` 越界 / 场景 id 重复 / 世界书条目没关键词）
+      落盘后随响应带回 ``problems``，前端标黄警告——允许"中途拆结构"的半成品态
+      存在，但它必须是**被看见的**，不能像以前那样静默通过。
+    """
     session = _get_session(request, sid)
     payload = body.model_dump()
     payload["overview"]["id"] = session.world.meta.id
+    try:
+        problems = check_assets(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     save_world_assets(session.world_dir, payload)
     session.reload_world()
-    return {"ok": True}
+    return {"ok": True, "problems": problems}
+
+
+@router.get("/sessions/{sid}/world/check")
+async def check_session_world(request: Request, sid: str):
+    """体检当前世界。世界=存档 1:1 后与 ``GET /worlds/{id}/check`` 是同一份
+    文件，保留两个入口只为前端语义顺口。"""
+    session = _get_session(request, sid)
+    problems = check_world(session.world_dir)
+    return {"ok": not problems, "problems": problems}
 
 
 @router.post("/sessions/{sid}/world/save-as")
 async def save_session_world_as(request: Request, sid: str, body: SaveAsWorldBody):
-    """Promote the current world instance (with all evolution) to a new
-    content-pack template for future saves."""
+    """复制当前世界（含全部演化）为一个新内容包——fork，不动原世界。"""
     session = _get_session(request, sid)
     new_id = body.new_world_id.strip()
     if not new_id:
@@ -130,7 +286,10 @@ async def save_session_world_as(request: Request, sid: str, body: SaveAsWorldBod
     payload = body.model_dump()
     payload["overview"]["id"] = new_id
     payload["overview"]["name"] = payload["overview"].get("name") or new_id
-    save_world_assets(dest, payload)
+    try:
+        save_world_assets(dest, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "world_id": new_id}
 
 
@@ -151,9 +310,8 @@ async def list_sessions(request: Request):
 
 @router.post("/sessions/open")
 async def open_existing_session(request: Request, body: OpenSessionBody):
-    save_root = _save_root(request, body.world_id)
     try:
-        session = open_session(save_root, body.save_name)
+        session = open_session(_world_root(request, body.world_id))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     request.app.state.sessions[session.sid] = session
@@ -162,9 +320,16 @@ async def open_existing_session(request: Request, body: OpenSessionBody):
 
 @router.post("/sessions")
 async def create_new_session(request: Request, body: CreateSessionBody):
+    """在新世界里开一局（写 save.json 进世界目录）。已有存档 → 409，
+    接着玩请走 ``POST /sessions/open``。"""
     world_root = _world_root(request, body.world_id)
-    save_root = _save_root(request, body.world_id)
-    session = create_session(world_root, save_root, body.save_name)
+    try:
+        session = create_session(world_root, body.save_name)
+    except FileExistsError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"world already has a save: {body.world_id}（打开即可接着玩）",
+        ) from exc
     request.app.state.sessions[session.sid] = session
     return {"sid": session.sid, "world": session.world.meta.name}
 
@@ -184,7 +349,7 @@ async def get_session(request: Request, sid: str):
 @router.get("/sessions/{sid}/state")
 async def get_state(request: Request, sid: str):
     session = _get_session(request, sid)
-    player_scene = session.ledger.save.player_scene
+    player_scene = session.ledger.current_scene()
     scene = next((s for s in session.world.scenes if s.id == player_scene), None)
     # 最近去过的 3 个场景（从玩家事件流取，替代旧邻接导航）
     recent: list[str] = []
@@ -194,7 +359,10 @@ async def get_state(request: Request, sid: str):
             recent.append(loc)
         if len(recent) >= 3:
             break
-    present_ids = session.ledger.present_at(player_scene)
+    # 在场 = "还有谁在"（玩家视角）：主角就是镜头本人，不列进自己的视野
+    # （2026-09-13 主角入人物表后 present_at 会带上他）。
+    player_name = session.world.player_name()
+    present_ids = [pid for pid in session.ledger.present_at(player_scene) if pid != player_name]
     # 目标是两级树（大目标=章节 / 小目标=节拍，2026-09-12）：状态栏需要
     # 「active 目标 + 挂在 active 大目标下的子目标（含已完成）」才能显示章节
     # 进度 x/y；其余历史目标（已闭合的主线、已完成/废弃的孤儿支线）不进状态栏。
@@ -204,7 +372,7 @@ async def get_state(request: Request, sid: str):
         if g.status != "active" and g.big_goal_id not in active_ids:
             continue
         item = g.model_dump()
-        item["subject_name"] = "玩家" if g.subject in {"", "player"} else g.subject
+        item["subject_name"] = g.subject or "玩家"
         goals.append(item)
     return {
         "clock": session.ledger.save.clock,
@@ -281,26 +449,57 @@ async def update_global_preset(request: Request, body: PresetBody):
 
 @router.get("/sessions/{sid}/player")
 async def get_player(request: Request, sid: str):
+    """主角资料：就是人物表里 is_player 的那张卡。
+
+    对外沿用 ``name`` 字段（前端表单与旧接口同形）：卡的 ``id`` 即名字。
+    """
     session = _get_session(request, sid)
-    return session.ledger.save.player.model_dump()
+    card = session.world.player()
+    if card is None:
+        raise HTTPException(status_code=404, detail="world has no player card")
+    return {**card.model_dump(), "name": card.id}
+
+
+def _write_player_card(session, card) -> None:
+    """主角卡落盘（人物表 + 实例文件），并把新的键接回内存世界。"""
+    world = session.world
+    write_json_atomic(
+        session.world_dir / "npcs" / f"{card.id}.json",
+        card.model_dump(),
+    )
+    world.npcs[card.id] = card
 
 
 @router.put("/sessions/{sid}/player")
 async def update_player(request: Request, sid: str, body: PlayerBody):
+    """编辑主角：主角就是人物表里 is_player 的那张卡（2026-09-13）。
+
+    改名 = 换人物表键 = 换事件日志此后记录的名字；旧日志保持原有名字不改写
+    （用户口径：日志直接记人名，中途换主角不影响日志）。
+    """
     session = _get_session(request, sid)
-    player = session.ledger.save.player
-    if body.name is not None:
-        player.name = body.name
-    if body.appearance is not None:
-        player.appearance = body.appearance
-    if body.persona is not None:
-        player.persona = body.persona
-    if body.private_note is not None:
-        player.private_note = body.private_note
-    if body.personal_secrets is not None:
-        player.personal_secrets = body.personal_secrets
+    card = session.world.player()
+    if card is None:
+        raise HTTPException(status_code=404, detail="world has no player card")
+    old_id = card.id
+    new_id = (body.name or "").strip()
+    if new_id and new_id != old_id:
+        if new_id in session.world.npcs:
+            raise HTTPException(status_code=400, detail=f"人物表里已有「{new_id}」")
+        card.id = new_id
+    for field in ("appearance", "persona", "private_note", "personal_secrets"):
+        value = getattr(body, field)
+        if value is not None:
+            setattr(card, field, value)
+    if new_id and new_id != old_id:
+        del session.world.npcs[old_id]
+        old_file = session.world_dir / "npcs" / f"{old_id}.json"
+        if old_file.exists():
+            old_file.unlink()
+        # 目标归属用空串哨兵表示主角，无需跟着改名；镜头位置由存档小抄保管。
+    _write_player_card(session, card)
     session.ledger.persist_save()
-    return {"ok": True}
+    return {"ok": True, "name": card.id}
 
 
 @router.get("/sessions/{sid}/world")
@@ -319,14 +518,22 @@ async def world_browser(request: Request, sid: str):
 
 @router.get("/sessions/{sid}/world/export")
 async def export_world(request: Request, sid: str):
-    """Export the save's writable world instance (with all evolution)."""
+    """导出资产包 = 世界资产的快照（不含运行态）。用户存到自己电脑上，
+    想回到初始状态时导入它就会得到一个新世界。"""
     session = _get_session(request, sid)
-    instance_root = session.world_dir
+    world_root = session.world_dir
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in sorted(instance_root.rglob("*")):
-            if path.is_file() and path.name != "presets.json":
-                zf.write(path, path.relative_to(instance_root))
+        for path in sorted(world_root.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(world_root)
+            parts = rel.parts
+            if not parts or parts[0] == "candidates":
+                continue
+            if path.name in ("save.json", "events.jsonl", "presets.json"):
+                continue
+            zf.write(path, rel.as_posix())
     buffer.seek(0)
     filename = f"{session.world.meta.id}.zip"
     return StreamingResponse(
@@ -338,10 +545,10 @@ async def export_world(request: Request, sid: str):
 
 @router.get("/sessions/{sid}/export")
 async def export_save(request: Request, sid: str):
-    """Export the whole save: save.json + events.jsonl + world instance.
+    """全量备份：世界资产 + save.json + events.jsonl（候选除外）。
 
-    与「导出资产包」不同：这里连事件日志（世界全部历史）与运行态一起打包，
-    用于备份/换机/复盘；解包后放回 saves/<name>/ 即可继续。
+    与「导出资产包」不同：这里连事件日志（世界全部历史）一起打包，用于
+    备份/换机/复盘。导入落点 = ``content/<world_id>/`` 本身（世界=存档）。
     """
     session = _get_session(request, sid)
     save_dir = session.save_dir
@@ -366,11 +573,12 @@ async def export_save(request: Request, sid: str):
 
 @router.post("/saves/import")
 async def import_save(request: Request, body: ImportWorldBody):
-    """Import a save zip produced by GET /sessions/{sid}/export.
+    """Import a full-backup zip produced by GET /sessions/{sid}/export.
 
-    落点 = content/<world_id>/saves/<save_name>/（含 save.json + events.jsonl
-    + world/ 实例）。同名存档已存在时自动改名（绝不覆盖现有存档）；
-    目标世界不存在时用 zip 内的 world/ 资产建立世界目录。
+    落点 = ``content/<world_id>/`` 本身（世界=存档，单一真相源）。兼容两种
+    包内布局：新备份资产在根层；旧备份资产在 ``world/`` 前缀下（剥前缀）。
+    目标世界已有进行中的存档 → 409 拒绝（绝不覆盖正在玩的世界）；想恢复
+    先删掉坏掉的世界再导入，或改个 id 导入为新世界。
     """
     data = base64.b64decode(body.content)
     if not data:
@@ -395,57 +603,38 @@ async def import_save(request: Request, body: ImportWorldBody):
 
     content_root = Path(request.app.state.settings.content_root)
     world_root = content_root / world_id
-    # 世界不存在：用包内 world/ 资产建档（换机场景）。
-    if not (world_root / "world.json").exists():
-        if "world/world.json" not in names:
-            raise HTTPException(
-                status_code=400,
-                detail=f"world not found: {world_id}，且包内缺少 world/world.json",
-            )
-        world_root.mkdir(parents=True, exist_ok=True)
-        for member in names:
-            if not member.startswith("world/") or member.endswith("/"):
-                continue
-            target = (world_root / member[len("world/"):]).resolve()
-            if not target.is_relative_to(world_root.resolve()):
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(zf.read(member))
-
-    save_root = world_root / "saves"
-    save_root.mkdir(parents=True, exist_ok=True)
-    final_name = save_name
-    if (save_root / save_name).exists():
-        import datetime as _dt
-
-        final_name = f"{save_name}_{_dt.datetime.now().strftime('%Y%m%d%H%M%S')}"
-    dest = save_root / final_name
-    dest.mkdir(parents=True, exist_ok=True)
+    if (world_root / "save.json").exists():
+        raise HTTPException(
+            status_code=409,
+            detail=f"world already has a save: {world_id}（不覆盖正在玩的世界；先删除它或换个 id 导入为新世界）",
+        )
+    world_root.mkdir(parents=True, exist_ok=True)
 
     for member in names:
         if member.endswith("/"):
             continue
-        if member == "save.json":
+        if Path(member).name == "presets.json":
             continue
-        target = (dest / member).resolve()
-        if not target.is_relative_to(dest.resolve()):
+        rel = member
+        if rel.startswith("world/"):  # 旧备份布局：资产带 world/ 前缀
+            rel = rel[len("world/"):]
+        if not rel or rel.startswith("candidates/") or "/candidates/" in rel:
+            continue
+        target = (world_root / rel).resolve()
+        if not target.is_relative_to(world_root.resolve()):
             continue  # 防 zip 路径穿越
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(zf.read(member))
 
-    # 改名时同步 save.json 内的 save_name，保持 sid 与目录一致。
-    if final_name != save_name:
-        meta["save_name"] = final_name
-        raw_save["meta"] = meta
-    write_json_atomic(dest / "save.json", raw_save)
+    write_json_atomic(world_root / "save.json", raw_save)
 
-    session = open_session(save_root, final_name)
+    session = open_session(world_root)
     request.app.state.sessions[session.sid] = session
     return {
         "ok": True,
         "sid": session.sid,
         "world_id": world_id,
-        "save_name": final_name,
+        "save_name": save_name,
     }
 
 
@@ -504,7 +693,7 @@ async def reset_session(request: Request, sid: str):
     save = session.ledger.save
     save.clock = world_start_time(session.world)
     save.meta.next_event_id = 1
-    save.player_scene = session.world.scenes[0].id if session.world.scenes else ""
+    save.player_scene = session.world.start_scene_id()
     save.narrative_preset = session.world.presets
     save.entities = {}
     save.axes = {}

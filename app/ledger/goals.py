@@ -116,12 +116,16 @@ def add_goal(
     *,
     text: str,
     kind: str,
-    subject: str = "player",
+    subject: str = "",
     big_goal_id: str | None = None,
     npc_id: str | None = None,
 ) -> Goal:
     """Create a goal (player-confirmed via the director window). Raises when
-    the active cap for its tier is exceeded, or the parent link is invalid."""
+    the active cap for its tier is exceeded, or the parent link is invalid.
+
+    ``subject`` 空串 = 主角的目标（默认）；否则是该角色的中文名（2026-09-13
+    改口径，此前是魔法串 "player" / "npc_xxx"）。
+    """
     kind = "big" if kind == "big" else "small"
     if kind == "big":
         big_goal_id = None  # 层级只允许一层
@@ -130,7 +134,7 @@ def add_goal(
         id=new_id("goal"),
         text=text.strip()[:120],
         kind=kind,
-        subject=subject or "player",
+        subject=(subject or "").strip(),
         status="active",
         big_goal_id=big_goal_id,
         npc_id=npc_id,

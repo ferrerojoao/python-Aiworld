@@ -35,7 +35,7 @@ def _place(session, npc_id: str, scene: str) -> None:
             "kind": "narrative",
             "at": "2026-07-14T08:30:00",
             "location": scene,
-            "participants": ["player", npc_id],
+            "participants": ["刘星", npc_id],
             "known_by": None,
             "body": f"{npc_id}在{scene}。",
             "summary": f"{npc_id}在{scene}。",
@@ -57,7 +57,7 @@ def test_actor_two_stage_deep_choice(session, settings):
         "prose": "朱明听完问题没接话。",
         "summary": "刘星追问打架的事。",
         "location": "网吧",
-        "participants": ["player", "朱明"],
+        "participants": ["刘星", "朱明"],
         "private": False,
         "adopt_player_body": False,
         "actor_questions": [
@@ -73,7 +73,7 @@ def test_actor_two_stage_deep_choice(session, settings):
         "prose": "朱明把脸别过去，含糊带过，岔开话题。",
         "summary": "朱明含糊带过打架的事。",
         "location": "网吧",
-        "participants": ["player", "朱明"],
+        "participants": ["刘星", "朱明"],
         "private": False,
         "adopt_player_body": False,
         "actor_questions": [],
@@ -289,7 +289,7 @@ def test_audit_settles_side_effects_and_one_shot_scene(session, settings):
         "location": "weicao_deep",
         "scene_name": "苇草深处",
         "register_scene": False,
-        "participants": ["player", "王蓉"],
+        "participants": ["刘星", "王蓉"],
         "private": True,
         "delta_minutes": 240,
         "lifecycle": [],
@@ -308,7 +308,7 @@ def test_audit_settles_side_effects_and_one_shot_scene(session, settings):
     assert session.ledger.save.clock == "2026-07-14T12:00:00"  # 08:00 + 240min
     ev = session.ledger.narratives[-1]
     assert ev["location"] == "weicao_deep"
-    assert ev["known_by"] == ["player", "王蓉"]  # private（名单确定性排序）
+    assert ev["known_by"] == ["刘星", "王蓉"]  # private（名单确定性排序）
     assert ev["location_name"] == "苇草深处"
     # One-shot scene is NOT registered in the world instance.
     assert not any(s.id == "weicao_deep" for s in session.world.scenes)
@@ -324,7 +324,7 @@ def test_audit_registers_reusable_scene(session, settings):
         "location": "街角奶茶店",
         "scene_name": "街角奶茶店",
         "register_scene": True,
-        "participants": ["player"],
+        "participants": ["刘星"],
         "private": False,
         "delta_minutes": 0,
         "lifecycle": [],
@@ -379,7 +379,7 @@ def test_lore_trigger_input_merges_then_adopt_rebuilds(session, settings):
         "location": "网吧",
         "scene_name": "网吧",
         "register_scene": False,
-        "participants": ["player", "朱明"],
+        "participants": ["刘星", "朱明"],
         "private": False,
         "delta_minutes": 0,
         "lifecycle": [],
@@ -421,7 +421,7 @@ def test_lore_trigger_input_merges_then_adopt_rebuilds(session, settings):
                 "location": "主街",
                 "scene_name": "主街",
                 "register_scene": False,
-                "participants": ["player"],
+                "participants": ["刘星"],
                 "private": False,
                 "delta_minutes": 0,
                     "lifecycle": [],
@@ -448,7 +448,7 @@ def test_lore_merge_dedup_and_cap(session, settings):
         "location": "鱼市",
         "scene_name": "鱼市",
         "register_scene": False,
-        "participants": ["player"],
+        "participants": ["刘星"],
         "private": False,
         "delta_minutes": 0,
         "lifecycle": [],
@@ -483,8 +483,8 @@ def test_player_notes_reach_writer_work_order(session, settings):
     """主角与 NPC 字段一致：幕后注/自知隐秘进编剧工作单，不进 Actor 切片。"""
     from app.core.workorder import build_work_order
 
-    session.ledger.save.player.private_note = "其实是镇长的私生子"
-    session.ledger.save.player.personal_secrets = "欠了赌债"
+    session.world.player().private_note = "其实是镇长的私生子"
+    session.world.player().personal_secrets = "欠了赌债"
     session.world.npcs["朱明"].private_note = "网吧冬天会失火"
     session.world.npcs["朱明"].personal_secrets = "他爸欠了赌债"
     # 让朱明的近况成立：seed 一条他在 网吧 的定位事件。
@@ -504,7 +504,7 @@ def test_player_notes_reach_writer_work_order(session, settings):
     )
 
     writer = build_work_order("writer", session.world, session.ledger, "网吧")
-    assert "主角·你" in writer
+    assert "主角·刘星" in writer
     assert "其实是镇长的私生子" in writer
     assert "欠了赌债" in writer
     assert "网吧冬天会失火" in writer
@@ -518,11 +518,11 @@ def test_player_notes_reach_writer_work_order(session, settings):
     # QC 参照区：玩家秘密是禁区（NPC 提及=泄漏；正文揭示=泄漏）。
     from app.workers.qc import build_qc_reference
 
-    reference = build_qc_reference(session.world, session.ledger, ["player", "朱明"])
+    reference = build_qc_reference(session.world, session.ledger, ["刘星", "朱明"])
     assert "假面骑士" not in reference  # 无秘密时的基线
-    session.ledger.save.player.personal_secrets = "夜里是假面骑士"
-    session.ledger.save.player.private_note = "受神之加护，赐予者名雅典娜"
-    reference = build_qc_reference(session.world, session.ledger, ["player", "朱明"])
+    session.world.player().personal_secrets = "夜里是假面骑士"
+    session.world.player().private_note = "受神之加护，赐予者名雅典娜"
+    reference = build_qc_reference(session.world, session.ledger, ["刘星", "朱明"])
     assert "假面骑士" in reference
     assert "雅典娜" in reference
     assert "只有玩家自己知道" in reference
@@ -539,7 +539,7 @@ def test_audit_npc_moves_updates_snapshot(session, settings):
     qc_out = {"status": "pass", "prose": writer_out["prose"], "issues": []}
     audit_out = {
         "location": "网吧",
-        "participants": ["player", "朱明"],
+        "participants": ["刘星", "朱明"],
         "private": False,
         "delta_minutes": 15,
         "npc_moves": [
@@ -559,7 +559,7 @@ def test_audit_npc_moves_updates_snapshot(session, settings):
     assert "朱明" in main["participants"]
     # 离场事件：轻量位置账目，去向私密（本人 + 目击玩家）
     assert move["participants"] == ["朱明"]
-    assert move["known_by"] == ["player", "朱明"]
+    assert move["known_by"] == ["刘星", "朱明"]
     assert move["location"] == "zhuming_home"
     assert "朱明前往" in move["summary"]
     # 快照更新：朱明从网吧在场名单消失（快照已随离场事件走到未注册的"朱明家"）
@@ -582,7 +582,7 @@ def test_audit_invented_id_rescued_by_alias(session, settings):
     audit_out = {
         "location": "yushi",  # 审计自造的拼音 id，场景表里没有
         "scene_name": "鱼市",
-        "participants": ["player", "朱明"],
+        "participants": ["刘星", "朱明"],
         "private": False,
         "delta_minutes": 40,
         "npc_moves": [
@@ -618,7 +618,7 @@ def test_audit_lifecycle_retire_leaves_trace_event(session, settings):
     qc_out = {"status": "pass", "prose": writer_out["prose"], "issues": []}
     audit_out = {
         "location": "网吧",
-        "participants": ["player", "朱明"],
+        "participants": ["刘星", "朱明"],
         "private": False,
         "delta_minutes": 5,
         "lifecycle": [{"npc_id": "朱明", "status": "retired"}],
@@ -633,11 +633,11 @@ def test_audit_lifecycle_retire_leaves_trace_event(session, settings):
     main, trace = evs[-2], evs[-1]
     assert "退场" in trace["summary"]
     assert trace["participants"] == ["朱明"]
-    assert trace["known_by"] == ["player", "朱明"]
+    assert trace["known_by"] == ["刘星", "朱明"]
     assert "朱明" not in session.ledger.present_at("网吧")
 
     # 已退场者再被判 retired 不重复留痕。
-    audit2 = dict(audit_out, delta_minutes=0, participants=["player"])
+    audit2 = dict(audit_out, delta_minutes=0, participants=["刘星"])
     llm2 = PrefixKeyLLM(
         {
             "玩家输入：": {
@@ -668,7 +668,7 @@ def test_audit_clock_to_overrides_delta(session, settings):
     qc_out = {"status": "pass", "prose": writer_out["prose"], "issues": []}
     audit_out = {
         "location": "网吧",
-        "participants": ["player", "王蓉"],
+        "participants": ["刘星", "王蓉"],
         "private": False,
         "delta_minutes": 999,  # 若未对钟会被保险丝截到 960——对钟后必须被忽略
         "clock_to": "2026-07-14T20:00:00",

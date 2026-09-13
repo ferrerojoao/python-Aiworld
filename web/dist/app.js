@@ -8,7 +8,14 @@ const state = {
   currentTurnId: null,
   currentMessageEl: null,
   worldData: null,
-  editMode: false,
+  // 工作台：就地编辑（无编辑模式开关）。worldBaseline = 上次保存/载入时的表单快照，
+  // worldDirty 靠重算对比得出，改了什么一目了然、关窗前还能拦一道。
+  worldBaseline: null,
+  worldDirty: false,
+  worldProblems: [],
+  worldTab: "overview",
+  worldPanelOpen: false,
+  worldDraft: null,
   goals: [],
 };
 
@@ -190,16 +197,16 @@ async function loadEventHistory() {
 
 async function ensureSession() {
   const info = await api(`/api/worlds/${state.worldId}`);
-  if (info.saves.includes(state.saveName)) {
+  if (info.has_save) {
     const data = await api(`/api/sessions/open`, {
       method: "POST",
-      body: JSON.stringify({ world_id: state.worldId, save_name: state.saveName }),
+      body: JSON.stringify({ world_id: state.worldId }),
     });
     state.sid = data.sid;
   } else {
     const data = await api(`/api/sessions`, {
       method: "POST",
-      body: JSON.stringify({ world_id: state.worldId, save_name: state.saveName }),
+      body: JSON.stringify({ world_id: state.worldId }),
     });
     state.sid = data.sid;
   }
@@ -674,10 +681,6 @@ function describeAction(action) {
       return `记忆注入：给 ${p.npc_id || "?"} 注入记忆`;
     case "access_rejudge":
       return `事件改判：${p.event_id || "?"} → ${p.known_by ? "私密" : "公开"}`;
-    case "amend_card":
-      return `补卡事务：${p.npc_id || "?"} 增补人物卡`;
-    case "create_npc":
-      return `角色转正：为「${p.name || "?"}」建档`;
     case "retire":
       return `角色退场：${p.npc_id || "?"} 永久离开舞台（不可逆）`;
     case "set_goal": {
@@ -688,11 +691,9 @@ function describeAction(action) {
         const b = (state.goals || []).find((g) => g.id === p.big_goal_id);
         parent = `，挂到「${b ? b.text : p.big_goal_id}」`;
       }
-      const owner = p.subject && p.subject !== "player" ? `（归属：${p.subject}）` : "";
+      const owner = p.subject ? `（归属：${p.subject}）` : "";
       return `设立${kind}${owner}：「${p.text || "?"}」${parent}`;
     }
-    case "add_scene":
-      return `场景转正：注册新地点「${p.name || "?"}」`;
     default:
       return `${action.type || "?"} ${JSON.stringify(p)}`;
   }
@@ -770,48 +771,295 @@ function applyTheme(theme) {
   document.body.classList.toggle("light", theme === "light");
 }
 
-/* ---------- 世界浏览器 ---------- */
+/* ---------- 世界工作台 ---------- */
 
 function openWorldModal() {
   $("#world-modal").classList.add("open");
-  setEditModeUI(state.editMode);  // 同步按钮可见性（编辑态残留时导出/导入存档保持隐藏）
-  switchWorldTab("list");
-  loadWorldList();
+  closeWorldPanel();
+  // 已载入过就原样展示（未保存改动保留）；否则才拉取。
+  if (!state.worldData) {
+    loadWorldBrowser();
+  } else {
+    updateWorldContext();
+    updateSaveBar();
+  }
 }
 
 function closeWorldModal() {
+  if (state.worldDirty && !confirm("有未保存的改动，关闭后会丢失。确定关闭？")) return;
+  closeWorldPanel();
   $("#world-modal").classList.remove("open");
 }
 
+function toggleWorldPanel() {
+  if (state.worldPanelOpen) {
+    closeWorldPanel();
+    return;
+  }
+  state.worldPanelOpen = true;
+  $("#wb-world-panel").classList.add("open");
+  loadWorldList();
+}
+
+function closeWorldPanel() {
+  state.worldPanelOpen = false;
+  $("#wb-world-panel").classList.remove("open");
+}
+
 function switchWorldTab(tabName) {
+  // 各标签页的 DOM 常驻（只是 display 切换），切页不丢未保存改动。
+  state.worldTab = tabName;
   document.querySelectorAll(".modal-tabs .tab").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.tab === tabName);
   });
   document.querySelectorAll(".world-tab").forEach((panel) => {
     panel.classList.toggle("active", panel.id === `world-tab-${tabName}`);
   });
-  if (tabName !== "list" && !state.worldData) {
-    loadWorldBrowser();
-  } else if (tabName !== "list" && state.worldData && state.editMode) {
-    renderWorldEdit();
+  if (!state.worldData) loadWorldBrowser();
+  updateSaveBar();
+}
+
+/* ---------- 新建世界（L1 种子 / L2 一句话草稿） ---------- */
+
+function renderNewWorldForm() {
+  return `
+    <div class="new-world">
+      <div class="nw-row">
+        <label>世界 ID
+          <input id="nw-id" placeholder="qingshi2" /></label>
+        <label>世界名<input id="nw-name" placeholder="青石镇" /></label>
+      </div>
+      <div class="nw-row">
+        <label>主角名
+          <input id="nw-player" placeholder="主角真名，如 刘星" /></label>
+        <label>开局场景<input id="nw-scene" placeholder="留空则用「起点」" /></label>
+      </div>
+      <label>世界生成提示
+        <textarea id="nw-premise" rows="3" placeholder="例：九十年代县城高中暑假，我和同桌朱明、王蓉在小镇上晃荡。"></textarea></label>
+      <label>开场白
+        <textarea id="nw-opening" rows="2"></textarea></label>
+      <div class="nw-actions">
+        <button id="nw-draft" class="primary">AI 起草</button>
+        <button id="nw-create" class="primary">创建空白世界</button>
+      </div>
+      <div id="nw-preview"></div>
+    </div>
+  `;
+}
+
+function readNewWorldForm() {
+  const val = (id) => ($(id) ? $(id).value.trim() : "");
+  return {
+    world_id: val("#nw-id"),
+    name: val("#nw-name"),
+    player_name: val("#nw-player"),
+    start_scene: val("#nw-scene"),
+    opening: val("#nw-opening"),
+    premise: val("#nw-premise"),
+  };
+}
+
+function bindNewWorldEvents() {
+  const draftBtn = $("#nw-draft");
+  if (draftBtn) draftBtn.onclick = draftNewWorld;
+  const createBtn = $("#nw-create");
+  if (createBtn) createBtn.onclick = createBlankWorld;
+}
+
+async function draftNewWorld() {
+  const form = readNewWorldForm();
+  if (!form.premise) {
+    alert("先写世界生成提示。");
+    return;
+  }
+  if (!form.world_id) {
+    alert("先填世界 ID（英文/数字/下划线）。");
+    return;
+  }
+  const btn = $("#nw-draft");
+  btn.disabled = true;
+  btn.textContent = "起草中…";
+  try {
+    const res = await api(`/api/worlds/draft`, {
+      method: "POST",
+      body: JSON.stringify(form),
+    });
+    state.worldDraft = res;
+    renderDraftPreview(res);
+  } catch (e) {
+    alert(`起草失败：${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "AI 起草";
+  }
+}
+
+function renderDraftPreview(res) {
+  const box = $("#nw-preview");
+  const assets = res.assets || {};
+  const ov = assets.overview || {};
+  const scenes = assets.scenes || [];
+  const lore = assets.lorebook || [];
+  const cards = Object.values(assets.npcs || {});
+  const players = cards.filter((n) => n.is_player);
+  const others = cards.filter((n) => !n.is_player);
+  const problems = res.problems || [];
+  const nameOf = (n) => escapeHtml(n.id) + (n.has_actor ? " ·Actor" : "");
+  box.innerHTML = `
+    <div class="draft-preview">
+      <div class="draft-head">
+        <strong>草稿预览</strong>
+        <span class="muted">${escapeHtml(ov.name || "")} · 主角 ${players.map((p) => escapeHtml(p.id)).join("、") || "（缺）"} · 开局场景 ${escapeHtml(ov.start_scene || "")}</span>
+      </div>
+      ${problems.length
+        ? `<div class="warn-text">待修：${escapeHtml(problems.join("；"))}</div>`
+        : '<div class="ok-text">已通过引擎校验，可以落盘。</div>'}
+      <div class="draft-block"><b>概要</b><pre>${escapeHtml((ov.summary || []).join("\n"))}</pre></div>
+      <div class="draft-block"><b>开场白</b><pre>${escapeHtml(ov.opening || "")}</pre></div>
+      <div class="draft-block"><b>场景（${scenes.length}）</b><div>${scenes.map((s) => `<span class="chip">${escapeHtml(s.id)}</span>`).join("")}</div></div>
+      <div class="draft-block"><b>人物（${others.length}）</b><div>${others.map((n) => `<span class="chip">${nameOf(n)}</span>`).join("")}</div></div>
+      <div class="draft-block"><b>世界书（${lore.length}）</b><div>${lore.map((l) => `<span class="chip">${escapeHtml(l.id)}</span>`).join("")}</div></div>
+      <div class="nw-actions">
+        <button id="nw-create-draft" class="primary">按草稿创建世界</button>
+        <button id="nw-discard">丢弃草稿</button>
+      </div>
+    </div>
+  `;
+  $("#nw-create-draft").onclick = createWorldFromDraft;
+  $("#nw-discard").onclick = () => {
+    state.worldDraft = null;
+    box.innerHTML = "";
+  };
+}
+
+/** 表单里手填的值是硬约束：盖在草稿上（含主角改名——人物表键就是主角名）。 */
+function applyFormOverrides(payload, form) {
+  payload.overview = payload.overview || {};
+  if (form.name) payload.overview.name = form.name;
+  if (form.start_scene) payload.overview.start_scene = form.start_scene;
+  if (form.opening) payload.overview.opening = form.opening;
+  const npcs = payload.npcs || {};
+  const player = Object.values(npcs).find((card) => card.is_player);
+  if (player && form.player_name && form.player_name !== player.id) {
+    delete npcs[player.id];
+    player.id = form.player_name;
+    npcs[form.player_name] = player;
+  }
+  return payload;
+}
+
+async function createBlankWorld() {
+  const form = readNewWorldForm();
+  if (!form.world_id) {
+    alert("先填世界 ID（英文/数字/下划线）。");
+    return;
+  }
+  if (!form.player_name) {
+    alert("先填主角名——事件日志按此名记录。");
+    return;
+  }
+  await postNewWorld(form);
+}
+
+async function createWorldFromDraft() {
+  if (!state.worldDraft) return;
+  const form = readNewWorldForm();
+  if (!form.world_id) {
+    alert("先填世界 ID。");
+    return;
+  }
+  const payload = JSON.parse(JSON.stringify(state.worldDraft.assets || {}));
+  await postNewWorld({
+    world_id: form.world_id,
+    name: form.name,
+    player_name: form.player_name,
+    payload: applyFormOverrides(payload, form),
+  });
+}
+
+async function postNewWorld(body) {
+  try {
+    const res = await api(`/api/worlds/new`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    const problems = res.problems || [];
+    alert(
+      `已创建世界：${res.world_id}` +
+        (problems.length ? `\n\n提示：\n${problems.join("\n")}` : "")
+    );
+    state.worldDraft = null;
+    await loadWorldList();
+    if (confirm(`打开「${res.world_id}」开始玩？`)) {
+      await switchToWorld(res.world_id);
+      closeWorldModal();
+    }
+  } catch (e) {
+    alert(`创建失败：${e.message}`);
+  }
+}
+
+async function checkWorldAssets(worldId) {
+  try {
+    const res = await api(`/api/worlds/${encodeURIComponent(worldId)}/check`);
+    if (res.ok) {
+      alert(`世界「${worldId}」校验通过。`);
+      return;
+    }
+    alert(`世界「${worldId}」有 ${res.problems.length} 处待修：\n\n${res.problems.join("\n")}`);
+  } catch (e) {
+    alert(`校验失败：${e.message}`);
   }
 }
 
 async function loadWorldList() {
   const data = await api(`/api/worlds`);
-  const wrap = $("#world-tab-list");
-  wrap.innerHTML = "<h3>世界列表</h3>";
   const worlds = data.worlds || [];
+
+  const panel = $("#wb-world-panel");
+  panel.innerHTML = `
+    <div class="wb-panel-head">
+      <strong>世界列表</strong>
+      <span class="muted">点「打开」接着玩（当前世界标着「当前」；一个世界就是一份存档）</span>
+      <span class="wb-panel-actions">
+        <button id="wb-new-world-toggle">新建世界</button>
+        <label class="import-label">导入为新世界<input id="import-world" type="file" accept=".zip" hidden /></label>
+      </span>
+    </div>
+    <div id="wb-new-world-body" hidden>${renderNewWorldForm()}</div>
+    <div id="world-list-items"></div>
+  `;
+
+  $("#wb-new-world-toggle").onclick = () => {
+    const body = $("#wb-new-world-body");
+    body.hidden = !body.hidden;
+    $("#wb-new-world-toggle").textContent = body.hidden ? "新建世界" : "收起表单";
+  };
+  $("#import-world").onchange = (e) => importWorld(e.target.files[0]);
+  bindNewWorldEvents();
+
+  const box = $("#world-list-items");
   if (!worlds.length) {
-    wrap.innerHTML += '<div class="empty">暂无世界，请导入资产包。</div>';
-    return;
+    box.innerHTML =
+      '<div class="empty">暂无世界：展开「新建世界」填一句世界生成提示让 AI 起草，或直接创建一个空白世界。</div>';
   }
   for (const world of worlds) {
     const item = document.createElement("div");
     item.className = "item world-list-item";
 
     const label = document.createElement("div");
-    label.innerHTML = `<strong>${world.name || world.id}</strong> <span class="muted">${world.id}</span>`;
+    const warn = world.ok === false ? ' <span class="warn-tag">待修</span>' : "";
+    const current = world.id === state.worldId ? ' <span class="player-tag">当前</span>' : "";
+    const clock = world.clock
+      ? ` <span class="muted">${escapeHtml(String(world.clock).slice(0, 16).replace("T", " "))}</span>`
+      : "";
+    label.innerHTML = `<strong>${escapeHtml(world.name || world.id)}</strong> <span class="muted">${escapeHtml(world.id)}</span>${clock}${current}${warn}`;
+    if (world.ok === false && (world.problems || []).length) {
+      const tip = document.createElement("div");
+      tip.className = "warn-text";
+      tip.textContent = (world.problems || []).join("；");
+      label.appendChild(tip);
+    }
     item.appendChild(label);
 
     const actions = document.createElement("div");
@@ -822,6 +1070,11 @@ async function loadWorldList() {
     openBtn.onclick = () => switchToWorld(world.id);
     actions.appendChild(openBtn);
 
+    const checkBtn = document.createElement("button");
+    checkBtn.textContent = "校验";
+    checkBtn.onclick = () => checkWorldAssets(world.id);
+    actions.appendChild(checkBtn);
+
     const deleteBtn = document.createElement("button");
     deleteBtn.className = "danger";
     deleteBtn.textContent = "删除";
@@ -829,16 +1082,21 @@ async function loadWorldList() {
     actions.appendChild(deleteBtn);
 
     item.appendChild(actions);
-    wrap.appendChild(item);
+    box.appendChild(item);
   }
 }
 
 async function switchToWorld(worldId) {
+  if (worldId === state.worldId && state.sid) {
+    closeWorldPanel();
+    return;
+  }
+  if (state.worldDirty && !confirm("有未保存的改动，切换世界会丢弃。继续切换？")) return;
   state.worldId = worldId;
   localStorage.setItem("aiworld_world_id", worldId);
   state.worldName = null;
   state.worldData = null;
-  setEditModeUI(false);
+  closeWorldPanel();
   await ensureSession();
   const info = await api(`/api/sessions/${state.sid}`);
   state.worldName = info.world;
@@ -849,6 +1107,7 @@ async function switchToWorld(worldId) {
   await loadDirectorHistory();
   await loadWorldBrowser();
   switchWorldTab("overview");
+  updateWorldContext();
 }
 
 async function deleteWorld(worldId) {
@@ -861,65 +1120,50 @@ async function deleteWorld(worldId) {
   await loadWorldList();
 }
 
+/** 标题栏上下文：世界名 · 目录名——说明"我在编辑谁"（世界=存档，没有第二层）。 */
+async function updateWorldContext() {
+  const el = $("#wb-context");
+  if (!el) return;
+  try {
+    const info = await api(`/api/sessions/${state.sid}`);
+    state.worldName = info.world;
+    el.textContent = `${info.world} · ${state.worldId}`;
+  } catch (e) {
+    el.textContent = state.worldId || "";
+  }
+}
+
 async function loadWorldBrowser() {
   const data = await api(`/api/sessions/${state.sid}/world`);
   state.worldData = data;
+  renderWorldTabs(data);
+  updateWorldContext();
+  await refreshProblems();
+}
 
-  const overview = $("#world-tab-overview");
-  overview.innerHTML = "";
-  overview.innerHTML = `
-    <h3>${data.overview.name || data.overview.id}</h3>
-    <pre>${(data.overview.summary || []).join("\n")}</pre>
-    ${data.overview.opening ? `<p><strong>开场白</strong></p><pre>${escapeHtml(data.overview.opening)}</pre>` : ""}
-    <p><strong>世界钟起点</strong></p>
-    <p>${escapeHtml(data.overview.start_time || "（引擎默认 2026-07-14T08:00:00）")}</p>
-    <p><strong>记忆回溯上限</strong></p>
-    <p>${data.overview.memory_limit ?? 50} 条（NPC Actor 的记忆窗口；0 = 不给记忆）</p>
-  `;
+function renderWorldTabs(data) {
+  // 就地编辑：每个「世界资产」标签页只有一种样子（表单）——浏览态/编辑态
+  // 两套渲染合并成一套（2026-09-13 工作台改版，消灭「编辑模式」开关）。
+  renderEditOverview(data);
+  renderEditLore(data);
+  renderEditScenes(data);
+  renderEditNpcs(data);
+  renderEditAxes(data);
+  renderEventsTab(data);
+  bindEditEvents();
+  bindDirtyTracking();
+  resetBaseline();
+}
 
-  const lore = $("#world-tab-lore");
-  lore.innerHTML = "<h3>世界书</h3>";
-  for (const entry of data.lorebook || []) {
-    const div = document.createElement("div");
-    div.className = "item";
-    div.innerHTML = `<strong>${entry.id}</strong><br>${entry.body || ""}<br><small>关键词：${escapeHtml((entry.keywords || []).join("、"))}</small>`;
-    lore.appendChild(div);
-  }
-
-  const scenes = $("#world-tab-scenes");
-  scenes.innerHTML = "<h3>场景</h3>";
-  for (const scene of data.scenes || []) {
-    const div = document.createElement("div");
-    div.className = "item";
-    div.innerHTML = `<strong>${scene.id}</strong><br>${scene.perceivable || ""}<br>消息域：${scene.region || "全域公共区"}${(scene.aliases || []).length ? `<br>别名：${escapeHtml((scene.aliases || []).join(", "))}` : ""}`;
-    scenes.appendChild(div);
-  }
-
-  const npcs = $("#world-tab-npcs");
-  npcs.innerHTML = "<h3>人物</h3>";
-  for (const npc of Object.values(data.npcs || {})) {
-    const div = document.createElement("div");
-    div.className = "item";
-    div.innerHTML = `<strong>${npc.id}</strong><br>${npc.persona || ""}${(npc.region || []).length ? `<br>听域：${escapeHtml((npc.region || []).join(", "))}` : ""}`;
-    npcs.appendChild(div);
-  }
-
-  const axes = $("#world-tab-axes");
-  axes.innerHTML = "<h3>数值属性</h3>";
-  const axisList = data.axes || [];
-  if (!axisList.length) {
-    axes.innerHTML += '<div class="empty">暂无数值属性（关系系统二期启用）</div>';
-  }
-  for (const axis of axisList) {
-    const div = document.createElement("div");
-    div.className = "item";
-    div.textContent = `${axis.label || axis.id} (${axis.range?.[0] ?? "-"} ~ ${axis.range?.[1] ?? "-"})`;
-    axes.appendChild(div);
-  }
-
+function renderEventsTab(data) {
   const events = $("#world-tab-events");
-  events.innerHTML = "<h3>事件日志流</h3>";
-  (data.events || []).forEach((ev, index) => {
+  events.innerHTML =
+    '<h3>事件日志（本存档，只读）</h3><p class="hint">公开/私密改判请用导演窗口的「事件访问改判」。</p>';
+  const list = data.events || [];
+  if (!list.length) {
+    events.innerHTML += '<div class="empty">还没有事件。</div>';
+  }
+  list.forEach((ev, index) => {
     const div = document.createElement("div");
     div.className = "item";
     const inputLine = ev.player_input ? `\n玩家：${ev.player_input}` : "";
@@ -930,46 +1174,128 @@ async function loadWorldBrowser() {
 
 function formatEventSummary(ev, scenes, npcs) {
   const location = ev.location || "";
-  const displayName = (id) => (id === "player" ? "你" : id);
-  const names = (ev.participants || []).map(displayName).join("、");
+  // participants/known_by 里记的就是角色名（主角也是人名之一，2026-09-13）——直接显示
+  const names = (ev.participants || []).join("、");
   const locTag = location ? ` [${location}]` : "";
   const whoTag = names ? `（在场：${names}）` : "";
   const privTag = ev.known_by
-    ? `【私密·仅${(ev.known_by || []).map(displayName).join("、")}】`
+    ? `【私密·仅${(ev.known_by || []).join("、")}】`
     : "【公开】";
   const summary = ev.summary || (ev.body || "").replace(/\s+/g, " ").slice(0, 40);
   return `${ev.at || ""}${locTag} ${summary}${whoTag} ${privTag}`;
 }
 
-function setEditModeUI(active) {
-  state.editMode = active;
-  $("#toggle-edit").textContent = active ? "退出编辑" : "编辑模式";
-  $("#save-world-edit").style.display = active ? "" : "none";
-  $("#save-as-world").style.display = active ? "" : "none";
-  // 存档导出/导入只在浏览态提供（编辑模式隐藏，避免与世界资产包操作混淆）
-  $("#export-save").style.display = active ? "none" : "";
-  $("#import-save-label").style.display = active ? "none" : "";
-}
+/* ---------- 脏检查与保存条 ---------- */
 
-function toggleEditMode() {
-  const next = !state.editMode;
-  setEditModeUI(next);
-  if (next) {
-    renderWorldEdit();
-  } else {
-    loadWorldBrowser();
+const ASSET_TABS = ["overview", "lore", "scenes", "npcs", "axes"];
+
+function snapshotWorld() {
+  try {
+    return JSON.stringify(collectWorldEditData());
+  } catch (e) {
+    return "";
   }
 }
 
-function renderWorldEdit() {
-  if (!state.worldData) return;
-  const data = state.worldData;
-  renderEditOverview(data);
-  renderEditLore(data);
-  renderEditScenes(data);
-  renderEditNpcs(data);
-  renderEditAxes(data);
-  bindEditEvents();
+function resetBaseline() {
+  state.worldBaseline = snapshotWorld();
+  state.worldDirty = false;
+  updateSaveBar();
+}
+
+function refreshDirty() {
+  state.worldDirty =
+    state.worldBaseline !== null && snapshotWorld() !== state.worldBaseline;
+  updateSaveBar();
+}
+
+function bindDirtyTracking() {
+  const modal = $("#world-modal");
+  modal.oninput = refreshDirty;
+  modal.onchange = refreshDirty;
+}
+
+/** 保存条：改动写到哪里、有多少待修，一眼可见（此前这些一个字都没说）。 */
+function updateSaveBar() {
+  const bar = $("#wb-savebar");
+  if (!bar) return;
+  const onAssetTab = ASSET_TABS.includes(state.worldTab);
+  bar.hidden = !onAssetTab;
+  if (!onAssetTab) return;
+  const status = $("#wb-status");
+  const problems = state.worldProblems || [];
+  const bits = [];
+  if (state.worldDirty) bits.push("● 有未保存的改动");
+  if (problems.length) bits.push(`世界有 ${problems.length} 处待修`);
+  if (bits.length) {
+    status.textContent = bits.join(" · ");
+    status.className = "wb-status warn";
+    status.title = problems.length ? problems.join("\n") : "";
+  } else {
+    status.textContent = "所有改动直接保存到这个世界，即时生效";
+    status.className = "wb-status";
+    status.title = "";
+  }
+  $("#wb-save").disabled = !state.worldDirty;
+  $("#wb-discard").disabled = !state.worldDirty;
+}
+
+/** 载入时与保存后各查一次：待修的是"磁盘上已保存的世界"，不是表单里的半成品。 */
+async function refreshProblems() {
+  try {
+    const res = await api(`/api/sessions/${state.sid}/world/check`);
+    state.worldProblems = res.problems || [];
+  } catch (e) {
+    state.worldProblems = [];
+  }
+  updateSaveBar();
+}
+
+async function saveWorldEdit() {
+  let data;
+  try {
+    data = collectWorldEditData();
+  } catch (e) {
+    return;
+  }
+  try {
+    const res = await api(`/api/sessions/${state.sid}/world`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    state.worldProblems = res.problems || [];
+    await loadWorldBrowser();
+    if (state.worldProblems.length) {
+      alert(
+        `已保存到本存档，但有 ${state.worldProblems.length} 处待修：\n\n${state.worldProblems.join("\n")}`
+      );
+    }
+  } catch (e) {
+    alert(`保存失败：${e.message}`);
+  }
+}
+
+function discardWorldEdits() {
+  if (!state.worldDirty) return;
+  if (!confirm("放弃未保存的改动，恢复到已保存的样子？")) return;
+  loadWorldBrowser();
+}
+
+async function checkSessionWorld() {
+  try {
+    const res = await api(`/api/sessions/${state.sid}/world/check`);
+    state.worldProblems = res.problems || [];
+    updateSaveBar();
+    if (res.ok) {
+      alert("世界校验通过。");
+      return;
+    }
+    alert(
+      `世界有 ${res.problems.length} 处待修：\n\n${res.problems.join("\n")}`
+    );
+  } catch (e) {
+    alert(`校验失败：${e.message}`);
+  }
 }
 
 function renderEditOverview(data) {
@@ -995,6 +1321,10 @@ function renderEditOverview(data) {
           <div class="field">
             <label>世界钟起点（ISO 时间，空=引擎默认 2026-07-14T08:00:00；新建存档/重置后回到此时刻）</label>
             <input class="edit-field" data-field="start_time" type="text" placeholder="2026-07-14T08:00:00" value="${escapeHtml(ov.start_time || "")}" />
+          </div>
+          <div class="field">
+            <label>开局场景（场景中文名；留空 = 取场景表第一个。主角自此开场，之后由事件流水推导其位置）</label>
+            <input class="edit-field" data-field="start_scene" type="text" placeholder="主街" value="${escapeHtml(ov.start_scene || "")}" />
           </div>
           <div class="field">
             <label>记忆回溯条数上限（experiences 每次回看的最大事件条数）</label>
@@ -1105,8 +1435,9 @@ function renderEditNpcs(data) {
 
 function npcCard(id, card) {
   const c = card || {};
+  const isPlayer = !!c.is_player;
   return `
-    <div class="edit-card">
+    <div class="edit-card${isPlayer ? " is-player" : ""}">
       <div class="form-grid">
         <div class="field">
           <label>姓名（即 ID，中文名；participants 与显示名共用此键）</label>
@@ -1137,8 +1468,15 @@ function npcCard(id, card) {
         <div class="field">
           <label><input class="edit-field" data-field="has_actor" type="checkbox" ${c.has_actor ? "checked" : ""} /> 使用 Actor</label>
         </div>
+        <div class="field">
+          <label><input class="edit-field" data-field="is_player" type="checkbox" ${isPlayer ? "checked" : ""} /> 主角（人物表有且仅有一个）</label>
+        </div>
       </div>
-      <button class="danger remove-item">删除</button>
+      ${
+        isPlayer
+          ? '<div class="player-lock">主角 · 不可删除（换主角：在另一张卡上勾选「主角」）</div>'
+          : '<button class="danger remove-item">删除</button>'
+      }
     </div>
   `;
 }
@@ -1146,11 +1484,11 @@ function npcCard(id, card) {
 function renderEditAxes(data) {
   const items = data.axes || [];
   $("#world-tab-axes").innerHTML = `
-    <h3>数值属性</h3>
+    <h3>数值轴</h3>
     <div class="edit-list" id="edit-axis-list">
       ${items.map((item, i) => axisCard(item, i)).join("")}
     </div>
-    <button id="add-axis">添加数值属性</button>
+    <button id="add-axis">添加数值轴</button>
   `;
 }
 
@@ -1211,6 +1549,19 @@ function bindEditEvents() {
       const btn = e.target.closest(".remove-item");
       if (btn) btn.closest(".edit-card").remove();
     };
+    // 主角唯一性（2026-09-13）：勾上任意一张卡的「主角」，其余自动取消；
+    // 重渲染人物列表让"删除"按钮随之出现/消失——数据从当前 DOM 读回，编辑不丢。
+    // 用 on* 赋值而非 addEventListener：bindEditEvents 会被重复调用，避免监听器堆积。
+    list.onchange = (e) => {
+      const box = e.target.closest?.('[data-field="is_player"]');
+      if (!box || !box.checked || list.id !== "edit-npc-list") return;
+      list.querySelectorAll('[data-field="is_player"]').forEach((cb) => {
+        if (cb !== box) cb.checked = false;
+      });
+      const npcs = readNpcs();
+      renderEditNpcs({ npcs });
+      bindEditEvents();
+    };
   });
 
   const addLore = $("#add-lore");
@@ -1241,6 +1592,7 @@ function readOverview() {
     opening: val("opening"),
     summary: splitLines(val("summary")),
     start_time: val("start_time"),
+    start_scene: val("start_scene").trim(),
     memory_limit: rawMemory === "" ? 50 : Math.max(0, Number(rawMemory) || 0),
   };
 }
@@ -1275,6 +1627,7 @@ function readNpcs() {
       private_note: card.querySelector('[data-field="private_note"]')?.value ?? "",
       personal_secrets: card.querySelector('[data-field="personal_secrets"]')?.value ?? "",
       has_actor: !!card.querySelector('[data-field="has_actor"]')?.checked,
+      is_player: !!card.querySelector('[data-field="is_player"]')?.checked,
       region: splitList(card.querySelector('[data-field="region"]')?.value),
     };
   });
@@ -1308,31 +1661,14 @@ function escapeHtml(text) {
   return String(text)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-async function saveWorldEdit() {
-  let data;
-  try {
-    data = collectWorldEditData();
-  } catch (e) {
-    return;
-  }
-  try {
-    await api(`/api/sessions/${state.sid}/world`, {
-      method: "PUT",
-      body: JSON.stringify(data),
-    });
-    alert("已保存到当前存档的世界实例");
-    setEditModeUI(false);
-    await loadWorldBrowser();
-  } catch (e) {
-    alert(`保存失败：${e.message}`);
-  }
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 async function saveAsWorld() {
-  const newId = prompt("请输入新世界 ID（英文/数字/下划线）");
+  const newId = prompt(
+    "复制为新世界：把当前世界（含全部演化）fork 成一份新内容包，原世界不动。\n请输入新世界 ID（英文/数字/下划线）"
+  );
   if (!newId || !newId.trim()) return;
   let data;
   try {
@@ -1345,26 +1681,22 @@ async function saveAsWorld() {
       method: "POST",
       body: JSON.stringify({ new_world_id: newId.trim(), ...data }),
     });
-    alert(`已把当前世界（含演化）沉淀为新世界资产包：${res.world_id}`);
-    setEditModeUI(false);
+    state.worldDirty = false;
     await loadWorldList();
-    switchWorldTab("list");
+    if (confirm(`已复制为新世界：${res.world_id}。现在切换过去？`)) {
+      await switchToWorld(res.world_id);
+    }
   } catch (e) {
-    alert(`另存失败：${e.message}`);
+    alert(`复制失败：${e.message}`);
   }
 }
 
 async function refreshWorldModal() {
-  if (state.editMode) {
-    if (!confirm("刷新会丢失未保存的编辑，确定吗？")) return;
-    setEditModeUI(false);
-  }
-  const activeTab = document.querySelector(".modal-tabs .tab.active")?.dataset.tab || "list";
-  if (activeTab === "list") {
+  if (state.worldDirty && !confirm("刷新会丢弃未保存的改动，确定吗？")) return;
+  if (state.worldPanelOpen) {
     await loadWorldList();
-  } else {
-    await loadWorldBrowser();
   }
+  await loadWorldBrowser();
 }
 
 async function exportWorld() {
@@ -1401,7 +1733,10 @@ async function importWorld(file) {
     return;
   }
   const data = await res.json();
-  alert(`已导入世界：${data.world_id}`);
+  await loadWorldList();
+  if (confirm(`已导入为新世界：${data.world_id}。现在切换过去？`)) {
+    await switchToWorld(data.world_id);
+  }
 }
 
 async function importSave(file) {
@@ -1414,18 +1749,18 @@ async function importSave(file) {
   });
   if (!res.ok) {
     const text = await res.text();
-    alert(`导入存档失败：${text}`);
+    alert(`导入备份失败：${text}`);
     return;
   }
   const data = await res.json();
-  alert(`已导入存档：${data.world_id} / ${data.save_name}\n将切换到该存档。`);
+  alert(`已导入备份：${data.world_id}\n将切换到该世界。`);
   // 切换过去：同一世界则换存档名，跨世界则换世界。
   state.worldId = data.world_id;
   localStorage.setItem("aiworld_world_id", data.world_id);
   state.saveName = data.save_name;
   state.worldName = null;
   state.worldData = null;
-  setEditModeUI(false);
+  closeWorldPanel();
   await ensureSession();
   const info = await api(`/api/sessions/${state.sid}`);
   state.worldName = info.world;
@@ -1452,12 +1787,15 @@ function readFileAsBase64(file) {
 }
 
 async function resetWorld() {
-  if (!confirm("确定重置当前世界存档？事件、候选与运行状态会清空；工作台对概览、NPC 卡、场景、世界书的修改会保留。")) return;
+  if (state.worldDirty && !confirm("有未保存的改动，重置会一并丢弃。继续重置？")) return;
+  if (!confirm("确定重置当前存档？事件、候选与运行状态会清空；工作台对概览、NPC 卡、场景、世界书的修改会保留。")) return;
+  state.worldDirty = false;
   await api(`/api/sessions/${state.sid}/reset`, { method: "POST" });
   clearCandidateControls();
   await refreshState();
   await syncPendingFromServer();
-  alert("世界已重置");
+  await loadWorldBrowser();
+  alert("存档已重置");
 }
 
 /* ---------- 初始化 ---------- */
@@ -1487,22 +1825,27 @@ async function init() {
     /* 设置接口失败时保留输入框空白，主流程继续 */
   }
 
+  let picked = null;
   try {
-    const picked = await pickWorld();
-    if (!picked) {
-      addMessage("npc", "暂无可用世界：请点右上角「世界」导入或新建一个世界。");
-      return;
-    }
-    await ensureSession();
-    const info = await api(`/api/sessions/${state.sid}`);
-    state.worldName = info.world;
-    $("#world-name").textContent = info.world;
-    await loadEventHistory();
-    await refreshState();
-    await syncPendingFromServer();
-    await loadDirectorHistory();
+    picked = await pickWorld();
   } catch (e) {
-    addMessage("npc", `初始化失败：${e.message}`);
+    picked = null;
+  }
+  if (picked) {
+    try {
+      await ensureSession();
+      const info = await api(`/api/sessions/${state.sid}`);
+      state.worldName = info.world;
+      $("#world-name").textContent = info.world;
+      await loadEventHistory();
+      await refreshState();
+      await syncPendingFromServer();
+      await loadDirectorHistory();
+    } catch (e) {
+      addMessage("npc", `初始化失败：${e.message}`);
+    }
+  } else {
+    addMessage("npc", "还没有世界：点右上角「世界工作台」→「切换世界」→ 新建一个。");
   }
 
   $("#input-form").addEventListener("submit", async (e) => {
@@ -1535,16 +1878,17 @@ async function init() {
   $("#refresh-debug").addEventListener("click", loadDebugTrace);
 
   $("#close-world").addEventListener("click", closeWorldModal);
+  $("#wb-switch-world").addEventListener("click", toggleWorldPanel);
+  $("#wb-refresh").addEventListener("click", refreshWorldModal);
+  $("#wb-save").addEventListener("click", saveWorldEdit);
+  $("#wb-discard").addEventListener("click", discardWorldEdits);
+  $("#wb-check").addEventListener("click", checkSessionWorld);
   document.querySelectorAll(".modal-tabs .tab").forEach((btn) => {
     btn.addEventListener("click", () => switchWorldTab(btn.dataset.tab));
   });
   $("#export-world").addEventListener("click", exportWorld);
   $("#export-save").addEventListener("click", exportSave);
-  $("#refresh-world").addEventListener("click", refreshWorldModal);
-  $("#toggle-edit").addEventListener("click", toggleEditMode);
-  $("#save-world-edit").addEventListener("click", saveWorldEdit);
   $("#save-as-world").addEventListener("click", saveAsWorld);
-  $("#import-world").addEventListener("change", (e) => importWorld(e.target.files[0]));
   $("#import-save").addEventListener("change", (e) => importSave(e.target.files[0]));
   $("#reset-world").addEventListener("click", resetWorld);
 }

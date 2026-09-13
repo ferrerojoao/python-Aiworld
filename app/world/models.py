@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+# 世界包没写主角卡时由 load_world 合成的占位名（作者在人物编辑里改名即可）。
+PLAYER_PLACEHOLDER = "主角"
+
 
 class WorldInfo(BaseModel):
     id: str
@@ -9,6 +12,7 @@ class WorldInfo(BaseModel):
     summary: list[str] = Field(default_factory=list)
     opening: str = ""  # opening prose: becomes the first ledger event of a save
     start_time: str = ""  # 世界钟起点（ISO 时间）；空=回退引擎默认 2026-07-14T08:00:00
+    start_scene: str = ""  # 开局场景（中文名，须为已注册场景）；空=取第一个注册场景
     memory_limit: int = Field(default=50, ge=0)  # experiences 回溯条数上限（0=不给记忆）
 
 
@@ -35,7 +39,11 @@ class Scene(BaseModel):
 
 
 class NpcCard(BaseModel):
-    """人物卡键 = 中文名（id 即显示名，participants/事件/工作单直接用中文）。"""
+    """人物卡键 = 中文名（id 即显示名，participants/事件/工作单直接用中文）。
+
+    主角是人物表里的普通一员（2026-09-13 用户拍板）：靠 ``is_player`` 认出，
+    不再有独立的 PlayerProfile。事件日志直接记人名 → 中途换主角不影响旧日志。
+    """
 
     id: str  # NPC 中文名，如"朱明"（同时是 participants 成员与显示名）
     appearance: str = ""
@@ -43,7 +51,9 @@ class NpcCard(BaseModel):
     private_note: str | None = None  # 作者底牌：无人（含 NPC 自己）知道的真相，仅编剧可读
     personal_secrets: str | None = None  # 该 NPC 自知的隐秘（心结/往事/把柄），进他自己的 Actor 切片
     has_actor: bool = False
+    is_player: bool = False  # 主角标记：全表有且仅有一张
     region: list[str] = Field(default_factory=list)  # 消息域（听域/来属地，可多个）；空 = 按亲历事件推导
+    attributes: dict[str, int] = Field(default_factory=dict)  # 二期预留
 
 
 class Axis(BaseModel):
@@ -77,3 +87,24 @@ class WorldContent(BaseModel):
     npcs: dict[str, NpcCard] = Field(default_factory=dict)
     axes: list[Axis] = Field(default_factory=list)
     presets: NarrativePreset = Field(default_factory=NarrativePreset)
+
+    # ------------------------------------------------------------------
+    # 主角（人物表里的普通一员，2026-09-13）
+    # ------------------------------------------------------------------
+    def player(self) -> NpcCard | None:
+        """主角卡：人物表里 ``is_player`` 的那一张（load_world 保证存在）。"""
+        for card in self.npcs.values():
+            if card.is_player:
+                return card
+        return None
+
+    def player_name(self) -> str:
+        """主角名 = 人物表键 = 事件日志里记的名字。"""
+        card = self.player()
+        return card.id if card is not None else PLAYER_PLACEHOLDER
+
+    def start_scene_id(self) -> str:
+        """开局场景：``start_scene`` 命中注册场景才作数，否则取第一个注册场景。"""
+        if self.meta.start_scene and any(s.id == self.meta.start_scene for s in self.scenes):
+            return self.meta.start_scene
+        return self.scenes[0].id if self.scenes else ""

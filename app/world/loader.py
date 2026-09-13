@@ -4,7 +4,16 @@ import json
 from pathlib import Path
 
 from app.core.store import write_json_atomic
-from .models import Axis, LoreEntry, NarrativePreset, NpcCard, Scene, WorldContent, WorldInfo
+from .models import (
+    PLAYER_PLACEHOLDER,
+    Axis,
+    LoreEntry,
+    NarrativePreset,
+    NpcCard,
+    Scene,
+    WorldContent,
+    WorldInfo,
+)
 
 
 def _read_json(path: Path, default):
@@ -39,6 +48,10 @@ def load_world(root: str | Path) -> WorldContent:
         for path in sorted(npc_dir.glob("*.json")):
             card = NpcCard.model_validate(_read_json(path, {}))
             npcs[card.id] = card
+    # 主角是人物表里的普通一员（2026-09-13）：世界包没写主角卡时合成一张占位卡，
+    # 保证 world.player() 恒有返回值——引擎处处以"主角名"为键，缺卡会静默失配。
+    if not any(card.is_player for card in npcs.values()):
+        npcs[PLAYER_PLACEHOLDER] = NpcCard(id=PLAYER_PLACEHOLDER, is_player=True)
 
     raw_axes = _read_json(root / "axes.json", [])
     axes = [Axis.model_validate(item) for item in raw_axes]
@@ -78,6 +91,17 @@ def check_world(root: str | Path) -> list[str]:
             problems.append(
                 f"start_time should be ISO datetime (e.g. 2026-07-14T08:00:00): {world.meta.start_time}"
             )
+    # 主角（2026-09-13）：人物表里有且仅有一张 is_player 卡；没有则报"已补占位卡"。
+    players = [card.id for card in world.npcs.values() if card.is_player]
+    if len(players) > 1:
+        problems.append(f"主角卡只能有一张，当前有 {len(players)} 张：{'、'.join(players)}")
+    elif not players:
+        problems.append("未声明主角卡（is_player）；载入时已自动补占位卡，请在人物编辑里改名")
+    elif players[0] == PLAYER_PLACEHOLDER:
+        problems.append("主角卡还是占位名「主角」，请在人物编辑里改为主角真名（日志按此名记录）")
+    # 开局场景必须落在注册场景里（空 = 取第一个注册场景，合法）。
+    if world.meta.start_scene and not any(s.id == world.meta.start_scene for s in world.scenes):
+        problems.append(f"start_scene 不在场景表里：{world.meta.start_scene}")
     return problems
 
 
@@ -85,6 +109,9 @@ def save_world_assets(root: str | Path, data: dict) -> None:
     """Write world asset files from editor payload.
 
     data keys: overview, lorebook, scenes, npcs, axes
+
+    强制不变量（2026-09-13）：人物表里必须恰好有一张主角卡——前端不给删除
+    按钮，这里是服务端兜底（"主角无法删掉"）。
     """
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
@@ -95,8 +122,16 @@ def save_world_assets(root: str | Path, data: dict) -> None:
         "summary": overview.get("summary", []),
         "opening": overview.get("opening", ""),
         "start_time": overview.get("start_time", ""),
+        "start_scene": overview.get("start_scene", ""),
         "memory_limit": overview.get("memory_limit", 50),
     }
+    npcs = data.get("npcs") or {}
+    players = [npc_id for npc_id, card in npcs.items() if (card or {}).get("is_player")]
+    if len(players) != 1:
+        raise ValueError(
+            "人物表必须有且只有一张主角卡（is_player）——"
+            f"当前 {len(players)} 张：{'、'.join(players) or '无'}"
+        )
     write_json_atomic(root / "world.json", world_info)
     write_json_atomic(root / "lorebook.json", data.get("lorebook", []))
     write_json_atomic(root / "scenes.json", data.get("scenes", []))
@@ -106,7 +141,7 @@ def save_world_assets(root: str | Path, data: dict) -> None:
     npcs_dir.mkdir(exist_ok=True)
     for old in npcs_dir.glob("*.json"):
         old.unlink()
-    for npc_id, card in (data.get("npcs") or {}).items():
+    for npc_id, card in npcs.items():
         write_json_atomic(npcs_dir / f"{npc_id}.json", card)
 
 

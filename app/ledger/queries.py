@@ -53,7 +53,7 @@ class Ledger:
         self.by_id: dict[str, dict[str, Any]] = {}
         self.by_location: dict[str, list[dict[str, Any]]] = {}
         self.narratives: list[dict[str, Any]] = []
-        # 小抄①：每个 NPC（含 player）当前由其最近一条定位事件确定的位置
+        # 小抄①：每个实体（主角与 NPC 同权，键都是中文名）当前由最近一条定位事件确定的位置
         self.last_location: dict[str, dict[str, Any]] = {}
         # 小抄②：每个人参与过哪些事件（experiences 热路径）
         self.by_participant: dict[str, list[dict[str, Any]]] = {}
@@ -178,6 +178,14 @@ class Ledger:
     def where_is(self, entity: str) -> dict[str, Any] | None:
         return self._probe(entity)
 
+    def player_name(self) -> str:
+        """主角名（= 人物表键 = 事件日志里记的名字）。"""
+        return self.world.player_name()
+
+    def current_scene(self) -> str:
+        """当前场景（镜头位置）：存档小抄优先，空则回开局场景。"""
+        return self.save.player_scene or self.world.start_scene_id()
+
     def present_at(self, scene: str) -> list[str]:
         result = []
         for subject in self.world.npcs.keys():
@@ -195,10 +203,8 @@ class Ledger:
         return dict(self.cache_stats)
 
     def register_scene(self, scene_id: str) -> bool:
-        """Register a reusable scene node in the save's world instance
-        (M17 转正，仅玩家声明的可复用地点；一次性布景不注册).
-
-        场景键 = 中文名：id 即显示名，无需独立 name。"""
+        """Register a reusable scene node in the world (M17 转正，仅玩家声明的
+        可复用地点；一次性布景不注册). 场景键 = 中文名：id 即显示名。"""
         if not scene_id or any(s.id == scene_id for s in self.world.scenes):
             return False
         from app.core.store import write_json_atomic
@@ -206,8 +212,7 @@ class Ledger:
 
         scene = Scene(id=scene_id, aliases=[scene_id], perceivable="这里看起来是个还没仔细描述的地方。")
         self.world.scenes.append(scene)
-        scenes_path = self.save_dir / "world" / "scenes.json"
-        write_json_atomic(scenes_path, [s.model_dump() for s in self.world.scenes])
+        write_json_atomic(self.save_dir / "scenes.json", [s.model_dump() for s in self.world.scenes])
         return True
 
     def visible_to(self, viewer: str) -> list[dict[str, Any]]:

@@ -17,9 +17,11 @@ def clean_context(text: str) -> str:
     是人称替换制造了"写反"，不是写手写错。
 
     人称归属改由契约约定：writer 侧约定 context 以该 NPC 为「你」、提到玩家
-    一律写其**姓名**（``workorder.writer_story_rules`` 的「抉择归属」条）；
+    一律写其**姓名**（``workorder.writer_output_format`` 的 actor_questions
+    「context」字段条；2026-09-13 由二级「抉择归属」条迁入一级，字段写法贴着
+    字段定义）；
     actor 侧约定「你」= 自己、「<主角名>」= 对话对象（``workorder.actor_contract``，
-    主角名经 ``player_display_name`` 注入，未设定时退化为「玩家」）。
+    主角名经 ``player_display_name`` 注入；仅当名字被写成占位符「你」时退化为「玩家」）。
     规则讲清之后，机械替换不仅多余，还会破坏本来正确的文本。
     """
     return text.strip()
