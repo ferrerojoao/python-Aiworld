@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from app.core.presets import save_global_preset
 from app.core.store import write_json_atomic
+from app.core.workorder import state_view
 from app.runtime.session import create_session, open_session
 from app.world.draft import blank_world_assets, check_assets, validate_assets
 from app.world.loader import check_world, save_world_assets
@@ -380,6 +381,19 @@ async def get_state(request: Request, sid: str):
         # 跳了这么久"——规则推了多少、审计估了多少、是否被保险丝截断、对钟是否
         # 被拒。纯诊断字段，前端缺它也不影响任何功能。
         "last_settlement": session.ledger.save.last_settlement,
+        # 角色状态（REQ 〇章；Step 2）：当前清单 + 最近一次采纳的变更留痕。
+        # 前端展示与撤销入口是后续（眼下先让后端说得清"编剧为什么认为他免疫刀剑"）。
+        "states": {
+            name: [it.model_dump() for it in runtime.states]
+            for name, runtime in session.ledger.save.entities.items()
+            if runtime.states
+        },
+        # 状态面板的数据（Step 2b）：**由引擎侧生成**（复用提示词那套 cap 与截断），
+        # 所以面板上"编剧能看到哪几条"与提示词字面同源——前端不要自己算 cap。
+        "state_view": state_view(session.ledger, present_ids),
+        # 面板要单列主角（提示词的「玩家资料」段恒在），而 present_ids 里没有他。
+        "player_name": player_name,
+        "last_state_change": session.ledger.save.last_state_change,
         "scene": session.scene_description(),
         "scene_id": player_scene,
         "recent_scenes": recent,
@@ -687,6 +701,20 @@ async def import_world(request: Request, sid: str, body: ImportWorldBody):
     return {"ok": True, "world_id": dest.name}
 
 
+@router.post("/sessions/{sid}/states/{state_id}/revoke")
+async def revoke_state(request: Request, sid: str, state_id: str):
+    """撤销一条角色状态（Step 2b，2026-09-14）：删条目 + 落一条对冲记账事件。
+
+    玩家动作、不经审计；正文与事件日志一律不动（史实不可变，改的是"编剧此后
+    认为他是什么"这个运行态）。找不到 → 404（多半是已经撤过 / 已到期 / 刚重置）。
+    """
+    session = _get_session(request, sid)
+    runner = request.app.state.turn_runner_factory(session)
+    if not runner.transaction.revoke_state(state_id):
+        raise HTTPException(status_code=404, detail="状态不存在（可能已被撤销）")
+    return {"ok": True}
+
+
 @router.post("/sessions/{sid}/reset")
 async def reset_session(request: Request, sid: str):
     from app.runtime.session import world_start_time, write_opening_event
@@ -705,6 +733,10 @@ async def reset_session(request: Request, sid: str):
     save.access_overrides = {}
     save.audit_last_error = None
     save.active_lore_ids = []
+    # 结算留痕是诊断字段，但重置后它指的是**重置前**那一次的结算（时钟、依据档位
+    # 全对不上）——留着只会误导顶栏时钟的 hover，一并清掉（2026-09-14）。
+    save.last_settlement = None
+    save.last_state_change = None
     session.ledger.events = []
     session.ledger.narratives = []
     session.ledger.by_id = {}

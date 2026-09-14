@@ -35,7 +35,7 @@ async def director(request: Request, sid: str, body: DirectorBody):
             action = DirectorAction.model_validate(body.action)
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=400, detail=f"bad action: {exc}") from exc
-        return _execute_action(session, action.type, action.payload)
+        return _execute_action(request, session, action.type, action.payload)
     if body.topic == "chat":
         return await _director_chat(request, session, body.message)
     # legacy topics kept for API compatibility (frontend uses chat only)
@@ -97,7 +97,7 @@ def _resolve_npc_ref(session, ref: str) -> str | None:
     return ref if ref in session.world.npcs else None
 
 
-def _execute_action(session, action_type: str, payload: dict) -> dict:
+def _execute_action(request, session, action_type: str, payload: dict) -> dict:
     """Execute a confirmed backstage action (player already confirmed it)."""
     ledger = session.ledger
     if action_type == "access_rejudge":
@@ -221,13 +221,73 @@ def _execute_action(session, action_type: str, payload: dict) -> dict:
         ledger.persist_save()
         return {"ok": True, "action": action_type, "event": event}
 
-    # 导演窗口只管改账本（覆写/记忆注入/改判/剧情目标/退场）。模型越权提议
-    # 世界资产动作时，给玩家一句人话并指向正确的入口，而不是裸 400。
+    if action_type == "state_add":
+        # 状态新增（Step 2c）：玩家明确要求给某人加一条长期事实。
+        # **刻意不做语义门槛**——审计侧那套"只收长期事实"的判据是防它自己过度
+        # 发挥的；玩家已经拍板的事，再拿语义闸拦人很荒谬（见 Transaction.add_state）。
+        # 走 runner 而不是直接改 ledger：这样记账事件、last_state_change.added
+        # 与左侧栏的即时撤销入口都自动跟上（与"玩家撤销"对称）。
+        runner = request.app.state.turn_runner_factory(session)
+        npc_id = _resolve_npc_ref(session, payload.get("npc_id", ""))
+        if npc_id is None:
+            raise HTTPException(
+                status_code=404, detail=f"npc not found: {payload.get('npc_id')}"
+            )
+        try:
+            item = runner.transaction.add_state(
+                npc_id,
+                str(payload.get("text") or ""),
+                until=str(payload.get("until") or ""),
+                public=bool(payload.get("public")),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "action": action_type, "npc": npc_id, "state": item.model_dump()}
+
+    if action_type == "state_revoke":
+        # 状态撤销（Step 2c）：优先按 state_id 精确定位（导演看得见清单里的 id）；
+        # 抄错 / 没给 id 时退而用 {npc_id, text} 做**精确文本**匹配——不做模糊匹配，
+        # "骨裂"与"左臂骨裂"必须分得开。两条路都走同一个 revoke_state：
+        # 留痕形状、对冲事件、"（玩家撤销）"文案与抽屉里的 × 完全一致。
+        runner = request.app.state.turn_runner_factory(session)
+        state_id = str(payload.get("state_id") or payload.get("id") or "").strip()
+        if not state_id:
+            npc_id = _resolve_npc_ref(session, payload.get("npc_id", ""))
+            text = str(payload.get("text") or "").strip()
+            if npc_id is None or not text:
+                raise HTTPException(
+                    status_code=400,
+                    detail="state_id 或 {npc_id, text} 至少给一个",
+                )
+            hit = next(
+                (
+                    it
+                    for name, runtime in ledger.save.entities.items()
+                    if name == npc_id
+                    for it in runtime.states
+                    if (it.text or "").strip() == text
+                ),
+                None,
+            )
+            if hit is None:
+                raise HTTPException(
+                    status_code=404, detail=f"{npc_id} 没有这条状态：{text}"
+                )
+            state_id = hit.id
+        if not runner.transaction.revoke_state(state_id):
+            raise HTTPException(
+                status_code=404, detail=f"状态不存在（可能已被撤销）：{state_id}"
+            )
+        return {"ok": True, "action": action_type, "state_id": state_id}
+
+    # 导演窗口只管改账本（覆写/记忆注入/改判/剧情目标/退场/状态增撤）。模型越权
+    # 提议世界资产动作时，给玩家一句人话并指向正确的入口，而不是裸 400。
     raise HTTPException(
         status_code=400,
         detail=(
             f"导演窗口不支持「{action_type}」这个动作。"
-            "改账本的事（覆写 / 记忆注入 / 访问改判 / 剧情目标 / 角色退场）在这里确认后执行；"
+            "改账本的事（覆写 / 记忆注入 / 访问改判 / 剧情目标 / 角色退场 / 状态增删）"
+            "在这里确认后执行；"
             "人物卡、转正、场景、世界书等世界资产请到「世界工作台」直接编辑。"
         ),
     )

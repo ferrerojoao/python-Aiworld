@@ -263,6 +263,9 @@ async function refreshState() {
     $("#banned-words-input").value = (p.banned_words || []).join(", ");
   }
   renderLeftRail(data);
+  renderStateChange(data);
+  renderStatePanel(data);
+  renderStateBadge(data);
 }
 
 function renderLeftRail(data) {
@@ -335,6 +338,189 @@ function renderLeftRail(data) {
         goals.appendChild(li);
       }
     }
+  }
+}
+
+/* ---------- 角色状态 · 长期事实（Step 2b，2026-09-14） ---------- */
+
+function stampClock(v) {
+  return String(v || "-").slice(0, 16).replace("T", " ");
+}
+
+function stTag(text) {
+  const s = document.createElement("span");
+  s.className = "st-tag";
+  s.textContent = text;
+  return s;
+}
+
+function stRow(name, text, right, cls) {
+  const row = document.createElement("div");
+  row.className = "st-row" + (cls ? ` ${cls}` : "");
+  if (name) {
+    const who = document.createElement("span");
+    who.className = "st-who";
+    who.textContent = name;
+    row.appendChild(who);
+  }
+  const body = document.createElement("span");
+  body.className = "st-text";
+  body.textContent = text;
+  row.appendChild(body);
+  if (right) row.appendChild(right);
+  return row;
+}
+
+// 撤销控件：点 × → 原地变成「确认 / 取消」（不弹窗）。撤销是破坏性动作，但它留痕、
+// 且状态还能重新获得，一道轻确认就够；反过来若点完行直接消失，玩家会怀疑自己是不是
+// 点错了、撤掉的到底是哪条。
+function stRevoke(stateId) {
+  const box = document.createElement("span");
+  box.className = "st-act";
+  const x = document.createElement("span");
+  x.className = "st-x";
+  x.textContent = "×";
+  x.title = "撤销这条状态（编剧此后不再认为他有；正文与事件日志不动）";
+  x.onclick = () => {
+    const ask = document.createElement("span");
+    ask.className = "st-confirm";
+    ask.textContent = "撤销？";
+    const yes = document.createElement("button");
+    yes.className = "danger";
+    yes.textContent = "确认";
+    yes.onclick = async () => {
+      yes.disabled = true;
+      try {
+        await api(`/api/sessions/${state.sid}/states/${stateId}/revoke`, {
+          method: "POST",
+        });
+        await refreshState();
+      } catch (e) {
+        ask.textContent = `撤销失败：${e.message}`;
+      }
+    };
+    const no = document.createElement("button");
+    no.textContent = "取消";
+    no.onclick = () => ask.replaceWith(x);
+    ask.appendChild(yes);
+    ask.appendChild(no);
+    x.replaceWith(ask);
+  };
+  box.appendChild(x);
+  return box;
+}
+
+// 本回合变化（左侧栏）：只列**最近一次采纳**带来的增删。新增的给撤销入口；
+// 已结束 / 已到期的条目已经不在存档里了，灰字标注即可（撤不掉也不需要撤）；
+// skipped 是内部诊断（审计报歪了 / 找不到 id），不露给玩家。
+function stateChangeRows(change) {
+  const revoked = new Set((change.revoked || []).map((r) => r.id));
+  const rows = [];
+  for (const it of change.added || []) {
+    rows.push({ ...it, kind: "added", revoked: revoked.has(it.id) });
+  }
+  for (const it of change.removed || []) rows.push({ ...it, kind: "removed" });
+  for (const it of change.expired || []) rows.push({ ...it, kind: "expired" });
+  return rows;
+}
+
+function renderStateChange(data) {
+  const box = $("#state-change");
+  const change = data.last_state_change || {};
+  const rows = stateChangeRows(change);
+  box.innerHTML = "";
+  if (!rows.length) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  const head = document.createElement("h2");
+  head.textContent = "本回合变化";
+  box.appendChild(head);
+  const at = document.createElement("div");
+  at.className = "st-when";
+  at.textContent = `${stampClock(change.at)} 采纳后`;
+  box.appendChild(at);
+  for (const row of rows) {
+    if (row.kind === "added" && !row.revoked) {
+      box.appendChild(stRow(row.npc_id, row.text, stRevoke(row.id)));
+      continue;
+    }
+    // 已撤销的留在原地变灰（不是消失）：玩家刚点完，行立刻没了会让人怀疑点错了。
+    const tag = row.revoked ? "已撤销" : row.kind === "expired" ? "已到期结束" : "已结束";
+    box.appendChild(stRow(row.npc_id, row.text, stTag(tag), "grey"));
+  }
+}
+
+// 状态徽章（顶栏）：**编剧这一轮实际读到**的条数——只算主角与在场者、且只算
+// 注入上限内的（不在场者的状态、以及超出上限被截断的，编剧都看不到，计进去就
+// 是在骗玩家）。点开抽屉看全量与明细。
+function renderStateBadge(data) {
+  const view = data.state_view || [];
+  const n = view.reduce(
+    (sum, entry) =>
+      entry.is_player || entry.present ? sum + (entry.visible || []).length : sum,
+    0
+  );
+  const badge = $("#state-badge");
+  if (badge) badge.textContent = `状态 ${n}`;
+}
+
+// 状态面板（抽屉「状态」页）：**当前全量**。数据由引擎侧生成（`/state` 的
+// state_view，复用的就是注入提示词那套上限与截断），所以面板上"编剧能看到哪几条"
+// 与提示词字面同源——前端不自己算 cap，只负责分组显示、灰显与撤销入口。
+function renderStatePanel(data) {
+  const box = $("#states-panel");
+  const view = data.state_view || [];
+  box.innerHTML = "";
+  if (!view.length) {
+    box.innerHTML = '<div class="empty">还没有任何状态。</div>';
+    return;
+  }
+  for (const entry of view) {
+    const group = document.createElement("div");
+    group.className = "st-group";
+    const head = document.createElement("div");
+    head.className = "st-group-head";
+    head.textContent = entry.is_player ? `${entry.name}（你）` : entry.name;
+    if (entry.retired) head.appendChild(stTag("已退场"));
+    else if (!entry.present) head.appendChild(stTag("不在场 · 编剧看不到"));
+    group.appendChild(head);
+
+    // 灰显只有一种含义：**编剧这一轮读不到这条**。四个来源都归到它——超出注入
+    // 上限、不在场、已退场、已到期。视觉语言统一了，玩家不用去猜哪种灰是哪种意思。
+    const wholeGroupGrey = entry.retired || !(entry.is_player || entry.present);
+    const items = [
+      ...(entry.visible || []).map((it) => ({ it, grey: wholeGroupGrey, tag: "" })),
+      ...(entry.hidden || []).map((it) => ({ it, grey: true, tag: "" })),
+      // 已到期（backend 的 expired_at 非空）：条目被标记失效、编剧读不到，但**条目
+      // 还在存档里、还带撤销入口**——旧语义是到点直接删掉，玩家连撤的对象都没有。
+      ...(entry.expired || []).map((it) => ({ it, grey: true, tag: "已到期" })),
+    ];
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.className = "st-empty";
+      empty.textContent = "此刻没有任何状态";
+      group.appendChild(empty);
+    }
+    for (const { it, grey, tag } of items) {
+      const text = it.until ? `${it.text}（至 ${String(it.until).slice(0, 10)}）` : it.text;
+      const right = document.createElement("span");
+      right.className = "st-act";
+      // public=false = 这条状态的**表现**外人看不出来（"沐浴过龙血"没人知道，
+      // "当众挨一刀没事"人尽皆知）——面板上标出来，省得玩家疑惑 NPC 为什么没反应。
+      if (tag) right.appendChild(stTag(tag));
+      if (!it.public) right.appendChild(stTag("外人看不出"));
+      right.appendChild(stRevoke(it.id));
+      group.appendChild(stRow("", text, right, grey ? "grey" : ""));
+    }
+    if ((entry.hidden || []).length) {
+      const note = document.createElement("div");
+      note.className = "st-note";
+      note.textContent = `以上 ${entry.hidden.length} 条灰显的超出注入上限，编剧看不到；撤掉其中一条，后面的立刻补上。`;
+      group.appendChild(note);
+    }
+    box.appendChild(group);
   }
 }
 
@@ -703,6 +889,16 @@ function describeAction(action) {
       }
       const owner = p.subject ? `（归属：${p.subject}）` : "";
       return `设立${kind}${owner}：「${p.text || "?"}」${parent}`;
+    }
+    case "state_add": {
+      const until = p.until ? `（至 ${String(p.until).slice(0, 10)}）` : "";
+      const open = p.public ? "外在可见" : "外在看不出";
+      return `状态新增：给 ${p.npc_id || "?"} 加「${p.text || "?"}」${until}（${open}）`;
+    }
+    case "state_revoke": {
+      const who = p.npc_id ? `${p.npc_id} 的` : "";
+      const which = p.text || p.state_id || "?";
+      return `状态撤销：撤掉${who}「${which}」（正文与事件日志不动）`;
     }
     default:
       return `${action.type || "?"} ${JSON.stringify(p)}`;
@@ -2169,6 +2365,8 @@ async function init() {
     btn.addEventListener("click", () => openDrawer(btn.dataset.tab));
   });
   $("#open-world").addEventListener("click", openWorldModal);
+  // 状态徽章 = 抽屉「状态」页的入口（顶栏常显，主角没状态时也要能点进去查 NPC）。
+  $("#state-badge").addEventListener("click", () => openDrawer("states"));
   $("#close-drawer").addEventListener("click", closeDrawer);
 
   document.querySelectorAll(".drawer-tabs .tab").forEach((btn) => {

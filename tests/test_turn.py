@@ -6,7 +6,10 @@ import json
 import pytest
 
 from app.core.llm import FakeLLM
+from app.core.workorder import STATE_TEXT_MAX
+from app.ledger.save import EntityRuntime, StateItem
 from app.rules.lorebook import merge_active_lore
+from app.runtime.session import open_session
 from app.runtime.turn import NeedChooseCandidate, TurnRunner
 
 
@@ -1070,3 +1073,423 @@ def test_lore_subject_cap_two_per_character(session):
     assert "朱明的归属背景0" in order
     assert "朱明的归属背景1" in order
     assert "朱明的归属背景2" not in order
+
+
+# ---------------------------------------------------------------------------
+# 角色状态 · 长期事实：落地（REQ 〇章；Step 2，2026-09-14）
+# ---------------------------------------------------------------------------
+
+def _state_turn(session, settings, audit_out, player_input="继续待着"):
+    """跑一轮并采纳（审计输出由 audit_out 指定），返回 Candidate。"""
+    writer_out = {
+        "prose": "时间在不知不觉里过去。",
+        "summary": "时间流逝。",
+        "actor_questions": [],
+    }
+    qc_out = {"status": "pass", "prose": writer_out["prose"], "issues": []}
+    llm = PrefixKeyLLM({"玩家输入：": writer_out, "正文：": qc_out, "已采纳正文": audit_out})
+    runner = _runner(session, llm, settings)
+    candidate = asyncio.run(runner.run_turn(player_input))
+    asyncio.run(runner.adopt(candidate.candidate_id))
+    return candidate
+
+
+def _base_audit(**extra):
+    audit = {
+        "location": "主街",
+        "participants": ["刘星"],
+        "private": False,
+        "delta_minutes": 0,
+        "lifecycle": [],
+    }
+    audit.update(extra)
+    return audit
+
+
+def _seed_state(session, npc_id: str, text: str, *, until: str = "") -> StateItem:
+    runtime = session.ledger.save.entities.setdefault(npc_id, EntityRuntime())
+    item = StateItem(text=text, until=until)
+    runtime.states.append(item)
+    return item
+
+
+def test_audit_state_add_lands_with_source_event(session, settings):
+    """审计说"正文里他获得了某状态" → 落地 + 一条可追溯的记账史实。"""
+    _state_turn(
+        session,
+        settings,
+        _base_audit(
+            state_add=[{"npc_id": "刘星", "text": "沐浴龙血，普通刀剑伤不了他", "public": True}]
+        ),
+    )
+    states = session.ledger.save.entities["刘星"].states
+    assert [s.text for s in states] == ["沐浴龙血，普通刀剑伤不了他"]
+    assert states[0].public is True
+    assert states[0].source_event  # 指得着才叫可追溯（撤销靠它）
+
+    ev = session.ledger.by_id[states[0].source_event]
+    assert ev["body"] == ""  # 记账条目不是叙述
+    assert ev["location"] is None  # 不给位置语义，免得污染 where_is
+    assert ev["summary"] == "刘星获得状态：沐浴龙血，普通刀剑伤不了他"
+    assert ev["participants"] == ["刘星"]
+    assert ev["known_by"] == ["刘星"]
+    assert ev["source"] == "state"
+
+    assert session.ledger.save.last_state_change["added"][0]["id"] == states[0].id
+
+
+def test_state_add_is_deduped_across_turns(session, settings):
+    """审计每打一架就把同一条再报一遍 → 不能重复入库（否则六格被一个事实吃光）。"""
+    audit = _base_audit(state_add=[{"npc_id": "刘星", "text": "沐浴龙血"}])
+    _state_turn(session, settings, audit)
+    _state_turn(session, settings, audit)
+    assert [s.text for s in session.ledger.save.entities["刘星"].states] == ["沐浴龙血"]
+    reasons = [s["reason"] for s in session.ledger.save.last_state_change["skipped"]]
+    assert "已有同一状态" in reasons
+
+
+def test_state_add_unknown_npc_is_skipped(session, settings):
+    _state_turn(session, settings, _base_audit(state_add=[{"npc_id": "张三", "text": "怕水"}]))
+    assert "张三" not in session.ledger.save.entities
+    assert session.ledger.save.last_state_change["skipped"][0]["reason"] == "不在人物表"
+
+
+def test_state_add_is_one_per_character_per_turn(session, settings):
+    """限的是"同一角色一条"——防的是给同一个人一口气编一串。"""
+    _state_turn(
+        session,
+        settings,
+        _base_audit(
+            state_add=[
+                {"npc_id": "刘星", "text": "断了一条手臂"},
+                {"npc_id": "刘星", "text": "中了蛇毒"},
+            ]
+        ),
+    )
+    assert [s.text for s in session.ledger.save.entities["刘星"].states] == ["断了一条手臂"]
+
+
+def test_state_add_allows_several_characters_in_one_turn(session, settings):
+    """龙血溅到三个人身上是该落三条的——所以全局**不设**硬顶。"""
+    _state_turn(
+        session,
+        settings,
+        _base_audit(
+            state_add=[
+                {"npc_id": "刘星", "text": "龙血浸体"},
+                {"npc_id": "朱明", "text": "龙血溅身"},
+            ]
+        ),
+    )
+    assert len(session.ledger.save.entities["刘星"].states) == 1
+    assert len(session.ledger.save.entities["朱明"].states) == 1
+
+
+def test_state_add_blank_text_is_ignored(session, settings):
+    _state_turn(
+        session, settings, _base_audit(state_add=[{"npc_id": "刘星", "text": "   "}])
+    )
+    assert "刘星" not in session.ledger.save.entities
+
+
+def test_state_text_is_truncated(session, settings):
+    """提示词要求 ≤30 字；模型不听话时按上限截断，别把整段设定塞进常驻块。"""
+    _state_turn(
+        session, settings, _base_audit(state_add=[{"npc_id": "刘星", "text": "很长" * 40}])
+    )
+    assert len(session.ledger.save.entities["刘星"].states[0].text) == STATE_TEXT_MAX
+
+
+def test_state_remove_by_id(session, settings):
+    """移除按 id——审计看不见 id 就只能按原文猜，"骨裂"与"左臂骨裂"必有一场误伤。"""
+    item = _seed_state(session, "刘星", "左臂骨裂")
+    _state_turn(session, settings, _base_audit(state_remove=[item.id]))
+    assert session.ledger.save.entities["刘星"].states == []
+    removed = session.ledger.save.last_state_change["removed"][0]
+    assert removed["text"] == "左臂骨裂"
+    assert session.ledger.by_id[removed["event_id"]]["summary"] == "刘星状态结束：左臂骨裂"
+
+
+def test_state_remove_accepts_dict_shape(session, settings):
+    """宽松解析：审计偶尔给 {"state_id": …} 而不是裸字符串，不该让整单结算失败。"""
+    item = _seed_state(session, "刘星", "左臂骨裂")
+    _state_turn(session, settings, _base_audit(state_remove=[{"state_id": item.id}]))
+    assert session.ledger.save.entities["刘星"].states == []
+
+
+def test_state_remove_unknown_id_is_skipped(session, settings):
+    _state_turn(session, settings, _base_audit(state_remove=["st_不存在"]))
+    assert session.ledger.save.last_state_change["skipped"][0]["reason"] == "找不到该状态 id"
+
+
+def test_until_expiry_marks_the_state_without_deleting_it(session, settings):
+    """到期 = 标记失效，**不删条目**（2026-09-14 晚改）。
+
+    旧语义是到点 pop 掉。问题是 ``until`` 是**审计单方面**给的（玩家没有异议
+    渠道），静默删除等于把"审计写了个期限"变成一条玩家事后既查不到、也撤不掉
+    的操作。现在只写 ``expired_at`` + 落一条记账事件，条目留在存档里等玩家处置。
+    """
+    item = _seed_state(session, "刘星", "病倒", until="2026-07-13T08:00:00")  # 早于当前时钟
+    _state_turn(session, settings, _base_audit())
+    stored = session.ledger.save.entities["刘星"].states
+    assert [s.id for s in stored] == [item.id]  # 条目还在
+    assert stored[0].expired_at  # 但标了失效时刻
+    assert session.ledger.save.last_state_change["expired"][0]["text"] == "病倒"
+
+    # 失效只记账一次：再跑几轮不会重复落"状态结束"事件（expired_at 兼作哨兵）。
+    _state_turn(session, settings, _base_audit())
+    _state_turn(session, settings, _base_audit())
+    assert session.ledger.save.last_state_change["expired"] == []
+    ends = [e for e in session.ledger.events if "状态结束" in (e.get("summary") or "")]
+    assert len(ends) == 1
+
+
+def test_expired_state_stays_revocable(session, settings):
+    """失效之后玩家仍撤得掉——这正是"标记而不删"的全部目的。"""
+    item = _seed_state(session, "刘星", "病倒", until="2026-07-13T08:00:00")
+    _state_turn(session, settings, _base_audit())
+    assert _revoke(session, settings, item.id) is True
+    assert session.ledger.save.entities["刘星"].states == []
+    assert session.ledger.save.last_state_change["revoked"][0]["id"] == item.id
+
+
+def test_audit_supplied_until_lands_and_expires(session, settings):
+    """审计给出期限（"病倒三天"）→ 落地成 until，时钟过后由规则侧标记失效。
+
+    这是"只收长期事实"的配套闸门：有明确终点的（病 / 骨裂 / 中毒）按点自愈，
+    而不是永久粘在提示词里。但**自愈 = 停止注入，不是把条目抹掉**。
+    """
+    import datetime as dt
+
+    base = dt.datetime.fromisoformat(session.ledger.save.clock)
+    until = (base + dt.timedelta(hours=1)).replace(microsecond=0).isoformat()
+    _state_turn(
+        session,
+        settings,
+        _base_audit(state_add=[{"npc_id": "刘星", "text": "病倒", "until": until}]),
+    )
+    assert session.ledger.save.entities["刘星"].states[0].until == until
+
+    # 下一轮时钟推 2 小时 → 越过 until，到期清算标记失效（条目留下）。
+    _state_turn(session, settings, _base_audit(delta_minutes=120))
+    stored = session.ledger.save.entities["刘星"].states
+    assert [s.text for s in stored] == ["病倒"]
+    assert stored[0].expired_at
+    assert session.ledger.save.last_state_change["expired"][0]["text"] == "病倒"
+
+
+def test_player_can_add_a_state(session, settings):
+    """导演窗口手动加状态：落条目 + 记账事件 + 进 last_state_change.added。
+
+    **不做语义门槛**——审计那套"只收长期事实"是防它自己过度发挥的；玩家已经
+    拍板的事不该再被机器拦（"她其实是色盲"看着像前史，但玩家说了算）。进 added
+    是为了左侧栏立刻给出撤销入口：刚加完就能反悔。
+    """
+    _seed_change(session)
+    runner = _runner(session, FakeLLM({"*": {}}), settings)
+    item = runner.transaction.add_state("朱明", "左腿摔伤，走路瘸")
+
+    stored = session.ledger.save.entities["朱明"].states
+    assert [s.id for s in stored] == [item.id]
+    assert item.since == session.ledger.save.clock
+    assert item.expired_at == "" and item.until == ""
+
+    ev = session.ledger.by_id[item.source_event]
+    assert ev["source"] == "state"
+    assert ev["summary"] == "朱明获得状态：左腿摔伤，走路瘸（玩家设定）"
+    assert ev["participants"] == ["朱明"] and ev["body"] == "" and ev["location"] is None
+
+    assert session.ledger.save.last_state_change["added"] == [
+        {"npc_id": "朱明", "id": item.id, "text": item.text, "event_id": item.source_event}
+    ]
+    # 撤销入口就绪：刚加的这条能一键反悔。
+    assert _revoke(session, settings, item.id) is True
+
+
+def test_player_add_state_rejects_bad_input(session, settings):
+    """守卫只管格式与归属（空文本 / 不在人物表 / 重复），不管语义。"""
+    runner = _runner(session, FakeLLM({"*": {}}), settings)
+    with pytest.raises(ValueError):
+        runner.transaction.add_state("朱明", "   ")
+    with pytest.raises(ValueError):
+        runner.transaction.add_state("查无此人", "腿伤")
+    runner.transaction.add_state("朱明", "左腿摔伤")
+    with pytest.raises(ValueError):
+        runner.transaction.add_state("朱明", "左腿摔伤")
+
+
+def test_player_add_state_clips_and_ignores_expired_for_dedupe(session, settings):
+    """30 字截断；去重只比**未失效**的条目——一条已到期的"病倒"不该挡着下一次。"""
+    runner = _runner(session, FakeLLM({"*": {}}), settings)
+    item = runner.transaction.add_state("朱明", "伤" * 40)
+    assert item.text == "伤" * STATE_TEXT_MAX
+
+    # until 走同一条清洗：人话期限（"三天后"）当没给，别让它永不到期。
+    poisoned = runner.transaction.add_state("朱明", "中毒", until="三天后")
+    assert poisoned.until == ""
+
+    item.expired_at = session.ledger.save.clock
+    again = runner.transaction.add_state("朱明", "伤" * 40)  # 不抛
+    assert again.id != item.id
+
+
+def test_player_add_state_without_a_change_trace_still_lands(session, settings):
+    """``last_state_change`` 为 None（从没采纳过任何回合）时不崩，只是不记 added。"""
+    runner = _runner(session, FakeLLM({"*": {}}), settings)
+    assert session.ledger.save.last_state_change is None
+    item = runner.transaction.add_state("朱明", "左腿摔伤")
+    assert session.ledger.save.last_state_change is None
+    assert session.ledger.save.entities["朱明"].states[0].id == item.id
+
+
+def test_unparseable_until_is_dropped(session, settings):
+    """审计写人话（"三天后"）→ 当没给。
+
+    直接存进去的后果是这条状态**永远不到期**（`_is_expired` 解析失败一律当永不
+    到期）——一条本该自愈的"病倒"永久粘在提示词里，比不给期限更糟。
+    """
+    _state_turn(
+        session,
+        settings,
+        _base_audit(state_add=[{"npc_id": "刘星", "text": "病倒", "until": "三天后"}]),
+    )
+    assert session.ledger.save.entities["刘星"].states[0].until == ""
+
+
+def test_states_survive_audit_failure(session, settings):
+    """审计炸了 → 状态一动不动（不能因为审计失败就丢玩家的状态）。"""
+    _seed_state(session, "刘星", "沐浴龙血")
+    writer_out = {"prose": "你继续待着。", "summary": "待着。", "actor_questions": []}
+    qc_out = {"status": "pass", "prose": writer_out["prose"], "issues": []}
+    llm = _AuditBoomLLM({"玩家输入：": writer_out, "正文：": qc_out})
+    runner = _runner(session, llm, settings)
+    candidate = asyncio.run(runner.run_turn("继续待着"))
+    asyncio.run(runner.adopt(candidate.candidate_id))
+
+    assert [s.text for s in session.ledger.save.entities["刘星"].states] == ["沐浴龙血"]
+    change = session.ledger.save.last_state_change
+    assert change["added"] == [] and change["removed"] == []
+
+
+# ---------------------------------------------------------------------------
+# 角色状态 · 长期事实：玩家撤销（REQ 〇章；Step 2b，2026-09-14）
+# ---------------------------------------------------------------------------
+
+def _revoke(session, settings, state_id: str) -> bool:
+    runner = _runner(session, FakeLLM({"*": {}}), settings)
+    return runner.transaction.revoke_state(state_id)
+
+
+def _seed_change(session, **extra) -> dict:
+    """造一份"上一回合的变更留痕"——撤销把 revoked 记在它上面（真实场景里它总是存在）。
+
+    ``last_state_change`` 只可能是 None 的两种情况：从没采纳过任何回合、刚重置过；
+    那两种情况下面板也没有"本回合变化"可标灰，所以撤销只落记账事件（另测）。
+    """
+    change = {
+        "turn_id": "turn_probe",
+        "at": session.ledger.save.clock,
+        "added": [],
+        "removed": [],
+        "expired": [],
+        "skipped": [],
+        "revoked": [],
+    }
+    change.update(extra)
+    session.ledger.save.last_state_change = change
+    return change
+
+
+def test_revoke_removes_state_and_records_counter_event(session, settings):
+    """撤销 = 删条目 + 一条对冲记账事件（正文与事件日志不动，改的是运行态）。"""
+    item = _seed_state(session, "刘星", "沐浴龙血，普通刀剑伤不了他")
+    _seed_change(session)
+    session.ledger.persist_save()
+    assert _revoke(session, settings, item.id) is True
+
+    assert session.ledger.save.entities["刘星"].states == []
+    revoked = session.ledger.save.last_state_change["revoked"][0]
+    assert revoked["id"] == item.id and revoked["npc_id"] == "刘星"
+
+    ev = session.ledger.by_id[revoked["event_id"]]
+    assert ev["summary"] == "刘星状态撤销：沐浴龙血，普通刀剑伤不了他（玩家撤销）"
+    assert ev["source"] == "state"
+    assert ev["body"] == "" and ev["location"] is None
+    assert ev["participants"] == ["刘星"]
+    assert ev["known_by"] == ["刘星"]  # 记账事件的主体只有本人 + 玩家（无玩家时只有本人）
+
+
+def test_revoke_survives_reopen(session, settings):
+    """撤销是落盘的：重开存档后条目不复现、留痕还在。"""
+    item = _seed_state(session, "刘星", "左臂骨裂")
+    _seed_change(session)
+    session.ledger.persist_save()
+    _revoke(session, settings, item.id)
+
+    reopened = open_session(session.root)
+    assert "刘星" not in reopened.ledger.save.entities or (
+        reopened.ledger.save.entities["刘星"].states == []
+    )
+    assert reopened.ledger.save.last_state_change["revoked"][0]["id"] == item.id
+    assert any(e.get("source") == "state" for e in reopened.ledger.events)
+
+
+def test_revoke_records_into_an_old_change_without_the_revoked_key(session, settings):
+    """老存档的 last_state_change 没有 revoked 键 → setdefault 兜住，不能崩。"""
+    item = _seed_state(session, "刘星", "沐浴龙血")
+    session.ledger.save.last_state_change = {
+        "turn_id": "turn_old",
+        "at": session.ledger.save.clock,
+        "added": [],
+        "removed": [],
+        "expired": [],
+        "skipped": [],
+    }
+    session.ledger.persist_save()
+    assert _revoke(session, settings, item.id) is True
+    assert session.ledger.save.last_state_change["revoked"][0]["id"] == item.id
+
+
+def test_revoke_unknown_id_is_a_noop(session, settings):
+    """找不到就返回 False（API 据此答 404），不能静默成功、也不能落下半条留痕。"""
+    _seed_state(session, "刘星", "沐浴龙血")
+    _seed_change(session)
+    session.ledger.persist_save()
+    assert _revoke(session, settings, "st_不存在") is False
+    assert [s.text for s in session.ledger.save.entities["刘星"].states] == ["沐浴龙血"]
+    assert session.ledger.save.last_state_change["revoked"] == []
+    assert not [e for e in session.ledger.events if e.get("source") == "state"]
+
+
+def test_revoke_is_not_repeatable(session, settings):
+    """第二次撤同一条 → False（条目已经不在，别再落一条重复的"撤销"史实）。"""
+    item = _seed_state(session, "刘星", "沐浴龙血")
+    _seed_change(session)
+    session.ledger.persist_save()
+    assert _revoke(session, settings, item.id) is True
+    assert _revoke(session, settings, item.id) is False
+    assert len(session.ledger.save.last_state_change["revoked"]) == 1
+
+
+def test_revoked_state_leaves_the_writer_order(session, settings):
+    """撤销的实质效果：编剧此后不再认为他有（提示词里那一行消失）。"""
+    from app.core.workorder import build_work_order
+
+    item = _seed_state(session, "刘星", "沐浴龙血，普通刀剑伤不了他")
+    session.ledger.persist_save()
+    assert "沐浴龙血" in build_work_order(
+        "writer", session.world, session.ledger, session.ledger.current_scene()
+    )
+    _revoke(session, settings, item.id)
+    assert "沐浴龙血" not in build_work_order(
+        "writer", session.world, session.ledger, session.ledger.current_scene()
+    )
+
+
+def test_revoke_works_without_any_last_state_change(session, settings):
+    """存档里 last_state_change 为 None 时撤销也不能崩（老存档 / 刚重置过）。"""
+    item = _seed_state(session, "刘星", "沐浴龙血")
+    session.ledger.save.last_state_change = None
+    session.ledger.persist_save()
+    assert _revoke(session, settings, item.id) is True
+    assert session.ledger.save.entities["刘星"].states == []

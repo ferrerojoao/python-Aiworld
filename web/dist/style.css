@@ -1395,6 +1395,139 @@ body.light .rail-item.current {
   color: #111;
 }
 
+/* ---------- 角色状态 · 长期事实（Step 2b，2026-09-14） ---------- */
+
+/* 顶栏徽章：编剧这一轮实际读到的状态条数（恒显——没状态时也要能点进去查 NPC）。 */
+.state-badge {
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  border: 1px solid var(--warn);
+}
+
+.state-badge:hover {
+  background: var(--warn-bg);
+  opacity: 0.85;
+}
+
+/* 左侧栏「本回合变化」：只列最近一次采纳带来的增删。 */
+.st-when {
+  font-size: 11px;
+  color: var(--muted);
+  margin: -4px 0 6px;
+}
+
+.st-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.st-row.grey {
+  color: var(--muted);
+}
+
+.st-who {
+  flex: none;
+  color: var(--muted);
+}
+
+.st-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.st-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.st-tag {
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 3px;
+  white-space: nowrap;
+}
+
+.st-x {
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 3px;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.st-x:hover {
+  color: var(--danger);
+}
+
+/* 撤销的原地轻确认：点 × 变成「确认 / 取消」，不弹窗（见 app.js stRevoke）。 */
+.st-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.st-confirm button {
+  padding: 1px 6px;
+  font-size: 11px;
+  border-radius: 4px;
+}
+
+.st-confirm button.danger {
+  background: var(--danger);
+}
+
+.st-group {
+  margin-bottom: 14px;
+}
+
+.st-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.st-empty {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 2px;
+}
+
+.st-note {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  margin-top: 4px;
+}
+
+.states-hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 0 0 12px;
+}
+
+.states-hint b {
+  color: var(--text);
+  font-weight: 500;
+}
+
 /* ---------- 移动端 ---------- */
 @media (max-width: 720px) {
   #app {

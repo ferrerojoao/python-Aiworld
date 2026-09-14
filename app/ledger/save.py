@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from app.core.store import new_id
 from app.world.models import NarrativePreset
 
 
@@ -12,8 +13,44 @@ class SaveMeta(BaseModel):
     next_event_id: int = 1
 
 
+class StateItem(BaseModel):
+    """角色状态 · 长期事实（REQ 〇章「角色状态」；叙事事实类）。
+
+    "他此刻是什么"——沐浴龙血后免疫普通武器、独臂、病倒。**引擎一行都不读**
+    （唯一职能是让编剧与审计知道），所以它是纯文本事实，不是可结算的数值
+    （那是 ③ 抽象属性的活）。判据：新加属性先问"引擎会不会读它"——会 = 独立
+    字段（如 ``lifecycle``），不会 = 本类条目。
+
+    ``text`` 一行事实，直接进提示词；``source_event`` 是可追溯/可撤销的锚点
+    （哪条正文给的）；``public`` = **表现**是否对外可见（挨一刀没事路人看得见，
+    沐浴过龙血未必有人知道）——决定 NPC Actor 拿不拿；``until`` 到期失效
+    （"病倒三天"不是永久事实）。
+
+    **到期不再删条目**（2026-09-14 晚改）：失效时刻记进 ``expired_at``，条目留在
+    存档里——注入侧按它过滤，玩家在面板上仍看得见、仍撤得掉。旧行为（到点 pop 掉）
+    让"审计单方面给了期限"变成一条玩家无从追溯、也无从撤销的静默删除。
+
+    ``id``（2026-09-14 加）：审计**移除**状态时的精确定位（它看不见 id 就只会
+    按原文猜，"骨裂"与"左臂骨裂"必有一场误伤）。默认工厂保证手塞条目与旧存档
+    也有 id（pydantic 只在键缺失时调用工厂），所以**不需要迁移**。编剧侧不注入 id。
+    """
+
+    id: str = Field(default_factory=lambda: new_id("st"))
+    text: str = ""
+    since: str = ""  # 获得时的世界钟（ISO）
+    source_event: str = ""  # 哪条正文给的 → 可追溯 / 可撤销
+    public: bool = False  # 表现是否对外可见（NPC Actor 只拿 True 的）
+    until: str = ""  # 可选：到期失效（空 = 永久，直到审计结束或玩家撤销）
+    expired_at: str = ""  # 非空 = 已失效（失效时刻）；注入侧一律过滤，条目本身留着
+
+
 class EntityRuntime(BaseModel):
     lifecycle: str = "active"  # active | retired
+    # 角色状态 · 长期事实（2026-09-14）：**引擎开关类**只有上面那个 lifecycle
+    # （present_at 会读它）；这里是**叙事事实类**，只有 LLM 消费。两类不合并——
+    # 合并等于让 LLM 去猜"这条要不要影响引擎行为"。
+    # 存在存档而不是人物卡：与存档同生命周期，重置世界即清零。
+    states: list[StateItem] = Field(default_factory=list)
     # has_actor / persona 全部在存档的世界实例（world/）人物卡里，运行时只有一个开关
 
 
@@ -58,3 +95,8 @@ class SaveData(BaseModel):
     # （clock_before/after、delta_rule、delta_audit、source、对钟是否被拒），
     # 由 /state 透出给顶栏时钟 hover。诊断用，不参与任何逻辑判定。
     last_settlement: dict | None = None
+    # 最近一次采纳的角色状态变更（Step 2，2026-09-14）：added / removed / expired /
+    # skipped（含跳过原因）。误加一条长期事实的代价高（它会改变此后每一轮提示词），
+    # 所以"编剧为什么认为我免疫刀剑"必须查得出来。**只留最近一次**——完整历史在
+    # 事件流的记账事件里（每条状态变更都落一条，用 source_event 对得上）。
+    last_state_change: dict | None = None

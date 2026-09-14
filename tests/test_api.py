@@ -469,8 +469,14 @@ def test_world_browser_and_reset(tmp_path):
         put = client.put(f"/api/sessions/{sid}/world", json=world)
         assert put.status_code == 200
 
+        # 上面的 turn 采纳过候选 → 此刻应有结算留痕（否则下面那条断言会空过）。
+        assert client.get(f"/api/sessions/{sid}/state").json()["last_settlement"]
+
         reset = client.post(f"/api/sessions/{sid}/reset")
         assert reset.status_code == 200
+        # 结算留痕（诊断字段）必须随重置清空：留着的话顶栏时钟 hover 显示的
+        # 是重置前那一次的结算（时钟/依据档位全对不上，2026-09-14）。
+        assert client.get(f"/api/sessions/{sid}/state").json()["last_settlement"] is None
         events = client.get(f"/api/sessions/{sid}/ledger/events").json()["events"]
         # After a reset only the world's opening event remains.
         assert len(events) == 1
@@ -480,6 +486,103 @@ def test_world_browser_and_reset(tmp_path):
         world2 = client.get(f"/api/sessions/{sid}/world").json()
         assert world2["npcs"][npc_id]["persona"] == "重置后应保留的人设"
         assert any(e["id"] == "reset_probe" for e in world2["lorebook"])
+
+
+def test_state_exposes_states_and_change_trace(tmp_path):
+    """/state 透出角色状态与最近一次变更留痕；重置即清零（Step 2a，2026-09-14）。
+
+    后端是 A 档唯一的交付面（前端展现 / 撤销入口之后再做），所以这里的口径必须
+    钉死：`id` 一定要露（撤销靠它精确定位）、`public` 一定要露（展现时区分表现）、
+    `last_state_change` 一定要露（长期事实误加的代价高，得查得出原因）。
+    """
+    from app.ledger.save import EntityRuntime, StateItem
+
+    with _make_client(tmp_path) as client:
+        r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
+        sid = r.json()["sid"]
+
+        state = client.get(f"/api/sessions/{sid}/state").json()
+        assert state["states"] == {}
+        assert state["last_state_change"] is None
+
+        session = client.app.state.sessions[sid]
+        player = session.world.player_name()
+        session.ledger.save.entities[player] = EntityRuntime(
+            states=[
+                StateItem(
+                    text="沐浴龙血，普通刀剑伤不了他",
+                    since="2001-07-10T08:00:00",
+                    source_event="ev_00001",
+                    public=False,
+                )
+            ]
+        )
+        session.ledger.save.last_state_change = {
+            "turn_id": "turn_probe",
+            "at": "2001-07-10T08:00:00",
+            "added": [],
+            "removed": [],
+            "expired": [],
+            "skipped": [],
+        }
+        session.ledger.persist_save()
+
+        state = client.get(f"/api/sessions/{sid}/state").json()
+        item = state["states"][player][0]
+        assert item["text"] == "沐浴龙血，普通刀剑伤不了他"
+        assert item["id"].startswith("st_")  # 撤销靠这个 id，不能省
+        assert item["public"] is False
+        assert item["source_event"] == "ev_00001"  # 可追溯到"哪条正文给的"
+        assert state["last_state_change"]["turn_id"] == "turn_probe"
+
+        client.post(f"/api/sessions/{sid}/reset")
+        state = client.get(f"/api/sessions/{sid}/state").json()
+        # 重置世界即清零：这个世界重玩一遍，龙血也该重新喝。
+        assert state["states"] == {}
+        assert state["last_state_change"] is None
+
+
+def test_revoke_state_route(tmp_path):
+    """撤销接口（Step 2b）：删条目 + 落对冲记账事件；重复撤 → 404。"""
+    from app.ledger.save import EntityRuntime, StateItem
+
+    with _make_client(tmp_path) as client:
+        r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
+        sid = r.json()["sid"]
+        session = client.app.state.sessions[sid]
+        player = session.world.player_name()
+
+        # 空存档：面板只给主角一个空条目（他永远在场，且要能显示"此刻没有任何状态"）。
+        view = client.get(f"/api/sessions/{sid}/state").json()["state_view"]
+        assert [v["name"] for v in view] == [player]
+        assert view[0]["is_player"] is True and view[0]["visible"] == []
+
+        session.ledger.save.entities[player] = EntityRuntime(
+            states=[StateItem(text="沐浴龙血，普通刀剑伤不了他", public=False)]
+        )
+        session.ledger.persist_save()
+
+        state = client.get(f"/api/sessions/{sid}/state").json()
+        assert state["player_name"] == player  # 面板要单列主角
+        entry = state["state_view"][0]
+        assert [it["text"] for it in entry["visible"]] == ["沐浴龙血，普通刀剑伤不了他"]
+        item_id = entry["visible"][0]["id"]
+
+        assert (
+            client.post(f"/api/sessions/{sid}/states/{item_id}/revoke").status_code == 200
+        )
+        state = client.get(f"/api/sessions/{sid}/state").json()
+        assert state["states"] == {}
+        assert state["state_view"][0]["visible"] == []
+        events = client.get(f"/api/sessions/{sid}/ledger/events").json()["events"]
+        assert any(
+            e.get("source") == "state" and "（玩家撤销）" in (e.get("summary") or "")
+            for e in events
+        )
+        # 已撤销的条目再撤一次 → 404，不做静默成功。
+        assert (
+            client.post(f"/api/sessions/{sid}/states/{item_id}/revoke").status_code == 404
+        )
 
 
 def test_world_start_time_roundtrip(tmp_path):
@@ -1086,3 +1189,102 @@ def _turn_id_from_sse(text: str) -> str:
 
                     return json.loads(line[5:].strip())["turn_id"]
     raise AssertionError("candidate event not found")
+
+
+def _confirm(client, sid, action):
+    return client.post(f"/api/sessions/{sid}/director", json={"topic": "confirm", "action": action})
+
+
+def test_director_state_add_and_revoke(tmp_path):
+    """导演窗口手动增/撤状态（Step 2c，2026-09-14）。
+
+    玩家原本只有"审计提出 → 我撤销"这条单向链：审计漏报时他毫无补救手段。
+    这两个动作补上另一半——"我要它存在"和"我要它不存在"都由玩家拍板。
+    撤销刻意复用同一个 revoke_state，所以留痕、"（玩家撤销）"文案与抽屉里的 ×
+    完全一致（同一个动作，不该有两套痕迹）。
+    """
+    with _make_client(tmp_path) as client:
+        sid = client.post(
+            "/api/sessions", json={"world_id": "qinghsi", "save_name": "main"}
+        ).json()["sid"]
+
+        add = _confirm(
+            client,
+            sid,
+            {
+                "type": "state_add",
+                "payload": {"npc_id": "朱明", "text": "左腿摔伤，走路瘸", "public": True},
+            },
+        )
+        assert add.status_code == 200
+        item = add.json()["state"]
+        assert item["text"] == "左腿摔伤，走路瘸"
+        assert item["public"] is True and item["expired_at"] == ""
+
+        # 面板立刻看得到（带 id → 抽屉里就能撤）。
+        state = client.get(f"/api/sessions/{sid}/state").json()
+        entry = next(v for v in state["state_view"] if v["name"] == "朱明")
+        assert [it["id"] for it in entry["visible"]] == [item["id"]]
+
+        # 守卫只管格式与归属：空文本 400 / 不在人物表 404 / 重复 400。
+        for payload, code in [
+            ({"npc_id": "朱明", "text": "   "}, 400),
+            ({"npc_id": "查无此人", "text": "腿伤"}, 404),
+            ({"npc_id": "朱明", "text": "左腿摔伤，走路瘸"}, 400),
+        ]:
+            bad = _confirm(client, sid, {"type": "state_add", "payload": payload})
+            assert bad.status_code == code, payload
+
+        rev = _confirm(
+            client, sid, {"type": "state_revoke", "payload": {"state_id": item["id"]}}
+        )
+        assert rev.status_code == 200 and rev.json()["state_id"] == item["id"]
+
+        # 再撤一次 → 404：不做静默成功。
+        assert (
+            _confirm(
+                client, sid, {"type": "state_revoke", "payload": {"state_id": item["id"]}}
+            ).status_code
+            == 404
+        )
+
+        events = client.get(f"/api/sessions/{sid}/ledger/events").json()["events"]
+        assert any(
+            e["summary"] == "朱明获得状态：左腿摔伤，走路瘸（玩家设定）" for e in events
+        )
+        assert any(
+            e["summary"] == "朱明状态撤销：左腿摔伤，走路瘸（玩家撤销）" for e in events
+        )
+
+
+def test_director_state_revoke_falls_back_to_npc_and_text(tmp_path):
+    """抄错 id 的退路：{npc_id, text} 做**精确文本**匹配。
+
+    不做模糊匹配——"骨裂"与"左臂骨裂"必须分得开，猜错就是撤掉另一条事实。
+    """
+    with _make_client(tmp_path) as client:
+        sid = client.post(
+            "/api/sessions", json={"world_id": "qinghsi", "save_name": "main"}
+        ).json()["sid"]
+        _confirm(
+            client, sid, {"type": "state_add", "payload": {"npc_id": "朱明", "text": "左臂骨裂"}}
+        )
+
+        # 文本不完全一致 → 404（不猜）。
+        miss = _confirm(
+            client,
+            sid,
+            {"type": "state_revoke", "payload": {"npc_id": "朱明", "text": "骨裂"}},
+        )
+        assert miss.status_code == 404
+
+        hit = _confirm(
+            client,
+            sid,
+            {"type": "state_revoke", "payload": {"npc_id": "朱明", "text": "左臂骨裂"}},
+        )
+        assert hit.status_code == 200
+
+        # 两个字段都不给 → 400。
+        bare = _confirm(client, sid, {"type": "state_revoke", "payload": {}})
+        assert bare.status_code == 400

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AIWorld</title>
-  <link rel="stylesheet" href="style.css?v=55" />
+  <link rel="stylesheet" href="style.css?v=56" />
 </head>
 <body>
   <div id="app">
@@ -17,6 +17,8 @@
       <div id="present-npcs"></div>
       <h2>剧情目标</h2>
       <ul id="state-goals"></ul>
+      <!-- 本回合变化（Step 2b）：只列最近一次采纳带来的状态增删，空则整个分区不出现 -->
+      <div id="state-change" hidden></div>
     </aside>
 
     <!-- 主区域：顶栏 + 聊天 + 输入 -->
@@ -25,6 +27,7 @@
         <span id="world-name">-</span>
         <span id="clock">-</span>
         <span id="scene">-</span>
+        <button id="state-badge" class="state-badge" title="当前角色状态（编剧这一轮读到的条数）——点击查看与撤销">状态 0</button>
         <div class="topbar-actions">
           <button id="open-world">世界工作台</button>
           <button data-tab="director">导演</button>
@@ -53,8 +56,9 @@
         <span>面板</span>
         <button id="close-drawer">✕</button>
       </div>
-      <div class="drawer-tabs">
+        <div class="drawer-tabs">
         <button class="tab active" data-tab="director">导演</button>
+        <button class="tab" data-tab="states">状态</button>
         <button class="tab" data-tab="preset">预设</button>
         <button class="tab" data-tab="debug">调试</button>
         <button class="tab" data-tab="settings">设置</button>
@@ -68,6 +72,14 @@
           <input id="director-input" type="text" placeholder="和导演讨论剧情…" autocomplete="off" />
           <button type="submit">发送</button>
         </form>
+      </div>
+
+      <div id="tab-states" class="tab-panel">
+        <h3>角色状态</h3>
+        <p class="states-hint">
+          长期事实（沐浴龙血 / 独臂 / 病倒）：编剧与审计据此成文。<b>灰显 = 编剧这一轮看不到</b>（超出注入上限 / 不在场 / 已到期），撤销或清理后立刻恢复。想<b>手动加一条</b>、或撤掉不在场者的某条，到导演窗口（OOC）说一句即可。
+        </p>
+        <div id="states-panel"></div>
       </div>
 
       <div id="tab-preset" class="tab-panel">
@@ -191,6 +203,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=67"></script>
+  <script src="app.js?v=69"></script>
 </body>
 </html>

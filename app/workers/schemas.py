@@ -98,3 +98,15 @@ class AuditOutput(BaseModel):
         default="",
         validation_alias=AliasChoices("clock_to", "目标时间", "对钟", "绝对时间"),
     )
+    # 角色状态 · 长期事实（REQ 〇章；Step 2，2026-09-14）。
+    # 两个字段都用**宽松的裸 list**：一条格式歪掉的条目不该让整次审计结算失败
+    # （validation 失败 → audit_error → 时间/位置/目标全部落不了地）。
+    # 具体归一只在 Transaction 落地时做（形状不对的条目进 skipped 留痕）。
+    state_add: list = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("state_add", "states_add", "新增状态", "状态新增"),
+    )
+    state_remove: list = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("state_remove", "states_remove", "移除状态", "状态移除"),
+    )

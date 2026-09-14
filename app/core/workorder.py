@@ -53,11 +53,232 @@ def world_summary_block(world: WorldContent) -> list[str]:
     ]
 
 
-def character_block(world: WorldContent, ledger: Ledger, present_ids: list[str], include_ids: bool = False) -> list[str]:
-    """主角资料 + 在场 NPC 名片（含 Actor 档位标注，可选附带 id）。
+# ---------------------------------------------------------------------------
+# 角色状态 · 长期事实（REQ 〇章「角色状态」，2026-09-14）
+# ---------------------------------------------------------------------------
+#
+# "他此刻是什么"（沐浴龙血后免疫普通武器 / 独臂 / 病倒）：引擎一行都不读，
+# 唯一职能是**让编剧与审计知道**。与 lifecycle 的分界 = 引擎会不会读它——
+# 所以两类不合并（合并等于让 LLM 去猜"这条要不要影响引擎行为"）。
+#
+# 位置：紧贴该角色的人物卡行（主角在「玩家资料」段，NPC 在他自己那行之后）。
+# 空 = 整块不出现，零成本；不带任何规则等级抬头（与事件日志同性质的资料）。
+
+STATE_CAP_PLAYER = 6  # 主角状态上限
+STATE_CAP_NPC = 3  # 每个在场 NPC 的状态上限
+STATE_TEXT_MAX = 30  # 单条状态的字数上限（审计提议侧同时用它截断，单一事实源）
+STATE_ADD_PER_CHAR = 1  # 同一角色单回合最多新增几条（防"给同一个人一口气编一串"）
+# 截断按**录入顺序**（重要的往上放），与 rules.lorebook 归属条目的口径一致——
+# 不按时间排：重要的状态未必是最新的（"天生盲眼"比"今天擦伤膝盖"重要得多）。
+# 被截断时**必须显式说明**（"另有 N 条未列出"）：静默消失会让玩家困惑
+# "我明明沐浴了龙血"，也让编剧以为不存在。
+
+
+def _visible_items(entities: dict, name: str, cap: int) -> tuple[list, int]:
+    """取该角色要注入的状态条目（按录入顺序截断）+ 未列出的条数。
+
+    **已失效的条目一律不算**（``expired_at`` 非空 = 到期了）：它们仍留在存档里
+    供玩家查看与撤销，但编剧与本轮审计都读不到——"到期"要真的让它停止影响正文。
+    """
+    runtime = entities.get(name)
+    items = [
+        it
+        for it in (runtime.states if runtime else [])
+        if (it.text or "").strip() and not it.expired_at
+    ]
+    return items[:cap], max(0, len(items) - cap)
+
+
+def _item_text(item) -> str:
+    """单条状态的人话（带可选到期日）。"""
+    text = (item.text or "").strip()
+    return f"{text}（至 {item.until[:10]}）" if item.until else text
+
+
+def state_line(entities: dict, name: str, cap: int, label: str = "") -> str:
+    """某角色的一行状态（编剧侧用的合并形态）；无状态返回空串。
+
+    只吐 ``text``（外加 ``until`` 的到期日提示）——``source_event`` 与 ``public``
+    是给机器看的（可追溯、可见性过滤），不进提示词；``id`` 只在审计侧露
+    （``states_block(include_ids=True)``），因为只有审计需要按 id 精确移除。
+
+    ``label`` 只用于抬头（主角在编剧工作单里叫「主角」，与紧邻的人物卡行成对；
+    其余一律用角色中文名——审计工作单通篇用中文名）。
+    """
+    items, hidden = _visible_items(entities, name, cap)
+    if not items:
+        return ""
+    line = f"[{label or name}] 状态：{'；'.join(_item_text(it) for it in items)}"
+    if hidden:
+        line += f"（另有 {hidden} 条状态未列出）"
+    return line
+
+
+def states_block(
+    ledger: Ledger, present_ids: list[str], include_ids: bool = False
+) -> list[str]:
+    """角色状态块（审计侧；编剧侧由 ``character_block`` 逐人贴身渲染）。
+
+    名单 = 主角 + 在场者（去重）。全空则返回空列表（零成本，与 ``active_lore_block``
+    同一口径）。为主角保留更高上限：``states`` 的主用户就是主角。
+
+    ``include_ids=True``（审计）：**一条一行**并露出 ``[st_xxx]``——审计要靠它
+    移除状态（不吐 id 就只剩按原文猜，"骨裂"与"左臂骨裂"必有一场误伤）。
+    """
+    player = ledger.world.player_name()
+    names: list[str] = []
+    for name in [player, *present_ids]:
+        if name and name not in names:
+            names.append(name)
+    lines: list[str] = []
+    for name in names:
+        cap = STATE_CAP_PLAYER if name == player else STATE_CAP_NPC
+        items, hidden = _visible_items(ledger.save.entities, name, cap)
+        if not items:
+            continue
+        if include_ids:
+            lines.extend(f"[{name}] [{it.id}] {_item_text(it)}" for it in items)
+        else:
+            lines.append(f"[{name}] 状态：{'；'.join(_item_text(it) for it in items)}")
+        if hidden:
+            lines.append(f"（{name} 另有 {hidden} 条状态未列出）")
+    if not lines:
+        return []
+    head = (
+        "角色状态（长期事实，正文必须与之自洽；方括号内为状态 id，移除时引用它）："
+        if include_ids
+        else "角色状态（长期事实，正文必须与之自洽）："
+    )
+    return [head, *lines]
+
+
+def state_view(ledger: Ledger, present_ids: list[str], full: bool = False) -> list[dict]:
+    """状态面板的数据（Step 2b，2026-09-14）：按角色分组的**当前全量**视图。
+
+    给前端用的，但**刻意由引擎侧生成**——复用的就是注入提示词的那一套（同一组
+    cap、同一条"已失效不算"的过滤），所以面板上"编剧能看到哪几条"与提示词
+    字面同源，不会各写一份然后漂移。
+
+    与 ``states_block`` 的三处不同（都是刻意的）：
+      · **全量而非在场**：玩家查"朱明身上还有没有旧伤"时他可能不在场——所以
+        不在场者也在列，只是 ``present=False``（前端灰显 + 注明"编剧本轮看不到"）。
+      · ``hidden`` 单独给（**条目本身，不只是条数**）：超出 cap 的条目在面板里
+        灰显 + 注明"编剧看不到"，玩家据此清理——否则玩家会误以为编剧知道全部，
+        也找不到该撤哪条来腾格子。**只对会注入的人（主角 + 在场者）才有截断**：
+        不在场 / 已退场者不注入，对他们截断会说出错误的原因（"超出上限" vs
+        "他不在场"），所以他们的条目一律全给，由前端整组灰显 + 组头标签说明。
+      · ``expired`` 另起一个桶（2026-09-14 晚加）：``until`` 已到、被标记失效的
+        条目。它们**不进 visible / hidden**（编剧读不到），但仍留在面板上、仍带
+        撤销入口——旧语义（到点直接删）会让玩家想撤都没有对象。
+
+    ``full=True``（导演窗口用）：**不截断**，所有未失效条目都进 ``visible``、
+    ``hidden`` 恒空。导演要撤"被上限藏起来的那条"，看不见就无从下手。
+
+    顺序 = 主角 → 在场 → 不在场 → 已退场（后端定序，前端照渲染即可，排序规则
+    只有这一处）。无状态的**在场/主角**也返回（空列表）——目的是让面板能显示
+    "这个人此刻没有任何状态"；而从未在册的角色（既无状态又不在场）不返回。
+    """
+    player = ledger.world.player_name()
+    present = {n for n in present_ids if n}
+    names: list[str] = []
+    for name in (
+        [player]
+        + [n for n in present if n != player]
+        + [n for n in ledger.save.entities if n != player and n not in present]
+    ):
+        if name and name not in names:
+            names.append(name)
+    view: list[dict] = []
+    for name in names:
+        runtime = ledger.save.entities.get(name)
+        retired = bool(runtime and runtime.lifecycle == "retired")
+        is_player = name == player
+        # 主角 = 镜头本人，永远在场；调用方传进来的 present_ids 通常已把他剔掉
+        # （左侧栏"在场"不该列玩家自己），面板不跟着那个口径走。
+        in_present = is_player or name in present
+        all_items = [
+            it for it in (runtime.states if runtime else []) if (it.text or "").strip()
+        ]
+        dead = [it for it in all_items if it.expired_at]
+        live = [it for it in all_items if not it.expired_at]
+        if in_present and not full:
+            cap = STATE_CAP_PLAYER if is_player else STATE_CAP_NPC
+            items, rest = live[:cap], live[cap:]
+        else:
+            # cap 是**注入上限**，只对"这一轮真的会注入"的人有意义（主角 + 在场者）。
+            # 不在场 / 已退场者压根不注入，对他们截断只会造出假的"超上限"分层
+            # ——面板会说"这几条超出注入上限"，而真实原因是"他不在场"。所以全给。
+            items, rest = live, []
+        # 不在场（含已退场）且**连失效条目都没有**的角色不进面板——列出来只是噪音；
+        # 有失效条目的必须进：否则那条永远撤不掉（面板是唯一的撤销入口）。
+        if not items and not dead and not (is_player or in_present):
+            continue
+        view.append(
+            {
+                "name": name,
+                "is_player": is_player,
+                "present": in_present,
+                "retired": retired,
+                "visible": [it.model_dump() for it in items],
+                "hidden": [it.model_dump() for it in rest],
+                "expired": [it.model_dump() for it in dead],
+            }
+        )
+    return view
+
+
+def director_states_block(ledger: Ledger, present_ids: list[str]) -> list[str]:
+    """导演侧的状态**操作清单**（Step 2c）：全量、不截断、逐条一行带 ``[st_xxx]``。
+
+    为什么复用 ``state_view(full=True)`` 而不是另写一遍：面板上玩家看到的 id 与
+    导演窗口里模型看到的 id 必须**逐字一致**——玩家说"撤掉朱明那条腿伤"，导演要
+    填的就是面板上那个 id。两处各算一遍迟早漂移。
+
+    为什么要全量：撤一条**被注入上限藏起来**的状态（面板上灰显的那些）时，
+    只给"能注入的几条"就等于让导演无从下手。
+
+    已失效的条目也列出来（标「已到期」）——它们还能被撤掉，撤掉才算真清干净。
+    """
+    lines: list[str] = []
+    for entry in state_view(ledger, present_ids, full=True):
+        marks: list[str] = []
+        if entry["retired"]:
+            marks.append("已退场")
+        elif not entry["present"]:
+            marks.append("不在场")
+        head = f"[{entry['name']}]" + (f"（{'、'.join(marks)}）" if marks else "")
+        rows: list[str] = []
+        for it in entry["visible"]:
+            tail = "（已到期）" if it["expired_at"] else (
+                f"（至 {it['until'][:10]}）" if it["until"] else ""
+            )
+            rows.append(f"  [{it['id']}] {it['text']}{tail}")
+        for it in entry["expired"]:
+            rows.append(f"  [{it['id']}] {it['text']}（已到期）")
+        if rows:
+            lines.append(head)
+            lines.extend(rows)
+    return lines
+
+
+def character_block(
+    world: WorldContent,
+    ledger: Ledger,
+    present_ids: list[str],
+    include_ids: bool = False,
+    with_states: bool = True,
+) -> list[str]:
+    """主角资料 + 在场 NPC 名片（含 Actor 档位标注，可选附带 id）+ 各人状态行。
 
     主角与 NPC 分两段（2026-09-13 主角入人物表后仍保留）：主角是对话对象，
     有独立视角，混在"在场 NPC"里读起来会像第三方。主角卡在 NPC 段被跳过。
+
+    状态行（2026-09-14）紧贴本人卡片行：主角在「玩家资料」段后、NPC 在各自行后。
+
+    ``with_states=False``（导演窗口用，2026-09-14 晚加）：导演另有一份**全量带 id
+    的操作清单**（``director_states_block``），这里再渲染一遍会出问题——两份口径
+    不同（这里套 cap、只给在场者），现场会出现"名片上 3 条、清单上 5 条"的分歧。
+    所以导演侧关掉这里的状态行，状态只从那一处出现。
     """
     player = world.player()
     player_name = world.player_name()
@@ -69,6 +290,12 @@ def character_block(world: WorldContent, ledger: Ledger, present_ids: list[str],
         )
     else:
         lines.append(f"[主角] 名字：{player_name}；外貌：未设定；人格：未设定")
+    if with_states:
+        player_state = state_line(
+            ledger.save.entities, player_name, STATE_CAP_PLAYER, label="主角"
+        )
+        if player_state:
+            lines.append(player_state)
     npc_lines = []
     for pid in present_ids:
         if pid == player_name:
@@ -79,6 +306,10 @@ def character_block(world: WorldContent, ledger: Ledger, present_ids: list[str],
             npc_lines.append(
                 f"[{npc.id}]{ticket} 外貌：{npc.appearance or '未设定'}；人格：{npc.persona or '未设定'}"
             )
+            if with_states:
+                npc_state = state_line(ledger.save.entities, npc.id, STATE_CAP_NPC)
+                if npc_state:
+                    npc_lines.append(npc_state)
         else:
             npc_lines.append(f"[{pid}]")
     if npc_lines:
@@ -633,7 +864,16 @@ def build_director_chat_system(
     parts += known_set_block(world, ledger, present_ids, scene_id)
     parts += active_lore_block(ledger, present_ids)
     parts += private_notes_block(world, ledger, present_ids)
-    parts += character_block(world, ledger, present_ids, include_ids=True)
+    # with_states=False：状态改由下面那份全量带 id 的清单统一给（见
+    # director_states_block 的说明——两处口径不同会现场打架）。
+    parts += character_block(world, ledger, present_ids, include_ids=True, with_states=False)
+
+    state_rows = director_states_block(ledger, present_ids)
+    if state_rows:
+        parts += [
+            "角色状态（长期事实；方括号内为状态 id，撤销时引用它）：",
+            *state_rows,
+        ]
 
     parts += [
         # action 的触发条件只在下方"输出字段"一节说一次（2026-09-12 去冗余）：
@@ -649,12 +889,19 @@ def build_director_chat_system(
         "设立大目标不需要 big_goal_id（层级只有一层）",
         "- 角色退场 retire：玩家要求某人永久退场（死亡/远行/消失，不再出现在任何场景）→ payload {npc_id}；"
         "不可逆，退场者从此退出在场推导与主动调度",
+        "- 状态新增 state_add：玩家要求给某人加一条状态（长期事实）→ payload {npc_id, text, until?, public?}；"
+        "text 一行不超过 30 字，写「他此刻是什么」而不是「发生了什么」；until 只在玩家说了明确期限时填（如「三天」→ 当前时间 +3 天的 ISO 时刻），否则留空；"
+        "public = 这个状态的外在表现是否旁人看得出来（左腿瘸了 = true，其实色盲 = false），默认 false",
+        "- 状态撤销 state_revoke：玩家要求撤掉某人的某条状态 → payload {state_id}（上方清单里的方括号 id，逐字照抄）；"
+        "找不到 id 时退而给 {npc_id, text}（text 与清单逐字一致）；撤销删掉这条长期事实并留痕，正文与事件日志不动",
         "（人物卡编辑、Actor 档位、转正/场景注册一律由世界工作台直接编辑，不走导演窗口。）",
-        "纪律：action 是一份提案——玩家确认之后才生效。",
+        "纪律：action 是一份提案——玩家确认之后才生效。"
+        "state_add 与 state_revoke 由玩家明确要求时才提（这是玩家在改自己的世界，你不需要替他去正文里找理由）；"
+        "语义上像前史也没关系——玩家说了算，不要因为「这条不算长期事实」而拒绝。",
         "讨论剧情时，若结论明确，最后给一句简短的输入建议（玩家可直接复制进正文框）。",
         "",
         "输出必须是 JSON 对象，字段：",
-        '{"reply": "你的回复文本（直接回答玩家，必填）", "action": null | {"type": "override|inject_memory|access_rejudge|set_goal|retire", "payload": {"字段": "值"}}}',
+        '{"reply": "你的回复文本（直接回答玩家，必填）", "action": null | {"type": "override|inject_memory|access_rejudge|set_goal|retire|state_add|state_revoke", "payload": {"字段": "值"}}}',
         "reply：给玩家的戏外回复。",
         "action：只有当玩家明确要求执行幕后操作时才填；否则为 null。",
         "注意：payload 里的 npc_id / subject 用角色中文名（与在场名单/角色资料逐字一致）。",
@@ -670,7 +917,7 @@ def build_audit_work_order(
 
     The audit infers time advance, location, presence, privacy and one-shot
     vs registered scenes from the narrative, then judges goal completion
-    (M14 剧情目标) and lifecycle.
+    (M14 剧情目标)、生命周期，以及**角色状态的获得与结束**（Step 2，2026-09-14）。
 
     ``settle_hint``：规则侧已按玩家明示意图定好的绝对时刻。告知审计是为了
     消除"规则推一次、审计再估一次"的双重计费（2026-09-14）。
@@ -691,6 +938,27 @@ def build_audit_work_order(
         if settle_hint
         else []
     )
+    state_lines = [
+        "- state_add：只收**长期事实**——这个角色**此刻是什么**（体质 / 伤残 / 长期病症 / "
+        "能力 / 身份处境）。先自问一句：**过几天、几十轮回头看，这条还成立吗？**"
+        "这一场戏结束就没了 → 不要写。",
+        "  **不算状态的，一律不要输出**："
+        "① 消息、情报、听说的别人的事（\"听说她妈住院了\"\"他昨天被打了\"）——"
+        "那是**事件**，事件日志已经记了；要长期追踪这条线请走**剧情目标**，不要塞进状态。"
+        "② 一次性的当下（心情不好 / 手上沾了泥 / 手里拿着棍子）——随时会变，不是\"他是什么\"。"
+        "③ 某个角色自己的隐秘或前史（\"他爸欠了债\"）——那是**人物卡**的事，不是状态。",
+        "  只填正文**已经写成事实**的变化，不写意图、不写别人的评价"
+        "（\"想变强\"\"听说他很厉害\"都不算）。**拿不准 → 空数组**：状态会常年挂在"
+        "后面每一轮的提示词里，宁缺勿滥。",
+        f"  同一角色本回合最多 {STATE_ADD_PER_CHAR} 条；text 不超过 {STATE_TEXT_MAX} 字、"
+        "写成事实（\"沐浴龙血，普通刀剑伤不了他\"）。能说清持续终点的给 until"
+        "（\"病倒三天\" → 按当前时间往后推的日期），长期成立的留空——"
+        "**若你说不出这能量到一个日子以后，多半它本来就不该是状态**。"
+        "public 指这条状态的**表现**会不会被旁人看出来"
+        "（当众挨一刀没事 → true；体内有龙血 → false）。",
+        "- state_remove：正文明确写出某个**已有状态结束**（伤好了 / 毒解了 / 失去了能力）时，"
+        "给出下「角色状态」清单里对应的方括号 id；拿不准就给空数组（宁可留着，不要误删）。",
+    ]
     return "\n".join(
         [
             "你是 AIWorld 的世界审计：玩家采纳一条正文后，你从正文里结算世界的副作用，并判定剧情目标与生命周期。",
@@ -699,9 +967,12 @@ def build_audit_work_order(
             f' "participants": ["{player_name}", "朱明"], "private": false, "delta_minutes": 0,'
             ' "npc_moves": [{"npc_id": "朱明", "location": "朱明家"}],'
             ' "clock_to": "",'
-            ' "completed_goal_ids": ["达成目标id"], "lifecycle": [{"npc_id": "朱明", "status": "retired"}]}',
+            ' "completed_goal_ids": ["达成目标id"], "lifecycle": [{"npc_id": "朱明", "status": "retired"}],'
+            ' "state_add": [{"npc_id": "刘星", "text": "沐浴龙血，普通刀剑伤不了他", "public": true, "until": ""}],'
+            ' "state_remove": ["st_3f2a91c04d7e"]}',
             "判定规则：",
             *settle_lines,
+            *state_lines,
             "- location：正文里玩家此刻所在之处。玩家在正文中明确移动（离开/去别处/回家）时更新，否则保持当前场景。",
             "- participants（与 location 联动，二选一）：",
             "  · 玩家**没移动**：以工作单给出的在场名单为**默认基线**——正文没有明确的进出场就原样继承整份名单；"
@@ -742,6 +1013,10 @@ def build_audit_work_order(
             "当前时间：" + (ledger.save.clock or "-"),
             "当前场景：" + (scene.id if scene else scene_id),
             "在场：" + ("、".join(names) or "暂无"),
+            # 角色状态（2026-09-14）：不注入的话审计会判出与状态自相矛盾的
+            # 结论（玩家免疫普通武器，正文却写他被砍成重伤）。带 id——移除状态
+            # 要靠 id 精确定位（Step 2）。
+            *states_block(ledger, present_ids, include_ids=True),
             "已注册场景：location 用下列中文名（id 即中文名）；未注册的新地点同样给中文名（与场景表风格一致）：" + (scene_list or "（无）"),
             "活动目标：",
             *audit_goals_lines(ledger),

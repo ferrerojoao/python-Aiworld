@@ -7,6 +7,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -16,10 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.config import get_settings
 from app.core.llm import LLMGateway
 from app.core.presets import load_global_preset
-from app.runtime.session import create_session
+from app.runtime.session import open_session
 from app.runtime.turn import TurnRunner
 
-WORLD = Path(__file__).resolve().parent.parent / "content" / "qinghsi"
+WORLD = Path(__file__).resolve().parent.parent / "content" / "qingshi2"
 
 
 async def main() -> None:
@@ -27,7 +28,10 @@ async def main() -> None:
     preset = load_global_preset(settings.data_dir / "presets.json")
 
     with tempfile.TemporaryDirectory() as td:
-        session = create_session(WORLD, td, "smoke")
+        # 始终在副本上跑：世界=存档 1:1，直接在 content/ 下开 session 会污染真实存档。
+        world = Path(td) / WORLD.name
+        shutil.copytree(WORLD, world)
+        session = open_session(world)
         llm = LLMGateway(
             base_url=settings.llm_base_url,
             api_key=settings.llm_api_key,
