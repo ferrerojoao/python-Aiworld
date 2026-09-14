@@ -10,8 +10,32 @@ from app.core.store import new_id, write_json_atomic
 from app.ledger.queries import Ledger
 
 
+# 单回合审计估时长的保险丝（分钟）：审计偶尔把"聊天里提到时间"当成时间流逝，
+# 不截断会静默漂移。24 小时——睡觉（480）过半，"睡两天"这类要被截到一天。
+AUDIT_DELTA_CAP_MINUTES = 1440
+
+
+def _parse_clock(value: str | None) -> dt.datetime | None:
+    """宽松解析存档时钟；解析失败返回 None（由调用方决定拒绝还是兜底）。
+
+    带时区的串一律拍成 naive：故事时钟是架空世界的本地墙钟，不参与跨时区
+    换算；若不统一，下面 `target < base` 的比较会抛 TypeError（naive vs aware）。
+    """
+    if not value:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        return None
+    return parsed.replace(microsecond=0, tzinfo=None)
+
+
 class SideEffects(BaseModel):
-    delta_minutes: int = 0
+    delta_minutes: int = 0  # 旧字段：只剩磁盘上的历史候选还在用（规则侧已改走 settle_to）
+    # 规则侧的跳时意图：**绝对时刻**（ISO）。产出时刻而不是时长，是为了让"次日"
+    # 这类意图不被当前钟点污染，也从结构上避免与审计估时长叠加（2026-09-14）。
+    settle_to: str = ""
+    settle_label: str = ""  # 人话标签，供提示词与诊断
     narrative: dict | None = None
     events: list[dict] = Field(default_factory=list)
     axes: dict[str, int] = Field(default_factory=dict)  # 二期预留
@@ -110,48 +134,113 @@ class Transaction:
     async def commit(self, candidate_id: str, *, audit) -> None:
         """Adopt a candidate.
 
-        Rule-solved effects (move/jump delta, destination) come from the
-        candidate; prose-semantic effects (time/location/presence/privacy,
-        scene registration, goals, lifecycle) come from the audit inference
-        — the audit runs here as the single settlement point and writes
-        nothing itself; this method applies its result.
+        规则侧（候选落盘的 pre-solve）：移动目的地 + 跳时的**绝对时刻**
+        （``side_effects.settle_to``）。正文语义副作用（时间/在场/私密、场景注册、
+        目标、生命周期）来自审计推断——审计在采纳这一刻作为**唯一结算点**运行，
+        它自己什么都不写，由本方法落地。
+
+        时间结算走一条五档优先级链（见下方注释），delta 只可能被加一次；整条链
+        的留痕写进 ``save.last_settlement``（P1 可观测性，顶栏时钟 hover 可见）。
         """
         candidate = self.candidates.load(candidate_id)
         if candidate is None:
             raise KeyError(f"candidate not found: {candidate_id}")
 
         audit_out = None
+        audit_error: str | None = None
         if audit is not None:
             try:
                 audit_out = await audit(candidate)
             except Exception as exc:  # noqa: BLE001
                 # Audit failure must not roll back the adopt nor stay silent.
-                self.ledger.save.audit_last_error = f"{type(exc).__name__}: {exc}"
+                audit_error = f"{type(exc).__name__}: {exc}"
+                self.ledger.save.audit_last_error = audit_error
 
-        # World clock: rule delta (move/jump) + prose-semantic delta.
+        # World clock：结算优先级链（2026-09-14 重写 + 加规则对钟档）。
+        #
+        # ① 审计 clock_to（正文明确到点）
+        # ② 规则 settle_to（玩家明示意图 → 绝对时刻；审计沉默/失败时的确定性来源）
+        # ③ 审计 delta（对"实际跨了多久"的观测，clamp 进 [0, 1440]）
+        # ④ 规则 delta（只剩磁盘上的旧候选还有这个字段）
+        # ⑤ 0
+        #
+        # delta **只可能被加一次**。原实现是"规则 delta + audit delta"相加，而审计
+        # 工单不接收 rule_bundle（它不知道规则已推过时间）→ 系统性多算：实测
+        # "第二天去学校"多算 5.4h（规则 +12h、审计估 22.6h 被保险丝截到 16h，相加 28h
+        # → 次日 13:25，而正文说的是早上）。另修两处：负数 delta 会让时钟倒流；
+        # clock_to 无方向守卫时，审计把日期填错能把时钟拉回过去。
         from app.runtime.session import world_start_time
 
-        clock = self.ledger.save.clock or world_start_time(self.ledger.world)
-        delta = candidate.side_effects.delta_minutes or 0
-        if audit_out is not None:
-            # 保险丝：审计估时长抽风（如把聊天提时间当流逝）时截断，防静默漂移；
-            # 规则 delta（move/jump 玩家意图）不受限。单回合审计上限 = 16 小时。
-            delta += min(audit_out.delta_minutes or 0, 960)
-        # 正文明确说了故事时间走到几点 → 绝对对钟优先于估时长（时长已被对钟涵盖）。
-        if audit_out is not None and audit_out.clock_to:
-            try:
-                clock = dt.datetime.fromisoformat(audit_out.clock_to).replace(microsecond=0).isoformat()
-                delta = 0
-            except ValueError:
-                pass  # 格式坏 → 退回估时长，不当致命错误
-        if delta:
-            try:
-                parsed = dt.datetime.fromisoformat(clock)
-                parsed += dt.timedelta(minutes=delta)
-                clock = parsed.replace(microsecond=0).isoformat()
-            except ValueError:
-                pass
+        clock_before = self.ledger.save.clock or world_start_time(self.ledger.world)
+        clock = clock_before
+        rule_settle = candidate.side_effects.settle_to or ""
+        delta_rule = max(0, candidate.side_effects.delta_minutes or 0)
+        raw_audit = audit_out.delta_minutes if audit_out is not None else None
+        delta_audit = max(0, min(raw_audit or 0, AUDIT_DELTA_CAP_MINUTES))
+        clock_to_audit = (audit_out.clock_to or "") if audit_out is not None else ""
+
+        base = _parse_clock(clock_before)
+
+        def _accept(raw: str) -> tuple[dt.datetime | None, str | None]:
+            """解析一个绝对时刻并过方向守卫；返回 (目标, 拒绝原因)。"""
+            parsed = _parse_clock(raw)
+            if parsed is None:
+                return None, "时间格式无法解析"
+            if base is not None and parsed < base:
+                return None, "早于当前时钟，疑似日期填错"
+            return parsed, None
+
+        target = None
+        target_src = ""
+        settlement: dict = {
+            "turn_id": candidate.turn_id,
+            "candidate_id": candidate.candidate_id,
+            "clock_before": clock_before,
+            "clock_after": clock_before,
+            "source": "none",  # clock_to | clock_to_rule | audit | rule | none
+            "settle_rule": rule_settle or None,
+            "settle_rule_label": candidate.side_effects.settle_label or None,
+            "settle_rule_rejected": None,
+            "delta_rule": delta_rule,
+            "delta_audit": delta_audit,
+            "delta_audit_raw": raw_audit,
+            "delta_applied": 0,
+            "audit_capped": raw_audit is not None and raw_audit > AUDIT_DELTA_CAP_MINUTES,
+            "audit_negative": raw_audit is not None and raw_audit < 0,
+            "clock_to_audit": clock_to_audit or None,
+            "clock_to_rejected": None,
+            "error": None,
+            "audit_error": audit_error,
+        }
+
+        if clock_to_audit:
+            target, settlement["clock_to_rejected"] = _accept(clock_to_audit)
+            if target is not None:
+                target_src = "clock_to"
+        if target is None and rule_settle:
+            target, settlement["settle_rule_rejected"] = _accept(rule_settle)
+            if target is not None:
+                target_src = "clock_to_rule"
+
+        if target is not None:
+            # 对钟涵盖估时长 → delta 全部丢弃（不是相加）。
+            clock = target.isoformat()
+            settlement["source"] = target_src
+        else:
+            # delta 只加一次：审计（对"实际跨了多久"的观测）优先，规则 delta 兜底。
+            delta = delta_audit or delta_rule
+            settlement["source"] = "audit" if delta_audit else ("rule" if delta_rule else "none")
+            if delta:
+                if base is None:
+                    settlement["error"] = f"当前时钟无法解析，未推进：{clock_before!r}"
+                else:
+                    clock = (base + dt.timedelta(minutes=delta)).replace(microsecond=0).isoformat()
+                    settlement["delta_applied"] = delta
+
         self.ledger.save.clock = clock
+        settlement["clock_after"] = clock
+        # 结算留痕（P1）：整条优先级链落盘，顶栏时钟 hover 可见。
+        self.ledger.save.last_settlement = settlement
 
         # Narrative record: rule-solved location wins; audit fills the rest.
         narrated = candidate.side_effects.narrative or {}

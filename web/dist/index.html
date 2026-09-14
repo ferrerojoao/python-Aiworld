@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AIWorld</title>
-  <link rel="stylesheet" href="style.css?v=53" />
+  <link rel="stylesheet" href="style.css?v=55" />
 </head>
 <body>
   <div id="app">
@@ -62,7 +62,7 @@
 
       <div id="tab-director" class="tab-panel active">
         <h3>导演对话</h3>
-        <div class="director-hint">可以跟导演说：<br>· 给点建议 / 我该干嘛<br>· 答疑：问 NPC、承诺、事件（如"王蓉喜欢什么？"）<br>· 设立/废弃剧情目标（大目标=主线，小目标=支线）<br>· 幕后操作（会弹确认）：<br>&nbsp;&nbsp;某 NPC 在某地（静默覆写，如"朱明在网吧"）<br>&nbsp;&nbsp;给某 NPC 私下注入一段记忆<br>&nbsp;&nbsp;某事件改公开或私密<br>（人物卡/场景/Actor 档位编辑请用世界工作台）</div>
+        <div class="director-hint">可以跟导演说：<br>· 建议 · 答疑 · 剧情目标（大=主线 小=支线）<br>· 幕后操作（弹确认）：覆写去向、注入记忆、改判<br>· 人物卡 / 场景 / Actor 档位 → 世界工作台</div>
         <div id="director-chat"></div>
         <form id="director-form">
           <input id="director-input" type="text" placeholder="和导演讨论剧情…" autocomplete="off" />
@@ -134,6 +134,7 @@
       <div class="modal-content">
         <div class="modal-header">
           <span>世界工作台</span>
+          <span id="wb-version" class="wb-version" title="前端脚本版本（刷新生效；用来确认浏览器有没有加载到新代码）"></span>
           <span id="wb-context" class="wb-context"></span>
           <div class="wb-header-actions">
             <button id="wb-switch-world">切换世界 ▾</button>
@@ -190,6 +191,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=64"></script>
+  <script src="app.js?v=67"></script>
 </body>
 </html>

@@ -212,11 +212,49 @@ async function ensureSession() {
   }
 }
 
+// 时钟为什么跳了这么久：把 save.last_settlement 翻成人话，挂在顶栏时钟上
+// （hover 可见）。纯解释性展示，字段缺失就静默不挂 title。
+function settlementTooltip(s) {
+  if (!s || !s.clock_before) return "";
+  const stamp = (v) => String(v || "-").slice(0, 16).replace("T", " ");
+  const sourceLabel =
+    {
+      clock_to: "正文明确到点 → 审计对钟",
+      clock_to_rule: "玩家明确跳到某时刻 → 规则对钟",
+      audit: "审计估时",
+      rule: "规则兜底（审计没给时长）",
+      none: "未推进",
+    }[s.source] || s.source;
+  const lines = [`时间结算：${stamp(s.clock_before)} → ${stamp(s.clock_after)}`, `依据：${sourceLabel}`];
+  const bits = [];
+  if (s.settle_rule) bits.push(`规则意图 ${stamp(s.settle_rule)}${s.source === "clock_to_rule" ? "" : "（未采用）"}`);
+  if (s.delta_rule) bits.push(`规则 ${s.delta_rule} 分${s.source === "rule" ? "" : "（未采用）"}`);
+  if (s.delta_audit_raw != null) {
+    bits.push(
+      s.audit_capped
+        ? `审计估 ${s.delta_audit_raw} 分（保险丝截到 ${s.delta_audit}）`
+        : `审计 ${s.delta_audit} 分`
+    );
+  }
+  if (s.delta_applied) bits.push(`实际推进 ${s.delta_applied} 分`);
+  if (bits.length) lines.push(bits.join(" / "));
+  if (s.clock_to_audit && s.source === "clock_to") lines.push(`对钟目标：${stamp(s.clock_to_audit)}`);
+  if (s.clock_to_rejected) lines.push(`已拒绝审计对钟：${s.clock_to_rejected}`);
+  if (s.settle_rule_rejected) lines.push(`已拒绝规则对钟：${s.settle_rule_rejected}`);
+  if (s.audit_negative) lines.push("审计给了负数时长，已按 0 处理");
+  if (s.error) lines.push(`⚠ ${s.error}`);
+  if (s.audit_error) lines.push(`⚠ 本次审计失败：${s.audit_error}`);
+  return lines.join("\n");
+}
+
 async function refreshState() {
   if (!state.sid) return;
   const data = await api(`/api/sessions/${state.sid}/state`);
   $("#world-name").textContent = state.worldName || "-";
   $("#clock").textContent = data.clock || "-";
+  const tip = settlementTooltip(data.last_settlement);
+  if (tip) $("#clock").title = tip;
+  else $("#clock").removeAttribute("title");
   $("#scene").textContent = data.scene_id || data.scene || "-";
   if (data.preset) {
     const p = data.preset;
@@ -790,7 +828,7 @@ function switchWorldTab(tabName) {
   if (!state.worldData) loadWorldBrowser();
   // 世界书↔人物 之间有一处交叉引用（归属条目），切页时对齐一次：
   // 人物名可能刚改（下拉选项旧了），归属可能刚改（人物卡提示旧了）。
-  if (tabName === "lore") refreshLoreSubjectSelects();
+  if (tabName === "lore") syncLoreSubjectOptions();
   if (tabName === "npcs") refreshNpcLoreHints();
   updateSaveBar();
 }
@@ -1344,6 +1382,15 @@ function renderEditLore(data) {
       </div>
     </div>`;
   mdRebuild("edit-lore-list");
+  // 归属：把渲染时的值落到卡上（之后只在用户改选时更新）——保存/徽标/计数一律读它，
+  // select 只当视图，避免"原生下拉内部选中态掉了导致存空"。
+  document.querySelectorAll("#edit-lore-list .edit-card").forEach((card) => {
+    if (card.dataset.subject === undefined) {
+      card.dataset.subject = card.querySelector('[data-field="subject"]')?.value ?? "";
+    }
+  });
+  // 给每个下拉打上"人物名集合"指纹，之后只在人物改名/增删时才重建选项
+  syncLoreSubjectOptions();
 }
 
 const LORE_SUBJECT_MAX = 2; // 每个归属角色最多 2 条（与后端 LORE_SUBJECT_CAP 一致）
@@ -1352,10 +1399,23 @@ const LORE_SUBJECT_MAX = 2; // 每个归属角色最多 2 条（与后端 LORE_S
 function loreSubjectCounts() {
   const counts = {};
   document.querySelectorAll("#edit-lore-list .edit-card").forEach((card) => {
-    const v = card.querySelector('[data-field="subject"]')?.value || "";
+    const v = card.dataset.subject ?? card.querySelector('[data-field="subject"]')?.value ?? "";
     if (v) counts[v] = (counts[v] || 0) + 1;
   });
   return counts;
+}
+
+/** 把当前脚本版本显示在世界工作台标题旁。
+ *
+ *  用途：改前端后用户"刷新了没"这件事必须可见——不然改了代码对方还跑着旧
+ *  JS，两边一起猜。版本号取自 <script src="app.js?v=NN"> 的查询串。
+ */
+function showFrontendVersion() {
+  const el = $("#wb-version");
+  if (!el) return;
+  const tag = document.querySelector('script[src*="app.js"]');
+  const m = tag && tag.getAttribute("src").match(/[?&]v=(\d+)/);
+  el.textContent = m ? `前端 v${m[1]}` : "";
 }
 
 /** 人物名清单：优先读实时 DOM（改名即时反映），退回载入时的数据。 */
@@ -1385,22 +1445,42 @@ function subjectOptions(selected, npcIds, counts) {
   return opts.join("");
 }
 
-/** 打开下拉前重建选项：人物可能刚改过名，余额也可能刚变。
-    选项没变就一个字都不动——mousedown 上重建 innerHTML 会把刚要弹出的
-    下拉顶掉，所以只在真变了的时候重写。 */
-function refreshLoreSubjectSelects() {
+/** 归属下拉的选项同步。
+ *
+ *  ⚠️ 坑（2026-09-13 实测踩中，症状："选了归属，保存后归属消失"）：对 `<select>`
+ *  重建 innerHTML 会**丢掉当前选中值**——select 的 dirty value flag 一旦置位（用户
+ *  选过一次），新插入的 option 上的 `selected` 属性就不再被采纳，重建即回到无选中
+ *  （value 变 ""）。所以规则有三条：
+ *
+ *  1. **重建后必须把值写回**：`sel.value = cur`；
+ *  2. 只在"人物名集合"变化时才重建（改名/增删人物），选值变化只改禁用态；
+ *  3. 绝不在 mousedown（用户正要拉开下拉）时重建——那会顶掉刚弹出的菜单。
+ */
+function syncLoreSubjectOptions({ rebuild = false } = {}) {
   const cards = Array.from(document.querySelectorAll("#edit-lore-list .edit-card"));
   if (!cards.length) return;
   const npcIds = npcIdList();
+  const known = new Set(npcIds);
   const counts = loreSubjectCounts();
-  const sig = JSON.stringify([npcIds, counts]);
+  const nameSet = JSON.stringify(npcIds);
   cards.forEach((card) => {
     const sel = card.querySelector('[data-field="subject"]');
     if (!sel) return;
-    const key = `${sig}|${sel.value || ""}`;
-    if (sel.dataset.optsig === key) return;
-    sel.innerHTML = subjectOptions(sel.value || "", npcIds, counts);
-    sel.dataset.optsig = key;
+    // 以卡上记的值为准（select 只是个视图；它内部选中态会掉，见上方注释）
+    const cur = card.dataset.subject ?? sel.value ?? "";
+    if (rebuild || sel.dataset.npcset !== nameSet) {
+      sel.innerHTML = subjectOptions(cur, npcIds, counts);
+      sel.value = cur; // ← 关键：重建 innerHTML 会丢选中，显式写回
+      sel.dataset.npcset = nameSet;
+    }
+    // 禁用态与"已满"文案随选值即时更新（只动 option 属性，不重建、不动选中）
+    Array.from(sel.options).forEach((opt) => {
+      if (!opt.value || !known.has(opt.value)) return; // 跳过"无"与"不在人物表"
+      const full = (counts[opt.value] || 0) >= LORE_SUBJECT_MAX && opt.value !== cur;
+      opt.disabled = full;
+      const label = full ? `${opt.value}（已满 ${LORE_SUBJECT_MAX} 条）` : opt.value;
+      if (opt.textContent !== label) opt.textContent = label;
+    });
   });
 }
 
@@ -1505,7 +1585,9 @@ function renderEditNpcs(data) {
 function refreshNpcLoreHints() {
   const owned = {};
   document.querySelectorAll("#edit-lore-list .edit-card").forEach((card) => {
-    const subject = (card.querySelector('[data-field="subject"]')?.value || "").trim();
+    const subject = (
+      card.dataset.subject ?? card.querySelector('[data-field="subject"]')?.value ?? ""
+    ).trim();
     if (!subject) return;
     const id = card.querySelector('[data-field="id"]')?.value?.trim() || "（未命名条目）";
     (owned[subject] ||= []).push(id);
@@ -1651,7 +1733,9 @@ function mdBadgeFor(kind, card) {
     if (card.querySelector('[data-field="is_player"]')?.checked) return badge("gold", "主角");
     if (card.querySelector('[data-field="has_actor"]')?.checked) return badge("", "Actor");
   } else if (kind === "lore") {
-    const subject = card.querySelector('[data-field="subject"]')?.value?.trim();
+    const subject = (
+      card.dataset.subject ?? card.querySelector('[data-field="subject"]')?.value ?? ""
+    ).trim();
     if (subject) return badge("gold", `归属·${escapeHtml(subject)}`);
     if (card.querySelector('[data-field="always_on"]')?.checked) return badge("", "常驻");
     const kw = splitList(card.querySelector('[data-field="keywords"]')?.value).length;
@@ -1698,10 +1782,6 @@ function mdShow(listId, key) {
 
 function bindEditEvents() {
   document.querySelectorAll(".edit-list").forEach((list) => {
-    // 归属下拉：点开之前重建选项（人物可能刚改名、余额可能刚变）
-    list.onmousedown = (e) => {
-      if (e.target.matches?.('[data-field="subject"]')) refreshLoreSubjectSelects();
-    };
     list.onclick = (e) => {
       const btn = e.target.closest(".remove-item");
       if (!btn) return;
@@ -1709,8 +1789,9 @@ function bindEditEvents() {
       mdRebuild(list.id);
       // 删除是纯 click（无 input/change），必须手动触发脏检查
       refreshDirty();
-      // 删掉归属条目后，人物卡上的提示跟着更新
+      // 删掉归属条目后，人物卡上的提示跟着更新；删掉人物后下拉选项要重算
       if (list.id === "edit-lore-list") refreshNpcLoreHints();
+      if (list.id === "edit-npc-list") syncLoreSubjectOptions({ rebuild: true });
     };
     // 主角唯一性（2026-09-13）：勾上任意一张卡的「主角」，其余自动取消；
     // 重渲染人物列表让"删除"按钮随之出现/消失——数据从当前 DOM 读回，编辑不丢。
@@ -1733,11 +1814,18 @@ function bindEditEvents() {
         if (target) mdShow("edit-npc-list", target.dataset.mdkey);
         return;
       }
-      // 改了 ID：左侧摘要的名字跟着刷新（不动选中项）
-      if (e.target.matches?.('[data-field="id"]')) mdRebuild(list.id);
+      // 改了 ID：左侧摘要的名字跟着刷新（不动选中项）；若是人物改名，
+      // 归属下拉的选项集合也变了（旧名会变成"不在人物表"的悬空引用）
+      if (e.target.matches?.('[data-field="id"]')) {
+        mdRebuild(list.id);
+        if (list.id === "edit-npc-list") syncLoreSubjectOptions({ rebuild: true });
+      }
       // 改了归属：别人下拉里的"已满"余额、人物卡提示、左侧徽标都要跟着走
       if (e.target.matches?.('[data-field="subject"]')) {
-        refreshLoreSubjectSelects();
+        // 选中那一刻就把值记在卡上——保存路径从此不依赖 select 的内部选中态
+        const card = e.target.closest(".edit-card");
+        if (card) card.dataset.subject = e.target.value ?? "";
+        syncLoreSubjectOptions();
         mdRebuild("edit-lore-list");
         refreshNpcLoreHints();
       }
@@ -1816,7 +1904,10 @@ function readOverview() {
 function readLore() {
   return Array.from(document.querySelectorAll("#edit-lore-list .edit-card")).map((card) => ({
     id: card.querySelector('[data-field="id"]')?.value ?? "",
-    subject: card.querySelector('[data-field="subject"]')?.value ?? "",
+    // 归属以"用户选中的那一刻"记在卡上为准（dataset.subject），select 的值只作兜底：
+    // 原生 select 的内部选中态很脆（重建 innerHTML 会掉），保存不该依赖它。
+    subject:
+      card.dataset.subject ?? card.querySelector('[data-field="subject"]')?.value ?? "",
     keywords: splitList(card.querySelector('[data-field="keywords"]')?.value),
     body: card.querySelector('[data-field="body"]')?.value ?? "",
     always_on: !!card.querySelector('[data-field="always_on"]')?.checked,
@@ -2096,6 +2187,7 @@ async function init() {
   $("#close-world").addEventListener("click", closeWorldModal);
   $("#wb-switch-world").addEventListener("click", toggleWorldPanel);
   $("#wb-refresh").addEventListener("click", refreshWorldModal);
+  showFrontendVersion();
   $("#wb-save").addEventListener("click", saveWorldEdit);
   $("#wb-discard").addEventListener("click", discardWorldEdits);
   $("#wb-check").addEventListener("click", checkSessionWorld);

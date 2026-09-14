@@ -11,18 +11,18 @@
 | 决策点 | 选择 | 理由 |
 |---|---|---|
 | 后端 | **Python 3.11+ / FastAPI** | async 原生、Pydantic v2 做全部 schema 校验与强制输出 |
-| 前端 | 轻量原生 TS/Vite（无重型框架） | 页面量小（正文流/面板/导演窗口/日志）；避免框架负担 |
+| 前端 | 原生 JS/CSS/HTML（`web/dist/`，**无框架、无构建步骤**） | 页面量小（正文流/面板/导演窗口/日志）；避免框架与打包负担。代价是静态资源要走 `?v=NN` 手动跳版本号防缓存 |
 | 通信 | REST（CRUD/操作）+ SSE（回合交付流） | 单向流用 SSE 比 WebSocket 简单；正文以"整段交付 + 前端打字机"实现（见 §5.5） |
 | LLM 接口 | OpenAI 兼容 SDK（base_url 可配） | DeepSeek / Qwen / Ollama / 任意网关通用 |
 | 存储 | `events.jsonl` 追加 + `save.json` 原子写 | 正文史实不可变 → 追加式；单机单玩家；文件可读可 diff；崩溃安全 |
 | 并发模型 | 单进程 asyncio，回合驱动，无后台世界协程；同一存档同一时刻只处理一个回合/事务 | 世界只在玩家回合内推进；审计为采纳时同一请求内的提交后结算，不做独立后台写协程，天然避免写并发 |
 | 事务 | 回合 = 事务：候选区可并存多份候选版本 → 显式采纳指定候选（或唯一候选时下一次输入自动采纳） = 原子提交 / 放弃重掷 = 候选版本增删但不落账 | 玩家是作者；正文与副作用一体成立或不成立，同时不打断连续输入 |
-| 模板 | Jinja2（prompt 与正文底稿模板）+ Pydantic（结构化输出） | 提示与引擎代码分离 |
+| 提示词装配 | 字符串内联在 `core/workorder.py`（无模板引擎）+ Pydantic（结构化输出） | 工作单是"按账本现算"的动态文档，内联比模板文件更贴近数据源；Jinja2 曾是依赖，现已不用 |
 | 世界设定装配 | 两级：世界概要常驻 system（永不裁剪）+ 世界书候选行（id+摘要）随导演工作单、点名才展开全文（标签匹配零 LLM） | 设定常驻不失守；详细条目按需展开省 token、导演不被要求通读 |
 | 测试 | pytest + 注入 FakeLLM（录制响应） | 离线可跑、可回归；核心断言=回合事务与信息边界 |
-| 包管理 | uv | 现代、快、锁文件可靠 |
+| 包管理 | pip + venv（`requirements.txt`） | 单机单项目，够用 |
 
-依赖方向（单向）：`api / runtime → agents → core`；`world` 只读内容包；`core` 不 import 任何内容包。
+依赖方向（单向）：`api / runtime → workers → core`；`world` 只读内容包；`core` 不 import 任何内容包。
 
 ---
 
@@ -30,48 +30,52 @@
 
 ```
 aiworld/
-├── pyproject.toml / uv.lock / .env.example / README.md
+├── pyproject.toml / requirements.txt / .env.example / README.md
 ├── app/
 │   ├── main.py                  # FastAPI 装配、静态托管、启动
-│   ├── config.py                # pydantic-settings：端口/模型档位/预算/默认耗时
+│   ├── config.py                # pydantic-settings：端口 / 模型档位 / 温度 / 预算
 │   ├── api/
-│   │   ├── routes_sessions.py   # 存档 CRUD / 状态 / 事件日志 / 预设覆盖
+│   │   ├── routes_sessions.py   # 世界与存档 CRUD / 状态 / 事件日志 / 预设与设置覆盖
 │   │   ├── routes_turn.py       # POST turn（SSE）+ 候选区 adopt/reroll/discard
 │   │   └── routes_director.py   # 导演窗口（OOC 旁路）
 │   ├── core/
-│   │   ├── llm.py               # OpenAI 兼容网关（§9）
-│   │   ├── store.py             # JSONL 追加 + save.json 原子写 + 备份
-│   │   ├── clock.py             # 世界钟（只执行不记账）
-│   │   ├── templates.py         # Jinja2 装载
-│   │   └── redlines.py          # 引擎基础禁用词红线集
+│   │   ├── llm.py               # OpenAI 兼容网关 + FakeLLM（§9）
+│   │   ├── store.py             # JSONL 追加 / save.json 原子写 / 新 id
+│   │   ├── presets.py           # 全局叙事预设（编剧准则 + 禁用词）装载
+│   │   └── workorder.py         # ★ 工作单装配（编剧 / 审计 / 导演；模板以字符串内联，无 Jinja）
 │   ├── ledger/                  # ★ 账本（真相的唯一持有者）
 │   │   ├── events.py            # 事件记录类型 / 追加 / 内存索引
-│   │   ├── queries.py           # where_is / present_at / visible_to / experiences / known_set
-│   │   ├── memory.py            # 记忆条目规则化拼接（现拼，不落盘）
+│   │   ├── queries.py           # where_is / present_at / known_set / experiences / 场景注册
 │   │   ├── access.py            # known_by 改判：名单直给落账 / 改判公开
-│   │   └── goals.py             # M14 剧情目标（save.json 内）
-│   ├── rules/                   # 规则段（尽量零 LLM，规则优先）
-│   │   ├── route.py             # 输入路由（L0 规则短路 + L1 轻量分类）
-│   │   ├── movement.py          # M19 裁决链 / M1 推断 / M18 在场
-│   │   ├── scenes.py            # M17 场景注册表 + 模板底稿渲染
-│   │   ├── claims.py            # M2 玩家声明覆写 + 冲突判定
-│   │   └── axes.py              # ③ 抽象属性轴结算（M5，二期预留）+ 记因留痕
+│   │   ├── goals.py             # M14 剧情目标（save.json 内）
+│   │   └── save.py              # 存档 schema（SaveData / Goal / EntityRuntime / last_settlement）
+│   ├── rules/                   # 规则段（纯规则、零 LLM，规则优先）
+│   │   ├── route.py             # 规则预结算：移动意图 + 跳时对钟词表（产出绝对时刻）
+│   │   ├── movement.py          # 目的地解析（场景别名 / 找 NPC；未命中交审计）
+│   │   ├── lorebook.py          # 世界书关键词命中 / 常驻注入 / 采纳后重建激活表
+│   │   └── scenes.py            # 场景描述 + 模板底稿渲染
 │   ├── workers/                 # 无状态 Agent（每个 = 一个协议函数）
 │   │   ├── writer.py            # 编剧（导演+说书人合一：判定+成文）
 │   │   ├── actor.py             # NPC Actor（深抉择隔离回流）
 │   │   ├── qc.py                # 质检员
-│   │   └── auditor.py           # 世界审计（采纳时提交后结算）
+│   │   ├── auditor.py           # 世界审计（采纳时提交后结算）
+│   │   ├── drafter.py           # 造世界：草稿 → 内容包
+│   │   └── schemas.py           # 全部 worker 的输出 schema
 │   ├── runtime/
-│   │   ├── session.py           # 存档生命周期（开/续/存）
+│   │   ├── session.py           # 存档生命周期（开/续/存）+ 世界钟起点
 │   │   ├── turn.py              # ★ 回合编排（§5.1 阶段表）
-│   │   └── transaction.py       # 候选区暂存 / 指定候选原子提交 / 放弃清理
+│   │   ├── transaction.py       # ★ 候选原子提交（时间结算唯一发生地）/ 放弃清理
+│   │   └── trace.py             # TraceRecorder：LLM 调用留痕（调试面板）
 │   └── world/                   # 内容包加载与校验
 │       ├── models.py            # 内容包 Pydantic 模型（§2.1）
-│       └── loader.py            # 目录 → 对象；--check 校验入口
-├── web/                         # 前端（Vite + TS）
-│   └── src/（chat / panel / scene / director / ledger / settings）
-├── content/<world>/             # ★ 内容包（与引擎彻底分离，见 §2.1）
-└── tests/（unit / integration / smoke）
+│       ├── loader.py            # 目录 → 对象；check_world 校验入口
+│       └── draft.py             # 空白种子包 / 草稿资产形状
+├── web/dist/                    # 前端（原生 JS/CSS/HTML，**无构建步骤**；改了要跳 ?v=NN）
+│   └── index.html / app.js / style.css
+├── content/<world>/             # ★ 内容包 = 存档（资产与运行态同层，见 §2.1）
+├── data/                        # 运行期配置：presets.json / settings.json（gitignore）
+├── scripts/                     # 诊断与冒烟脚本（diag_* / smoke_* / e2e_check.py）
+└── tests/（平铺的 test_*.py + fixtures/）
 ```
 
 ---
@@ -296,11 +300,11 @@ content/<world>/
 一回合 = 一个事务。正文过质检送达玩家后仍在**候选区**；**玩家采纳（显式或下一次输入自动采纳）那一刻才原子落账**。
 
 ```
-PendingTurn（内存事务上下文）
-├── 候选正文（说书人成品或导演采纳的玩家原文）
-├── 副作用暂存：Δt（世界钟推进）· 待落 narrative/events 记录
-│               · axes 轴变更（二期预留）· 覆写与有效期 · known_by 初值
-└── 关联信息：质检修改记录（issues，随候选呈现；引擎不做矛盾仲裁——剧情一致性归玩家自决）
+Candidate（候选快照，落盘到 candidates/；采纳时由 Transaction 落地）
+├── 正文 prose（说书人成品或导演采纳的玩家原文）+ 质检修改记录（conflicts）
+├── side_effects：settle_to（跳时绝对时刻）· narrative.location（规则目的地）
+│                 · events · axes（二期预留）· overrides
+└── 关联信息：player_input / writer_directive / trace_id / mode（重掷档位）
 ```
 
 - **候选区呈现**：SSE 交付 `candidate` 事件（正文 + 副作用摘要 + 质检修改记录），一个回合可陆续产生多份候选版本，全部保留供玩家比较。玩家操作：
@@ -311,34 +315,40 @@ PendingTurn（内存事务上下文）
   - **先开导演窗口商量**再回候选区定夺（候选事务驻留内存并持久化 `candidates/` 暂存，断线可续）。
 - **崩溃安全**：候选期未 commit = 未落盘 = 未发生；只有 commit 后的追加/原子写可能落盘。
 - **采纳后反悔** = 走导演窗口（改判 / 覆写），与候选区重掷分轨。
-- **重掷三档**（每档独立过质检并生成一份新候选）：`rephrase` 同一剧本指令重跑说书人；`redirect` 导演重排整场戏决策重判；`retarget` 玩家口述不满处、导演按意见定向改。
+- **重掷两档**（各自独立过质检并生成一份新候选）：`rephrase` 同一剧本指令重跑编剧；`retarget` 玩家口述不满处、编剧按意见定向改。（早期设计里的 `redirect` 档未实现，已删。）
 
 ### 4.1 候选暂存目录（candidates/）
 
 `candidates/` 不是账本，只保存“尚未落账的提案”。每个候选版本一个 JSON 文件，命名 `<turn_id>_<candidate_id>.candidate.json`；同一回合可以有多个候选文件并存，供玩家比较和选择。
 
-文件内容 = `PendingTurn` 的单版本可恢复快照：
+文件内容 = `Candidate` 的单版本可恢复快照：
 
 ```jsonc
 {
   "candidate_id": "cand_0007",
   "turn_id": "turn_0007",
   "trace_id": "tr_abc123",
-  "mode": "initial | rephrase | redirect | retarget",
-  "status": "pending",               // 正常情况下只存在 pending；adopted/discarded 用于标记清理异常
+  "mode": "initial | rephrase | retarget",
+  "status": "pending",               // 正常情况下只存在 pending；采纳/放弃后整文件被删
+  "player_input": "第二天去学校",     // 剥离 ((...)) 后的玩家输入
+  "writer_directive": "",            // 本回合行内导演指令，重掷沿用
   "prose": "候选正文……",
   "side_effects": {
-    "delta_minutes": 20,
-    "narrative": {"location": "校门口", "participants": ["player", "朱明"], "known_by": null},
+    "settle_to": "2001-07-11T08:00:00",  // 规则侧的跳时绝对时刻（空=无跳时意图）
+    "settle_label": "第二天 08:00",
+    "delta_minutes": 0,                  // 旧字段，规则侧已改走 settle_to
+    "narrative": {"location": "校门口", "summary": "第二天早上出门。"},
     "events": [],
-    "axes": {},                       // 二期预留
+    "axes": {},                          // 二期预留
     "overrides": []
   },
-  "conflicts": [{ "level": "major", "desc": "…" }],
+  "conflicts": [{ "level": "major", "desc": "…" }],   // 质检 issues + 编排 notes，原始 dict
   "created_at": "…",
   "updated_at": "…"
 }
 ```
+
+> 在场者 / known_by / 时钟 / 场景注册都不在候选里——它们由审计在**采纳那一刻**结算并直接写入账本（见 §8.1 与 REQ M20）。
 
 生命周期：
 
@@ -365,9 +375,10 @@ PendingTurn（内存事务上下文）
          不进路由 / 不进事件日志 player_input / 不进正文；存 candidate.writer_directive，
          重掷沿用）；剥离后的剩余文本才是路由与落账用的玩家输入（纯指令回合 =
          无行动输入，编剧按当前情境推进）
-  1. 规则段预结算 rules_presolve（尽量零 LLM，只对 move/jump/claim/mixed）：
-     目的地解析 → 可达/耗时Δt候选 → 位置推断候选域 → 在场者查询 → 覆写冲突提示
-     → 产出 rule_bundle 作为编剧输入；副作用写入 PendingTurn
+  1. 规则段预结算（`route.py`，纯规则、零 LLM）：只产出两项**正交**的硬事实——
+     移动意图 → 目的地解析（`resolve_destination`：场景别名 / 找 NPC，未命中留空）；
+     跳时意图 → 绝对时刻 `settle_to`。识别不出就什么都不给，全交审计。
+     产出 rule_bundle 作为编剧输入（人话简报，不贴 dict）
   2. 装配编剧工作单（§6：玩家可见 + 账本数据 + rule_bundle）
   3. 编剧一次调用：脑中排节拍 → 直接成文（WriterOutput，§5.3）
   4. 若输出带 actor_questions → **必有第二稿**（上缴 = 编剧在那一拍停笔，一稿定义上
@@ -385,17 +396,16 @@ PendingTurn（内存事务上下文）
 全流程生成并携带 `trace_id`（以及 `turn_id` / `candidate_id`）：所有 worker 调用、LLM usage 日志、SSE 事件、审计 run 都记录同一 `trace_id`，便于回放和排错。
 ```
 
-**路由类别**（L0 规则短路，L1 轻量分类兜底，`route.py`）：
+**规则预结算**（`route.py`，纯规则无 LLM —— 2026-09-14 起不再有"路由类别"这一层）：
 
-| 类别 | 例 | 路径 | LLM |
-|---|---|---|---|
-| chat_act | "问问他昨天为什么打架" / "我翻墙进去" | 主链 | 全链 |
-| move | "去网吧" / "回学校" | 规则段 + 模板场景，无对话则旁路直达 | 尽量零 LLM，规则优先 |
-| jump | "等到晚上" | 规则段推钟 + 导演排时段简报 | 部分 |
-| claim | "朱明在家睡觉" | 覆写规则段（M2 冲突判定） | 尽量零 LLM |
-| mixed | "去校门口找朱明，问他打架的事" | 规则段预结算 + 主链一次成稿 | 全链 |
-| query | （2026-09-05 已删）状态问句原走旁路直答，因触发子串误伤正常对话且 UI 已覆盖，已并入主链由编剧答 | | |
-| ooc | 导演窗口操作 | 旁路（§5.8） | 按需 |
+规则段只产出两类**正交**的硬事实，各自判定、可同时成立，其余一律交审计：
+
+| 事实 | 识别 | 产出 |
+|---|---|---|
+| 移动意图 | `looks_like_move()`：剥掉句首时间词后以移动动词起手（`去/回/走到/前往/我去…`，排除 `去年/回忆`） | `rule_bundle["destination"]`（`resolve_destination` 命中场景别名或"找 NPC"才有） |
+| 跳时意图 | `parse_time_intent()`：日界词（`第二天/明天/后天/大后天`）/ 相对日界（`三天后/过了两天/一个月后`）/ `等到·跳到·直到` + 时辰词或数值钟点 | `rule_bundle["settle_to"]` = **绝对时刻**（+ `time_label` 人话标签） |
+
+识别不出就什么都不给（"晚上你想吃什么"不推钟），全交审计。历史包袱：曾用单标签 `route`（move \| jump \| chat_act）互斥分流，"第二天去学校"被 jump 吞掉移动预结算——已废。
 
 ### 5.2 Worker 一览
 
@@ -405,11 +415,10 @@ PendingTurn（内存事务上下文）
 | NPC Actor | 主模型/次档 | 0.8 | 深抉择 +1 | 本人隔离工作单 | 决策块 |
 | 质检员 | 辅助模型 | 0.2 | 每回合 1 | 初稿 + 受限参照区（§5.6） | {status, prose, issues} |
 | 世界审计 | 辅助模型 | 0.2 | 采纳时提交后结算 | 本回合落账事件 + 相关历史 | 结构性结果 |
-| 意图分类 L1 | 最辅助模型 | 0 | 规则不短路时 1 | 玩家输入 + 场景 + 在场 | {route, mention, claim?} |
 
 > **合并决策（2026-09-05 拍板）**：导演与说书人合并为单一"编剧" agent——决策和文字一次调用完成，成本与延迟约减半。全知信息直接接触文字笔，泄漏防线转移到质检参照区（§5.6），Actor 深抉择仍走物理隔离（两段式）。原"动机层纪律"随之简化：编剧的幕后判断是瞬时中间产物，不设独立字段承载。
 >
-> **模型数量**：v1 默认只需要 **1~2 个模型**：编剧 / Actor 可共用“主模型”，质检 / 审计 / L1 分类可共用“辅助模型”；甚至可以全部指向同一个本地模型。配置里未指定的档位自动回退到默认主模型或默认辅助模型。
+> **模型数量**：v1 默认只需要 **1~2 个模型**：编剧 / Actor 可共用“主模型”，质检 / 审计可共用“辅助模型”；甚至可以全部指向同一个本地模型。配置里未指定的档位自动回退到默认主模型或默认辅助模型。（原设计的"意图分类 L1"档位从未落地，已从档位表移除。）
 
 ### 5.3 编剧（workers/writer.py）
 
@@ -429,7 +438,7 @@ PendingTurn（内存事务上下文）
 - **深抉择不替 NPC 决定**：在场"配 Actor"的 NPC 撞深抉择（内心判断 / 涉密反应 / 是否信任）时，编剧**不得猜其心思**——把这一拍写到抉择点为止，在 `actor_questions` 里上缴；引擎派该 NPC 的隔离 Actor 决定后，编剧二次调用以一稿为底稿、按决策改写整场（§5.4）。档位由玩家直接在世界工作台编辑人物卡管理、不经导演窗口（2026-09-05 合并：原"点名强制档"取消，浅反应一律编剧代笔）。
 - `actor_questions[].context` 只写该 NPC 本人会知道的情境——禁止写幕后注等只有编剧知道的秘密（防止经 Actor 回流泄漏）。**人称约定（2026-09-11，只约束 context 字段，正文照旧）**：以该 NPC 为「你」、提到玩家一律写**玩家姓名**（主角名经 `player_display_name` 注入条款；名字未设定时退化为「玩家」）；措辞于 2026-09-12 去否定化（"不再写「玩家」、不得在同句混指" → "一句只用一个人称"）。**位置迁入一级（2026-09-13 用户指出）**：二级先于一级，原先把"context 的人称约定"写在二级，读到那行时 context 还没被定义（前向引用）——字段写法贴着字段定义，故随 `actor_questions` 条目结构一起放进「一级 · 输出格式」；二级「抉择归属」只留机制（何时停笔上缴）并以「（字段写法见「一级 · 输出格式」）」指向。规则讲清后引擎**不再改写人称**——旧实现曾把「你/您」机械替换成「玩家」（假设"你 = 玩家"），反而把本来正确的句子改成自相矛盾的（玩家正是对话者本人），是替换动作制造了"写反"。
 - **知情总纲「角色不是你」（2026-09-09 收敛，同日去重）**：编剧案头资料（事件日志 / 幕后注 / 世界书）角色本人并不知道；角色开口前须核对话词是否在其自身已知范围内——亲历、来历（人物卡）、被告知（剧情内），**在场 NPC 以工作单「已知集」清单为准（§6）**：清单外的事（含异地旧事）一律不知，公开旧事只能以"听说的"口吻或不提（轰动可作风闻）。派生：幕后注/私密绝不出口（知情者坦白除外）、无卡即兴角色只知眼前。判断依据 = 已知集清单 + 事件日志各行标注的发生地/在场者/时间（**数据做重活，规则讲原理**：机械清单与标注提供证据，规则只讲原理，不 enumerate 特例）。金科玉律级禁令（2026-09-11 已定级为**二级 · 情节合理性**），与"位置是快照"纪律同构（提示词纪律 + 机械清单混合；时间锚等机制兜底默认不做）。**去重**：旧版"总纲 + 已知集条款"两条各自完整陈述异地不知/外乡人语义，提示词重复——合并为总纲内嵌一句清单锚定（条款 8→5，字符 858→767）；深抉择与 context 泄漏两条、元信息与第四面墙两条各并一条，语义零丢失。
-- M20 ③"正文写了时间流逝 → 同步推钟"由审计的 `delta_minutes` 落地（编剧不输出 time_hint）；与规则段 Δt 汇总后计入回合。**判定模型 = "估这场戏的时长"（2026-09-09 改版）**：审计按"玩家经历了什么"估实际耗时（对话 5~15 / 一顿饭 30~60 / 干活一下午 120~240 / 睡觉 480），不找时间词——文本里说到时间（"明天见""你昨天答应的"）不是经历时间，给 0；原地续聊也给 0。保险丝：commit 时审计 delta 单回合截断 960 分钟（16h，`transaction.py`），规则 delta（move/jump 玩家意图）不受限——防审计抽风导致的时钟静默漂移。
+- 时间结算走**五档优先级链**（2026-09-14 重写，详见 REQ M20）：① 审计 `clock_to` → ② 规则 `settle_to`（玩家明示意图算出的绝对时刻）→ ③ 审计 `delta_minutes` → ④ 规则 `delta_minutes`（仅为历史候选保留）→ ⑤ 0。**delta 只可能被加一次**——原实现把规则 delta 与审计 delta 相加，而审计工单不接收规则意图，会把整段跨度再估一遍（实测"第二天去学校"多算 5.4h）。判定模型 = "估这场戏的时长"（2026-09-09 改版）：审计按"玩家经历了什么"估实际耗时（对话 5~15 / 一顿饭 30~60 / 干活一下午 120~240 / 睡觉 480），不找时间词——文本里说到时间（"明天见""你昨天答应的"）不是经历时间，给 0；原地续聊也给 0。规则给了意图时审计被告知零估（`settle_hint`）。保险丝：审计 delta 单回合夹进 `[0, 1440]`（24h，`transaction.py`），负数按 0。每次结算的完整留痕写 `save.json.last_settlement`。
 - **机密纪律**：编剧读幕后注是安全的（全知），但幕后注绝不允许出现在正文里——这是质检参照区比对的反向检查项（§5.6）。
 
 ### 5.4 NPC Actor（workers/actor.py）
@@ -551,20 +560,19 @@ scope  = 当前场景可感知 ∪ 在场实体 ∪ 对话对象 ∪ 关键历�
 
 ## 8. 时钟与空间
 
-### 8.1 世界钟（core/clock.py）
+### 8.1 世界钟（runtime/session.py + runtime/transaction.py）
 
-- 变量：save.json `clock`（datetime），只执行不记账。**起点** = `world.json.start_time`（内容包资产，`world_start_time()` 统一读取；新建存档与重置都回到该值）。
-- 推进来源三层（规则直落，无专门 agent）：
-  ① 玩家声明时刻（"等到中午"/"第二天"）→ 认字直接推进 Δt；
-  ② 干实事未提时间 → 审计按事件内容**估这场戏时长**推 Δt（2026-09-09 重构：默认耗时表已删除，时长一律由审计估算，16h 熔断封顶）；
-  ③ 正文写了时间流逝 → 采纳时审计**估这场戏的时长**推 Δt（§5.7；判定依据是玩家经历了什么而非文本出现的时间词；编剧不输出 time_hint）；
-  ④ 正文**明确说了故事时间走到几点**（"到了晚上八点"）→ 审计输出 `clock_to` 绝对对钟（2026-09-09），delta 被对钟涵盖不再叠加；格式坏退回估时长。
-- 对话回合时钟冻结（纯闲聊 Δt=0）；回合 Δt 汇总在 PendingTurn，commit 才落盘。
+- 变量：save.json `clock`（datetime），只执行不记账。**起点** = `world.json.start_time`（内容包资产，`world_start_time()` 统一读取；新建存档与重置都回到该值）。**它同时决定"次日默认钟点"**：取 start_time 的小时，但只在 **06–11** 区间内采信（夜里开局的世界如 Reno=21:40，若照搬 21，"第二天"会落成次日 21:00），区间外退回 08:00。
+- **推进只发生在采纳那一刻**（`Transaction.commit`），走五档优先级链（详见 REQ M20）：
+  ① 审计 `clock_to`（正文明确到点）→ ② 规则 `settle_to`（玩家声明时刻，绝对时刻）→ ③ 审计 `delta_minutes`（估这场戏时长，夹进 `[0, 1440]`）→ ④ 规则 `delta_minutes`（仅为历史候选保留）→ ⑤ 0。
+- **delta 只可能被加一次**：原实现把规则 Δt 与审计 Δt **相加**，而审计工单默认不知道规则已经推过时间 → 系统性多算（实测"第二天去学校"偏晚 5.4h）。
+- 判定依据是**玩家经历了什么**而非文本出现的时间词（"明天见""你昨天答应的"给 0）；纯闲聊 Δt=0；原地续聊给 0。编剧不输出 time_hint。
+- 每次结算的完整留痕（起止时钟 / 依据档位 / 规则与审计各自估了多少 / 是否被保险丝截断 / 对钟是否被拒）→ `save.json.last_settlement`，`GET /state` 透出给顶栏时钟 hover。
 - 离线 = 存档搁置，时钟停留在最后推进时刻，重开从该刻续走。
 
 ### 8.2 M17 场景双轨（rules/scenes.py）
 
-- 预置 = 内容包 `scenes.json` 节点（名字/别名/标签/可感知区/开放时段/邻接点）。别名表与邻接图在启动时建索引。
+- 预置 = 内容包 `scenes.json` 节点（名字/别名/可感知区/region）。别名表在启动时建索引；**邻接图已退役**（2026-09-10，见 §8.5）。
 - 现场补建（转正）：走进包外地点 → 引擎把节点写入世界目录的 `scenes.json`（单一真相源），之后可复用可被提及；一次性布景（register_scene=false）只记事件条目的 `location_name` 显示名、不进导航集。初态由来源定：玩家声明/审计判定可复用 → 当场注册；导演排戏默认临时；编剧写景顺笔 → 装饰性文字不入图。
 - 转正信号（引擎被动核对）：玩家回访/指代（指代消解依赖已注册）→ 剧情目标指向 → 导演/NPC 复用；任一出现即补注册。导演可预注册。
 - 一次性布景：剧情用完即从可导航集退场（事件流仍可回溯）。
@@ -585,13 +593,15 @@ scope  = 当前场景可感知 ∪ 在场实体 ∪ 对话对象 ∪ 关键历�
 ### 8.5 M19 移动裁决链（rules/movement.py）
 
 ```
-目的地解析（四类）→ 查可达（邻接图 BFS）→ 结算耗时 Δt →（可选沿途编排）
-→ 到达 → present_at 在场者 → 场景描述 → 上下文重装配（只含可感知区）
+移动意图判定（looks_like_move：剥掉句首时间词后以移动动词起手）
+→ 目的地解析 → 场景预结算（rule_bundle.destination）
+→ 到达后的位置事实/在场/场景注册由采纳时的审计与账本推导
 ```
 
-- 目的地解析：① 地点直命中（场景别名表）；② 由人推位置（"找朱明"→ M1）；③ 指代回溯玩家记忆（"昨天那家店"→ 最近访问过的注册地点）；④ 未建档地点 = 接受声明 + M17 现场注册。另"随便走走"→ 漫游态（沿邻接边慢移，导演可排偶遇）。
-- 自然语言只在路由/目的地解析一处被判断；其后可达/耗时/在场全规则 + 账本（尽量零 LLM）。
-- **混合句**：规则段只预结算产出 rule_bundle，导演把移动与对话作为同一场戏一次判定（衔接由导演在 beats 内编排），正文一次成稿。
+- 目的地解析（`resolve_destination`）实际只有两路：① 地点直命中（场景 id / aliases 子串表）；② 由人推位置（"找朱明" → M1 最近位置事实）。都未命中 → 返回 `None`，location 与场景注册交审计从正文判（未注册的新地点由审计给 `scene_name` + `register_scene`）。
+- **移动耗时已归审计估时长**（`delta_minutes`）：邻接图 / 耗时表 2026-09-10 退役，规则不再算路程；"可达性"不再校验。
+- **移动与跳时正交**：`第二天去学校` 同时给出目的地与跳时绝对时刻（历史 bug：单标签 `route` 让跳时吞掉移动预结算，规则侧目的地丢失）。
+- **混合句**：规则段只预结算产出 rule_bundle，编剧把移动与对话作为同一场戏一次判定，正文一次成稿。
 
 ### 8.6 场景描述 · 模板底稿（rules/scenes.py）
 
@@ -616,7 +626,7 @@ class LLMGateway:
 - **超时与重试必须可预测（2026-09-11）**：三层乘法（`complete_json` 外层 3 次 × SDK 隐形 3 次 × 120s）会让一次失败拖到十几分钟；且 `except Exception` 全捕获会把 404（模型名写错）也白等重试。规则：① `AsyncOpenAI(max_retries=0)` 关掉 SDK 自带重试——重试策略只由网关单点决定，SDK 的隐形重试是不可预测的乘数；② 分级超时 `Timeout(connect=10, read=LLM_TIMEOUT_SECONDS, write=30, pool=10)`，read 取 `AIWORLD_LLM_TIMEOUT_SECONDS`（默认 **90**，2026-09-11 由 120 下调）；③ 错误分流：超时 / 连接失败 / 429 / 5xx → 退避 **1s、2s** 重试；400 / 401 / 403 / 404 / 422 → 立即抛（不可重试，模型原文随异常带出，不再浪费后续尝试）；④ **结构降级优先于 fatal 判定**：`json_object` / `reasoning_effort` 被网关拒绝时回的也是 400，必须先走降级路径，否则会被误判成不可重试而直接放弃；⑤ 本地解析 / Pydantic 校验失败（`extract_json` 与 `ValidationError` 都是 `ValueError`）不算 HTTP 错误，带原文反馈重试；⑥ 外层尝试上限抽为 `_MAX_ATTEMPTS = 3`（未下调）。
   - **实现坑（必须记住）**：openai SDK 内部 HTTP 库是 **httpx2**（独立包，与 httpx 0.28 是两个库）。传普通 `httpx.Timeout(...)` 构造 `AsyncOpenAI` **不报错**、`client.timeout` 也读得出来，但真正发请求时才抛 `TypeError: unhashable type: 'Timeout'`——只有实跑才炸得出来。必须用 SDK 导出的 `openai.Timeout`（实测 `openai.Timeout is httpx2.Timeout == True`）。
   - **调用耗时入 trace（同日）**：`TraceRecorder` 每条 entry 带 `started_at` / `duration_ms`，用 `try/except/else/finally` 保证失败的那一笔也记录（卡住的调用恰恰最需要看耗时）；前端调试卡片 meta 行显示「耗时 1.2s」，≥30s 打黄色「慢」标签（`--warn` 主题变量，明暗两套）。
-- 模型档位表（config.py + .env 覆盖）：编剧 / Actor / 质检 / 审计 / L1 分类五档，各自 model + temperature（§5.2）；未配置档位回退到默认主模型 / 默认辅助模型，通常 1~2 个模型即可。
+- 模型档位表（config.py + .env 覆盖）：编剧 / Actor / 质检 / 审计四档，各自 model + temperature（§5.2）；未配置档位回退到默认主模型 / 默认辅助模型，通常 1~2 个模型即可。
 - **v1 无向量检索**：召回/切片全部结构化查询 + 线性扫（几万条内 <10ms）。二期升级 = 事件流叠语义索引（embedding 落盘、启动重建），对内容包与存档结构零侵入；中文预留 bge 系接口。
 
 ---
@@ -657,9 +667,9 @@ GET/PUT /api/presets                 # 全局预设（编剧准则 + 禁用词�
 ```
 POST /api/sessions/{sid}/turn  {"input": "…"}
   → text/event-stream:
-     event: route        data: {"trace_id", "route": "mixed", "scene": "校门口"}
-     event: candidate    data: {"trace_id", "turn_id", "candidate_id", "prose", "side_effects": {"clock_to": "…",
-                            "locations": […], "axes": […](二期预留)}, "conflicts": […]}
+     event: stage        data: {"stage": "writer", "label": "编排成文中"}
+     event: candidate    data: {"trace_id", "turn_id", "candidate_id", "prose", "side_effects": {"settle_to": "…",
+                            "settle_label": "…", "narrative": {"location": "…"}, "axes": [](二期预留)}, "conflicts": […]}
      event: error        data: {"trace_id", "message"}
 ```
 
@@ -670,9 +680,10 @@ POST /api/sessions/{sid}/turn  {"input": "…"}
 ```
 GET    /api/sessions/{sid}/candidates/pending   # 恢复未决候选列表（断线/重启后用；按 turn 分组）
 POST   /api/sessions/{sid}/candidates/{candidate_id}/adopt
-POST   /api/sessions/{sid}/turns/{turn_id}/reroll   {"mode": "rephrase|redirect|retarget", "note": "…"}
+POST   /api/sessions/{sid}/turns/{turn_id}/reroll   {"mode": "rephrase|retarget", "note": "…"}
   # 重抽与 /turn 同构：LLM 调用同样套 TraceRecorder 并挂 session.debug_trace（2026-09-11：
-  # 此前 reroll 用裸 LLM，调试面板完全看不到重抽过程）
+  # 此前 reroll 用裸 LLM，调试面板完全看不到重抽过程；2026-09-14 起 /adopt 也走同一个
+  # _traced_runner 入口——采纳会触发审计调用，漏包就查不到那笔）
 POST   /api/sessions/{sid}/turns/{turn_id}/discard
 ```
 
@@ -689,9 +700,9 @@ POST /api/sessions/{sid}/director
 
 ---
 
-## 11. 前端（web/）
+## 11. 前端（web/dist/）
 
-Vite + TS + 原生 DOM 轻量组件：
+原生 JS/CSS/HTML，无构建步骤、无框架：
 
 | 组件 | 职责 |
 |---|---|
@@ -714,8 +725,9 @@ AUTH_TOKEN=                     # 空 = 仅本机；非空 = 要求 X-Auth-Token
 REQUIRE_AUTH_FOR_NON_LOCAL=true # host 非 127.0.0.1/::1 且 AUTH_TOKEN 为空时拒绝启动
 LLM_BASE_URL=…  LLM_API_KEY=…   # OpenAI 兼容任意网关
 MODEL_MAIN=…   # 主模型：导演 / Actor / 说书人默认；未配单项时回退到这里
-MODEL_CHEAP=…  # 辅助模型：质检 / 审计 / L1 分类默认；未配单项时回退到这里
+MODEL_CHEAP=…  # 辅助模型：质检 / 审计默认；未配单项时回退到这里
 # 可选单项覆盖：MODEL_DIRECTOR=… MODEL_ACTOR=… MODEL_STORY=… MODEL_QC=… MODEL_AUDIT=… MODEL_CLASSIFY=…
+# （MODEL_CLASSIFY 是“意图分类 L1”档位的遗留配置键，该 worker 从未落地，配了也不生效）
 TEMP_QC=0.2   # …（各档温度）
 CTX_MEMORY_BUDGET=…   CTX_WINDOW_TURNS=…
 DEFAULT_DURATION_FALLBACK_MIN=10
@@ -729,10 +741,10 @@ AUDIT_ENABLED=true      # v1 为采纳时同步结算；未来改异步需另加
 
 | 层 | 内容 |
 |---|---|
-| 单元 | loader 校验（缺字段/越界/key 重复）；route L0 短路表；movement 裁决（可达/耗时/在场）；claim 冲突判定；access 改判（名单直给落账 + by_knower 索引同步）；记忆拼接模板；模板底稿渲染；LLM 网关 JSON 容错（畸形 JSON / 缺字段 / 重试失败 / 文本降级解析） |
+| 单元 | loader 校验（缺字段/越界/key 重复）；route 规则预结算词表（移动意图 / 跳时对钟，`tests/test_time_intent.py`）；movement 目的地解析（别名 / 找 NPC / 未命中交审计）；access 改判（名单直给落账 + by_knower 索引同步）；记忆拼接模板；模板底稿渲染；LLM 网关 JSON 容错（畸形 JSON / 缺字段 / 重试失败 / 文本降级解析） |
 | 集成（FakeLLM 录制响应，不联网） | **回合事务**：显式采纳指定候选 = 提交 / 放弃 = 回滚无痕（账本文件 hash 不变）；**多候选并存**：重掷/抽卡新增候选且不删旧版，采纳一份后清理该回合全部候选；**唯一候选自动采纳**：下一次输入自动采纳并进入新回合；**候选暂存恢复**：pending 文件重启后按 turn 分组可见、损坏文件跳过且不影响账本；**信息边界**：Actor 工作单不含他人私密、幕后注不进说书人/质检输入；质检拦域外知识 → 脱敏；改判私密后切片自动变化；混合句一次成稿；审计目标完成判定；**审计失败记 audit_last_error（同步模式，无补跑场景）** |
-| 冒烟（真 LLM，可选） | `tests/smoke_qinghsi.py`：青石镇剧本关键几步真跑（手动/定时） |
-| 前端 | Vitest 纯函数（打字机渲染/事件解析）；UI 人工走查 |
+| 冒烟（真 LLM，可选） | `scripts/`：`smoke_turn_real.py` / `smoke_llm.py` / `e2e_check.py` / `verify_sse.py`，以及 `diag_*` 系列诊断探针（手动跑，不入 CI） |
+| 前端 | 无自动化：jsdom 可复现 DOM 逻辑（须把 app.js 与驱动脚本拼成**同一次** eval），但**不能**给 `<select>` 类 bug 下结论——jsdom 不实现 dirty value flag；其余靠 UI 人工走查 |
 | 内容包校验 | `python -m app.world.loader content/<world>`（root 是位置参数，**不是** `--check`；裸跑默认 `content/qinghsi`——旧世界名，已不存在，务必显式传路径）。同一条 `check_world` 也已暴露为 `GET /api/worlds/{id}/check`（2026-09-13） |
 | 造世界 | `tests/test_draft.py`：空白种子包过闸 / 草稿转换（表单值优先、主角卡撞名保住、`start_scene` 越界纠回、空草稿退化）/ `validate_assets` 报语义问题 / 起草器一次修正（`calls == 2` 且问题清单回灌）。`tests/test_api.py` 另覆盖四条新 API、"新世界立刻能开一局"、**两级保存闸门**（软警告 200+problems / 硬拦 400 且主角卡无损）与**单一真相**（工作台 PUT 直写世界目录，世界列表体检同步变红；全量备份导出/导入往返） |
 
@@ -744,7 +756,8 @@ AUDIT_ENABLED=true      # v1 为采纳时同步结算；未来改异步需另加
 |---|---|
 | LLM 角色说出域外知识 | 视图物理隔离（Actor 输入无导演区）+ 质检泄漏比对（参照区只读）+ 泄漏 = 剧情错误 |
 | 本地模型结构化输出不稳定 | JSON schema + 重试 + 文本降级解析 + Pydantic 校验 + 失败给用户可见错误并记录原始输出 |
-| 正文与时钟/账本不一致 | 审计从正文推断 Δt（规则段 Δt 与审计 delta_minutes 汇总为回合 Δt）；正文与时钟的叙事落差留玩家自决 |
+| 正文与时钟/账本不一致 | 时钟按五档优先级链结算（审计 `clock_to` → 规则 `settle_to` → 审计 delta → 规则 delta → 0），规则意图随候选告知审计避免重复计费；正文与时钟的叙事落差留玩家自决。每次结算留痕在 `save.last_settlement`，顶栏时钟 hover 可查 |
+| 时钟被闲聊误推（规则假阳） | 规则刻意克制：无日界词、无相对日界、无 `等到/跳到/直到` 触发词 → 一律不猜，全交审计（假阳比假阴严重，回退机制尚未落地） |
 | 时间线分叉（重掷留痕） | 回合事务：副作用与正文同包回滚，commit 前账本零写入 |
 | 候选区进程崩溃 | 候选未 commit = 未落盘 = 未发生；`candidates/` 持久化，启动后经 `GET candidates/pending` 恢复多份候选列表；正常操作即时清理 |
 | 改判名单不全（已传开者漏收） | 设计口径即接受：改判是补救行为、名单直给，已传开者收不回是玩家明知并接受的逻辑代价；运行期导演可补名单或圆场 |
@@ -755,13 +768,15 @@ AUDIT_ENABLED=true      # v1 为采纳时同步结算；未来改异步需另加
 
 ---
 
-## 15. 里程碑排期
+## 15. 里程碑（全部已完成，此处保留为历史记录）
+
+> 下面的表是当初的排期，S0–S7 均已落地。**当前回归基线 = `pytest`（平铺 test_*.py，183 passed）**；真 LLM 冒烟不在这里，在 `scripts/`（`diag_*` / `smoke_*` / `e2e_check.py`）。
 
 | 阶段 | 技术任务 | 验收 |
 |---|---|---|
-| S0 | uv init + FastAPI hello + Vite 空页 + LLM 网关直连聊天 | 直连对话可跑 |
+| S0 | 项目骨架 + FastAPI hello + 静态页 + LLM 网关直连聊天 | 直连对话可跑 |
 | S1 | 内容包 loader + 校验；store（JSONL 追加 + 原子写）；账本加载索引；`where_is / present_at / visible_to` | 查询测试过 |
-| S2 | **回合主链闭环**：路由 → 编剧（判定+成文合一）→ 质检 → SSE 候选区 → 采纳指定候选/重掷/放弃；PendingTurn 事务 | FakeLLM 集成：采纳提交/放弃清理无痕 |
+| S2 | **回合主链闭环**：规则预结算 → 编剧（判定+成文合一）→ 质检 → SSE 候选区 → 采纳指定候选/重掷/放弃；候选事务 | FakeLLM 集成：采纳提交/放弃清理无痕 |
 | S3 | 工作单装配与切片（viewer 过滤）；known_by 落库；改判私密（名单直给）+ 改判公开；叙述预设管线 | 信息边界测试过（Actor 无他人私密） |
 | S4 | 时空机制：M17 双轨转正 / M18 位置推导与过期 / M1 推断三件套 / M19 裁决链 + 场景模板底稿 + 混合句 | 移动裁决与模板底稿测试过 |
 | S5 | Actor 深抉择派发（隔离回流）；升格通道；导演窗口四功能（含幕后事务/补卡/点名派活） | 窗口全操作走查过 |

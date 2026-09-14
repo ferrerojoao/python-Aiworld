@@ -137,6 +137,12 @@ body {
   color: var(--muted);
 }
 
+/* 有结算留痕时才挂 title（见 app.js settlementTooltip），靠 cursor 提示可 hover */
+#topbar #clock[title] {
+  cursor: help;
+  border-bottom: 1px dotted var(--border);
+}
+
 .topbar-actions {
   margin-left: auto;
   display: flex;
@@ -929,6 +935,17 @@ button:hover {
   justify-content: space-between;
   align-items: center;
   gap: 6px;
+}
+
+/* 名字让位给徽标：侧栏只有 200px，长条目名（尤其英文 id 不可断行）此前会
+   挤到徽标底下/被面板裁掉（2026-09-13 用户反馈"关键词数量盖住归属金字"）。
+   min-width:0 允许收缩，溢出改省略号——名字与徽标从此不重叠。 */
+.md-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .md-item:hover {

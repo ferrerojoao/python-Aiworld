@@ -53,3 +53,8 @@ class SaveData(BaseModel):
     audit_last_error: str | None = None  # 最近一次审计失败记录（不再静默）
     active_lore_ids: list[str] = Field(default_factory=list)  # 本轮装配的世界书命中列表
     goals: list[Goal] = Field(default_factory=list)  # 剧情目标（M14，替代钩子台账）
+    # 最近一次采纳的时间结算留痕（P1 可观测性，2026-09-14）：审计结算结果原本
+    # 算完即丢，玩家看到时钟跳了几小时查不出原因。整条优先级链落在这里
+    # （clock_before/after、delta_rule、delta_audit、source、对钟是否被拒），
+    # 由 /state 透出给顶栏时钟 hover。诊断用，不参与任何逻辑判定。
+    last_settlement: dict | None = None

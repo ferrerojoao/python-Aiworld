@@ -376,6 +376,10 @@ async def get_state(request: Request, sid: str):
         goals.append(item)
     return {
         "clock": session.ledger.save.clock,
+        # 最近一次时间结算留痕（P1）：顶栏时钟 hover 显示，用来解释"时钟为什么
+        # 跳了这么久"——规则推了多少、审计估了多少、是否被保险丝截断、对钟是否
+        # 被拒。纯诊断字段，前端缺它也不影响任何功能。
+        "last_settlement": session.ledger.save.last_settlement,
         "scene": session.scene_description(),
         "scene_id": player_scene,
         "recent_scenes": recent,

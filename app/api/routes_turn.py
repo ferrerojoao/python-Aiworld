@@ -34,10 +34,13 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-@router.post("/{sid}/turn")
-async def post_turn(request: Request, sid: str, body: TurnBody):
-    session = _get_session(request, sid)
-    # Wrap the real LLM with a trace recorder for this turn.
+def _traced_runner(request: Request, session) -> tuple[TurnRunner, TraceRecorder]:
+    """构造带 trace 的 runner —— 凡是会触发 LLM 调用的路由都必须走这里。
+
+    漏套 TraceRecorder 的路由，其调用在调试面板里完全看不见。前两次都是
+    踩了这个坑才补的（2026-09-11 重抽、2026-09-14 采纳），所以收成一个入口，
+    新增路由忘了包时至少只有一处要改。
+    """
     trace = TraceRecorder(request.app.state.llm)
     runner = TurnRunner(
         session,
@@ -46,6 +49,13 @@ async def post_turn(request: Request, sid: str, body: TurnBody):
         preset=request.app.state.global_preset,
     )
     session.debug_trace = trace.entries
+    return runner, trace
+
+
+@router.post("/{sid}/turn")
+async def post_turn(request: Request, sid: str, body: TurnBody):
+    session = _get_session(request, sid)
+    runner, trace = _traced_runner(request, session)
 
     async def event_stream():
         queue: asyncio.Queue = asyncio.Queue()
@@ -134,7 +144,9 @@ async def debug_latest(request: Request, sid: str):
 @router.post("/{sid}/candidates/{candidate_id}/adopt")
 async def adopt_candidate(request: Request, sid: str, candidate_id: str):
     session = _get_session(request, sid)
-    runner = request.app.state.turn_runner_factory(session)
+    # 采纳会触发一次审计 LLM 调用（时间/在场/目标结算都在这里），所以同样要
+    # 套 trace —— 否则点「采纳」时那笔调用在调试面板里查无此call。
+    runner, _ = _traced_runner(request, session)
     try:
         await runner.adopt(candidate_id)
     except KeyError as exc:
@@ -147,14 +159,7 @@ async def reroll_turn(request: Request, sid: str, turn_id: str, body: RerollBody
     session = _get_session(request, sid)
     # 与 /turn 相同：重抽的 LLM 调用也套 TraceRecorder 并挂到 debug_trace，
     # 否则调试面板完全看不到重抽过程（2026-09-11 用户实测反馈）。
-    trace = TraceRecorder(request.app.state.llm)
-    runner = TurnRunner(
-        session,
-        trace,
-        request.app.state.settings,
-        preset=request.app.state.global_preset,
-    )
-    session.debug_trace = trace.entries
+    runner, _ = _traced_runner(request, session)
     try:
         candidate = await runner.reroll(turn_id, mode=body.mode, note=body.note)
     except KeyError as exc:

@@ -663,12 +663,17 @@ def build_director_chat_system(
     return "\n".join(parts)
 
 
-def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -> str:
+def build_audit_work_order(
+    world: WorldContent, ledger: Ledger, scene_id: str, settle_hint: str = ""
+) -> str:
     """Audit work order: settle world side effects from the prose.
 
     The audit infers time advance, location, presence, privacy and one-shot
     vs registered scenes from the narrative, then judges goal completion
     (M14 剧情目标) and lifecycle.
+
+    ``settle_hint``：规则侧已按玩家明示意图定好的绝对时刻。告知审计是为了
+    消除"规则推一次、审计再估一次"的双重计费（2026-09-14）。
     """
     scene_id = scene_id or ledger.current_scene()
     player_name = world.player_name()
@@ -676,6 +681,16 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
     present_ids = ledger.present_at(scene_id)
     names = [pid for pid in present_ids]
     scene_list = "、".join(s.id for s in world.scenes)
+    settle_lines = (
+        [
+            f"- ⚠ 引擎已按玩家明示意图把时钟定到 {settle_hint}（玩家输入里写了跳时）。"
+            "这段跨度**不要再估**：delta_minutes 给 0、clock_to 留空。"
+            "只有当正文自己明确写出另一个到达时刻（如\"到那儿已经是夜里十点\"）时，"
+            "才用 clock_to 给出那个绝对时刻覆盖它。"
+        ]
+        if settle_hint
+        else []
+    )
     return "\n".join(
         [
             "你是 AIWorld 的世界审计：玩家采纳一条正文后，你从正文里结算世界的副作用，并判定剧情目标与生命周期。",
@@ -686,6 +701,7 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
             ' "clock_to": "",'
             ' "completed_goal_ids": ["达成目标id"], "lifecycle": [{"npc_id": "朱明", "status": "retired"}]}',
             "判定规则：",
+            *settle_lines,
             "- location：正文里玩家此刻所在之处。玩家在正文中明确移动（离开/去别处/回家）时更新，否则保持当前场景。",
             "- participants（与 location 联动，二选一）：",
             "  · 玩家**没移动**：以工作单给出的在场名单为**默认基线**——正文没有明确的进出场就原样继承整份名单；"

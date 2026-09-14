@@ -76,6 +76,34 @@ def test_reroll_keeps_old_and_adopt_cleans(tmp_path):
         assert first_id != second_id
 
 
+def test_adopt_route_records_settlement_and_trace(tmp_path):
+    """点「采纳」时那笔审计调用必须进调试面板，结算留痕要透出给前端。
+
+    此前采纳路由用 turn_runner_factory（裸 LLM）→ 调试面板里查无此 call；
+    时间结算结果也算完即丢 → 玩家看到时钟跳了几小时查不出原因。
+    """
+    with _make_client(tmp_path) as client:
+        r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
+        sid = r.json()["sid"]
+        r = client.post(f"/api/sessions/{sid}/turn", json={"input": "问朱明昨天的事"})
+        candidate_id = _candidate_id_from_sse(r.text)
+
+        # 审计只在采纳时跑，所以首回合的 trace 里不该有它。
+        first_trace = client.get(f"/api/sessions/{sid}/debug/latest").json()["trace"]
+        assert not any(e.get("label") == "审计" for e in first_trace)
+
+        r = client.post(f"/api/sessions/{sid}/candidates/{candidate_id}/adopt")
+        assert r.status_code == 200
+
+        trace = client.get(f"/api/sessions/{sid}/debug/latest").json()["trace"]
+        assert any(e.get("label") == "审计" for e in trace)
+
+        settlement = client.get(f"/api/sessions/{sid}/state").json()["last_settlement"]
+        assert settlement["clock_before"]
+        assert settlement["source"] in {"clock_to", "audit", "rule", "none"}
+        assert settlement["delta_applied"] >= 0
+
+
 def test_next_input_auto_adopts_single_candidate(tmp_path):
     with _make_client(tmp_path) as client:
         r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})

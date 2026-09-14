@@ -6,6 +6,33 @@ from app.world.models import NarrativePreset, WorldContent
 from app.workers.schemas import WriterOutput
 
 
+def _rule_brief(bundle: dict) -> str:
+    """规则段预结算说人话。
+
+    原来是把整个 dict 原样 repr 进 prompt（``规则段预结算：{'route': 'jump',
+    'delta_minutes': 720}``）——编剧只能靠猜字段名，而且 route/delta 这类
+    引擎内部词汇对它毫无意义（2026-09-14 改）。
+    """
+    lines: list[str] = []
+    destination = bundle.get("destination")
+    if destination:
+        lines.append(f"- 主角这一拍确定移动到：{destination}（正文从离开当前场景写起）")
+    settle = bundle.get("settle_to")
+    if settle:
+        label = bundle.get("time_label") or ""
+        suffix = f"（{label}）" if label else ""
+        lines.append(
+            f"- 故事时间将推进到：{settle}{suffix}——"
+            "正文的时序要与这个时刻一致，不要再自行另算经过多久"
+        )
+    if not lines:
+        return ""
+    return (
+        "规则段预结算（引擎已按玩家输入算好的硬事实，与你的叙述冲突时以它为准）：\n"
+        + "\n".join(lines)
+    )
+
+
 async def run_writer(
     llm,
     world: WorldContent,
@@ -61,7 +88,9 @@ async def run_writer(
             }
         )
     if rule_bundle:
-        messages.append({"role": "user", "content": f"规则段预结算：{rule_bundle}"})
+        brief = _rule_brief(rule_bundle)
+        if brief:
+            messages.append({"role": "user", "content": brief})
     if prior_output is not None:
         echo = prior_output.model_copy(update={"actor_questions": []})
         messages.append({"role": "assistant", "content": echo.model_dump_json()})
