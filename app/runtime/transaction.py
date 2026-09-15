@@ -584,7 +584,16 @@ class Transaction:
                 change["skipped"].append({"state_id": state_id, "reason": "找不到该状态 id"})
                 continue
             npc_id, index = hit
-            item = self.ledger.save.entities[npc_id].states.pop(index)
+            item = self.ledger.save.entities[npc_id].states[index]
+            # ① 已经宣布它结束过（`expired_at` 是**已处理**哨兵）：同一回合再 pop 一次
+            # 会重复落一条「状态结束」记账事件，且直接把条目从存档抹掉——「失效不删除」
+            # 是给玩家留撤销入口的，这里删了就撤不成。当成已处理，跳过。
+            if item.expired_at:
+                change["skipped"].append(
+                    {"state_id": state_id, "reason": "已到期（到期清算已处理）"}
+                )
+                continue
+            self.ledger.save.entities[npc_id].states.pop(index)
             event_id = self.ledger.allocate_event_id()
             self._append_state_event(
                 event_id, npc_id, clock, f"{npc_id}状态结束：{item.text}"

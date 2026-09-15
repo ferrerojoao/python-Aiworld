@@ -1,9 +1,9 @@
 """角色状态 · 长期事实（REQ 〇章「角色状态」）的装配覆盖。
 
-Step 1 = 数据 + 注入（编剧 / 审计两处），**不含自动产生**——所以这些测试都是
-先手塞状态、再断装配结果。NPC Actor 的可见性过滤（``public``）属 Step 3，
-这里反过来钉住"现在不给 Actor"：将来把状态接进 Actor 切片时本测试会失败，
-提醒设计者必须同时实现 public 过滤，不要照搬全量。
+Step 1 = 数据 + 注入（编剧 / 审计 / Actor 三处），**不含自动产生**——所以这些测试
+都是先手塞状态、再断装配结果。Actor 那一路 2026-09-15 接上：自己的全给、旁人只给
+``public``（当时的哨兵测试正等着这一天——它断言"不给 Actor"，接的时候必须一并
+把两桶的分法写进断言，而不是照搬全量）。
 """
 
 from __future__ import annotations
@@ -58,9 +58,9 @@ def _writer_order(session) -> str:
 
 def test_player_state_line_rides_with_the_card(session) -> None:
     """主角状态紧贴人物卡行成对（都在「玩家资料」段内）。"""
-    _seed(session, session.world.player_name(), "沐浴龙血，普通刀剑伤不了他")
+    _seed(session, session.world.player_name(), "普通刀剑伤不了他", public=True)
     out = _writer_order(session)
-    assert "[主角] 状态：沐浴龙血，普通刀剑伤不了他" in out
+    assert "[主角] 状态：普通刀剑伤不了他" in out
     assert out.index("[主角] 名字：") < out.index("[主角] 状态：")
 
 
@@ -105,20 +105,26 @@ def test_npc_cap_is_three(session) -> None:
 
 
 def test_until_renders_as_a_date(session) -> None:
-    _seed(session, session.world.player_name(), "左臂骨裂", until="2001-07-20T08:00:00")
+    _seed(
+        session,
+        session.world.player_name(),
+        "左臂骨裂",
+        public=True,
+        until="2001-07-20T08:00:00",
+    )
     assert "[主角] 状态：左臂骨裂（至 2001-07-20）" in _writer_order(session)
 
 
 def test_audit_work_order_carries_states_with_ids(session) -> None:
     """审计必须知道状态（否则会判出与状态自相矛盾的结论），且要看得见 id。"""
     player = session.world.player_name()
-    _seed(session, player, "沐浴龙血，普通刀剑伤不了他")
+    _seed(session, player, "普通刀剑伤不了他")
     out = build_audit_work_order(
         session.world, session.ledger, session.ledger.current_scene()
     )
     assert "角色状态（长期事实，正文必须与之自洽" in out
     item = session.ledger.save.entities[player].states[0]
-    assert f"[{player}] [{item.id}] 沐浴龙血，普通刀剑伤不了他" in out
+    assert f"[{player}] [{item.id}] 普通刀剑伤不了他" in out
 
 
 def test_writer_order_hides_state_ids(session) -> None:
@@ -157,7 +163,7 @@ def test_state_add_discipline_rejects_transient_facts(session) -> None:
         session.world, session.ledger, session.ledger.current_scene()
     )
     assert "过几天、几十轮回头看" in out  # 判据问句：够不够"长期"
-    assert "消息、情报、听说的别人的事" in out  # 反例 ①：她妈住院 → 事件，不是状态
+    assert "消息 / 情报 / 别人的事" in out  # 反例 ①：她妈住院 → 事件，不是状态
     assert "剧情目标" in out  # 并指路：要长期追踪的情节走目标
     assert "一次性的当下" in out  # 反例 ②：心情 / 手上沾泥 / 拿着棍子
     assert "人物卡" in out  # 反例 ③：那个角色自己的隐秘与前史
@@ -173,13 +179,72 @@ def test_state_add_discipline_forbids_aims_and_hearsay(session) -> None:
     assert "宁缺勿滥" in out
 
 
-def test_actor_view_does_not_leak_states(session) -> None:
-    """哨兵：Step 1 有意不给 Actor（纯属未实现 public 过滤前的防泄漏护栏）。"""
+def test_state_add_discipline_forbids_causes(session) -> None:
+    """状态只写现状、不写成因（2026-09-15 拍板）；`public` 只管这条状态是否可见。
+
+    一个布尔表达不了"成因私密、表现公开"两层——成因与表现焊在同一句里，
+    标 `true` 会把成因一起交给 NPC Actor，标 `false` 又连表现一起藏起来，两头
+    都不对。所以状态只承载**表现**，成因留在产生它的那条事件里（`source_event`
+    指得着）。样例最容易被顺手改回去，所以这里**逐字钉住审计工作单的 JSON 样例**。
+    """
+    out = build_audit_work_order(
+        session.world, session.ledger, session.ledger.current_scene()
+    )
+    assert "只写「他此刻是什么」，不写「他怎么变成这样的」" in out  # 主纪律
+    assert '{"npc_id": "刘星", "text": "普通刀剑伤不了他"' in out  # 样例 = 表现
+    assert "public = 旁人" in out
+    assert "成因（含括号补注）留在产生它的那场戏里，不复述" in out  # 补注多半就是成因的另一种写法（"额角有旧疤（打架留的）"）
+
+    dout = _director_order(session)
+    # 只钉**稳定核心短语**：两侧口径共享这一句，措辞压缩（2026-09-15）时不必再改断言。
+    assert "只写「他此刻是什么」" in dout  # 导演窗口同一条口径
+    assert "public = 旁人看不看得见" in dout
+
+
+def test_actor_gets_own_states_and_only_public_ones_of_others(session) -> None:
+    """Actor 的状态两桶（2026-09-15 接）：自己的全给、旁人的只给 ``public``。
+
+    接这一路要修的病：Actor 之前拿不到任何状态 → **不知道自己身上的伤** →
+    交出与事实自相矛盾的动作（"腿伤在身却健步如飞"）。所以两桶分法是：
+      · 自己：**全给，不过滤 public**——`public` 是"旁人看不看得见"，对本人无意义；
+      · 旁人：只给 `public=true` 的条目（这才是这个字段唯一的正经用途）；
+      · 两桶都**不带** `（至 …）` / `（秘）`——那两个标记是给编剧排布用的。
+
+    本测试的前身是断言"不给 Actor"的哨兵，2026-09-15 接上时按注释所说一并
+    钉住了两桶分法，而不是照搬全量。
+    """
     npc = _an_npc(session)
+    player = session.world.player_name()
     scene = _place(session, npc)
-    _seed(session, npc, "怕水", public=True)
+    _place(session, player)  # 主角也在场：快照与状态两桶同口径
+    _seed(session, npc, "怕水")  # 自己的秘（public 默认 False）——本人照样知道
+    _seed(session, npc, "左腿瘸了", public=True, until="2001-07-20")
+    _seed(session, player, "普通刀剑伤不了他", public=True)
+    _seed(session, player, "其实色盲")  # 旁人的秘——Actor 不该看到
+
     out = build_actor_work_order(session.world, session.ledger, npc, scene)
-    assert "状态：" not in out
+    assert "你此刻的状态：怕水；左腿瘸了" in out  # 自己的全给（含不公开的）
+    assert f"在场旁人的状态" in out
+    assert f"{player}（玩家）：普通刀剑伤不了他" in out  # 旁人的公开表现给
+    assert "其实色盲" not in out  # 旁人的秘不给
+    assert "左腿瘸了（" not in out  # 不带到期日标记（那是编剧排布用的）
+
+
+def test_writer_line_marks_unpublic_states(session) -> None:
+    """编剧侧给不公开的条目挂「秘」（2026-09-15 拍板）。
+
+    编剧全知，而全流程里**唯一由他决定"谁该知道什么"的地方**是他填的
+    ``actor_questions[].context``——不把秘辛标出来，他很可能把"你亲眼看见他
+    喝下龙血"写进某个 NPC 的情境，``public=false`` 就形同虚设。
+    """
+    player = session.world.player_name()
+    _seed(session, player, "其实色盲")  # public 默认 False
+    _seed(session, player, "普通刀剑伤不了他", public=True)
+    _seed(session, player, "左臂骨裂", until="2001-07-20T08:00:00")  # 秘 + 到期日并存
+    assert (
+        "[主角] 状态：其实色盲（秘）；普通刀剑伤不了他；左臂骨裂（秘，至 2001-07-20）"
+        in _writer_order(session)
+    )
 
 
 def test_old_save_without_states_still_opens(session) -> None:

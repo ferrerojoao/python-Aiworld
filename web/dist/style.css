@@ -1516,18 +1516,6 @@ body.light .rail-item.current {
   margin-top: 4px;
 }
 
-.states-hint {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.6;
-  margin: 0 0 12px;
-}
-
-.states-hint b {
-  color: var(--text);
-  font-weight: 500;
-}
-
 /* ---------- 移动端 ---------- */
 @media (max-width: 720px) {
   #app {

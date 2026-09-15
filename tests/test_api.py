@@ -510,7 +510,7 @@ def test_state_exposes_states_and_change_trace(tmp_path):
         session.ledger.save.entities[player] = EntityRuntime(
             states=[
                 StateItem(
-                    text="沐浴龙血，普通刀剑伤不了他",
+                    text="普通刀剑伤不了他",
                     since="2001-07-10T08:00:00",
                     source_event="ev_00001",
                     public=False,
@@ -529,7 +529,7 @@ def test_state_exposes_states_and_change_trace(tmp_path):
 
         state = client.get(f"/api/sessions/{sid}/state").json()
         item = state["states"][player][0]
-        assert item["text"] == "沐浴龙血，普通刀剑伤不了他"
+        assert item["text"] == "普通刀剑伤不了他"
         assert item["id"].startswith("st_")  # 撤销靠这个 id，不能省
         assert item["public"] is False
         assert item["source_event"] == "ev_00001"  # 可追溯到"哪条正文给的"
@@ -558,14 +558,14 @@ def test_revoke_state_route(tmp_path):
         assert view[0]["is_player"] is True and view[0]["visible"] == []
 
         session.ledger.save.entities[player] = EntityRuntime(
-            states=[StateItem(text="沐浴龙血，普通刀剑伤不了他", public=False)]
+            states=[StateItem(text="普通刀剑伤不了他", public=False)]
         )
         session.ledger.persist_save()
 
         state = client.get(f"/api/sessions/{sid}/state").json()
         assert state["player_name"] == player  # 面板要单列主角
         entry = state["state_view"][0]
-        assert [it["text"] for it in entry["visible"]] == ["沐浴龙血，普通刀剑伤不了他"]
+        assert [it["text"] for it in entry["visible"]] == ["普通刀剑伤不了他"]
         item_id = entry["visible"][0]["id"]
 
         assert (

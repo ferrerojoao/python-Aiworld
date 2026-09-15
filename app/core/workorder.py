@@ -57,16 +57,32 @@ def world_summary_block(world: WorldContent) -> list[str]:
 # 角色状态 · 长期事实（REQ 〇章「角色状态」，2026-09-14）
 # ---------------------------------------------------------------------------
 #
-# "他此刻是什么"（沐浴龙血后免疫普通武器 / 独臂 / 病倒）：引擎一行都不读，
-# 唯一职能是**让编剧与审计知道**。与 lifecycle 的分界 = 引擎会不会读它——
-# 所以两类不合并（合并等于让 LLM 去猜"这条要不要影响引擎行为"）。
+# "他此刻是什么"（免疫普通武器 / 独臂 / 病倒）：引擎一行都不读，
+# 唯一职能是**让 LLM 知道**（编剧 / 审计 / Actor 三处）。与 lifecycle 的分界 =
+# 引擎会不会读它——所以两类不合并（合并等于让 LLM 去猜"这条要不要影响引擎行为"）。
+#
+# **只写现状，不写成因**（2026-09-15 用户拍板）：一条状态 + 一个 public 布尔
+# 表达不了"成因私密、表现公开"两层——写成"沐浴龙血，普通刀剑伤不了他"，
+# public=true 会把成因一起交出去，public=false 又连表现一起藏起来，两头不对。
+# 所以让状态只承载**表现**（"普通刀剑伤不了他"），成因留在产生它的那条事件里
+# （``source_event`` 指得着）；public 只表示这条状态旁人看不看得见。
+#
+# **三处口径在同一天定稿**（2026-09-15）：
+#   · 编剧 = 全知 + 不公开条目挂「秘」——他填 actor 的 context 时要知道避让谁；
+#   · 审计 = 全知、不带标记（它不写 NPC 情境）；
+#   · Actor = 自己的**全量**（public 说的是旁人，对本人没有意义）+ 在场旁人的
+#     public 条目；不带 `（至 …）` / `（秘）`（那两个是给编剧排布用的）。
 #
 # 位置：紧贴该角色的人物卡行（主角在「玩家资料」段，NPC 在他自己那行之后）。
 # 空 = 整块不出现，零成本；不带任何规则等级抬头（与事件日志同性质的资料）。
 
 STATE_CAP_PLAYER = 6  # 主角状态上限
 STATE_CAP_NPC = 3  # 每个在场 NPC 的状态上限
-STATE_TEXT_MAX = 30  # 单条状态的字数上限（审计提议侧同时用它截断，单一事实源）
+STATE_TEXT_MAX = 20  # 单条状态的字数上限（审计提议侧同时用它截断，单一事实源）
+# 2026-09-15 由 30 收到 20（用户："状态用词得精炼些，不能太长"）：一条状态该是**一句话
+# 一个事实**（"左腿瘸了" / "普通刀剑伤不了他"），不是"事实 + 解释"。30 字够塞两个分句，
+# 实际会诱导出"左小腿骨裂，走路一瘸一拐，跑不动"这种堆叠；20 字只够一个分句，
+# 配合"不写括号补注"的纪律把成因与补充全都挡在外面。
 STATE_ADD_PER_CHAR = 1  # 同一角色单回合最多新增几条（防"给同一个人一口气编一串"）
 # 截断按**录入顺序**（重要的往上放），与 rules.lorebook 归属条目的口径一致——
 # 不按时间排：重要的状态未必是最新的（"天生盲眼"比"今天擦伤膝盖"重要得多）。
@@ -89,18 +105,36 @@ def _visible_items(entities: dict, name: str, cap: int) -> tuple[list, int]:
     return items[:cap], max(0, len(items) - cap)
 
 
-def _item_text(item) -> str:
-    """单条状态的人话（带可选到期日）。"""
+def _item_text(item, mark_secret: bool = False) -> str:
+    """单条状态的人话（带可选到期日；``mark_secret`` 时给不公开的条目挂「秘」）。
+
+    ``mark_secret`` 只给**编剧**用（2026-09-15 加）：编剧是全知的，而全流程里
+    唯一由他决定"谁该知道什么"的地方就是 ``actor_questions[].context``——不把
+    秘辛标出来，他很可能把"你亲眼看见他喝下龙血"写进某个 NPC 的情境，
+    ``public=false`` 就形同虚设。审计不需要（它不写 NPC 情境），Actor 也不需要
+    （对他自己的状态，"秘"是相对谁而言？）。
+    """
     text = (item.text or "").strip()
-    return f"{text}（至 {item.until[:10]}）" if item.until else text
+    notes: list[str] = []
+    if mark_secret and not item.public:
+        notes.append("秘")
+    if item.until:
+        notes.append(f"至 {item.until[:10]}")
+    return f"{text}（{'，'.join(notes)}）" if notes else text
 
 
-def state_line(entities: dict, name: str, cap: int, label: str = "") -> str:
+def state_line(
+    entities: dict, name: str, cap: int, label: str = "", mark_secret: bool = True
+) -> str:
     """某角色的一行状态（编剧侧用的合并形态）；无状态返回空串。
 
-    只吐 ``text``（外加 ``until`` 的到期日提示）——``source_event`` 与 ``public``
-    是给机器看的（可追溯、可见性过滤），不进提示词；``id`` 只在审计侧露
-    （``states_block(include_ids=True)``），因为只有审计需要按 id 精确移除。
+    只吐 ``text``（外加 ``until`` 的到期日，以及不公开条目的「秘」标记）——
+    ``source_event`` 依旧不进提示词（它是给机器看的可追溯锚点）；``id`` 只在
+    审计侧露（``states_block(include_ids=True)``），因为只有审计要按 id 精确移除。
+
+    「秘」（``public=false``，2026-09-15 加）：编剧全知，唯一会把"谁该知道什么"
+    写出去的地方是他填的 ``actor_questions[].context``。不给标记，他可能把
+    "你亲眼看见他喝下龙血"写进那个 NPC 的情境，``public=false`` 就白设了。
 
     ``label`` 只用于抬头（主角在编剧工作单里叫「主角」，与紧邻的人物卡行成对；
     其余一律用角色中文名——审计工作单通篇用中文名）。
@@ -108,7 +142,8 @@ def state_line(entities: dict, name: str, cap: int, label: str = "") -> str:
     items, hidden = _visible_items(entities, name, cap)
     if not items:
         return ""
-    line = f"[{label or name}] 状态：{'；'.join(_item_text(it) for it in items)}"
+    body = "；".join(_item_text(it, mark_secret=mark_secret) for it in items)
+    line = f"[{label or name}] 状态：{body}"
     if hidden:
         line += f"（另有 {hidden} 条状态未列出）"
     return line
@@ -258,6 +293,64 @@ def director_states_block(ledger: Ledger, present_ids: list[str]) -> list[str]:
         if rows:
             lines.append(head)
             lines.extend(rows)
+    return lines
+
+
+def actor_state_block(ledger: Ledger, npc_id: str, present_ids: list[str]) -> list[str]:
+    """Actor 侧的两段状态：**自己的全给、旁人的只给 ``public``**（2026-09-15 接）。
+
+    为什么自己的**不过滤 public**：``public`` 的语义是"**旁人**看不看得见"——对
+    本人毫无意义。他知道自己腿上打着石膏、知道自己刀枪不入；不给他，就会出现
+    "腿伤在身却健步如飞"这种自相矛盾的动作（接这一路要修的就是这个病）。
+
+    为什么旁人的**只给 ``public=true``**：这才是这个字段唯一的正经用途——他当场
+    看得出来的样子（"刘星挨了一刀没事"）。旁人不在场一律不给（物理隔离视角），
+    别人身上的秘辛一律不给。逐个按 ``STATE_CAP_NPC`` 截断，且**先筛 public 再截断**
+    ——否则三条秘辛会把第 4 条公开的表现挤掉，Actor 反而"看不见"一件明明看得见的事。
+
+    为什么这里**不吐 ``（至 …）`` 与 ``（秘）``**：那两个标记是给编剧排布用的
+    （定终点、防泄漏）。Actor 只要事实本身——他知道自己腿伤着，但不知道"世界账上
+    三天后自愈"这种信息。
+
+    ``present_ids`` 由调用方给（``ledger.present_at``）；本函数自己再补一次主角，
+    与 ``scene_snapshot_block`` 同口径——工作单永远是主角所在场景的工作单。
+    """
+    player = ledger.world.player_name()
+    entities = ledger.save.entities
+
+    def words(items) -> str:
+        return "；".join(
+            (it.text or "").strip() for it in items if (it.text or "").strip()
+        )
+
+    lines: list[str] = []
+    own, own_hidden = _visible_items(entities, npc_id, STATE_CAP_NPC)
+    if own:
+        tail = f"（另有 {own_hidden} 条未列出）" if own_hidden else ""
+        lines.append("你此刻的状态：" + words(own) + tail)
+
+    present = [pid for pid in present_ids if pid and pid != npc_id]
+    if player != npc_id and player not in present:
+        present.insert(0, player)
+    others: list[str] = []
+    for pid in present:
+        runtime = entities.get(pid)
+        if runtime is None:
+            continue
+        shown = [
+            it
+            for it in runtime.states
+            if (it.text or "").strip() and not it.expired_at and it.public
+        ][:STATE_CAP_NPC]
+        if not shown:
+            continue
+        label = pid + ("（玩家）" if pid == player else "")
+        others.append(f"{label}：{words(shown)}")
+    if others:
+        lines += [
+            "在场旁人的状态（你看得出来的部分）：",
+            *["  " + row for row in others],
+        ]
     return lines
 
 
@@ -684,11 +777,10 @@ def writer_story_rules(roster: list[str] | None = None) -> list[str]:
     """
     if roster:
         roster_clause = (
-            "本轮可上缴深抉择的角色：" + "、".join(roster) + "。"
-            "其余角色一律由你直接决定并写进正文。"
+            "本轮可上缴深抉择的角色：" + "、".join(roster) + "，其余你直接写。"
         )
     else:
-        roster_clause = "本轮没有任何角色可上缴深抉择，所有抉择都由你直接决定并写进正文。"
+        roster_clause = "本轮没有任何角色可上缴深抉择，所有抉择你直接写。"
     return [
         "【二级 · 情节合理性】",
         "信息边界（角色不是你）：事件日志、幕后注、世界书都是你案头的编剧资料，角色本人并不知道——"
@@ -697,10 +789,10 @@ def writer_story_rules(roster: list[str] | None = None) -> list[str]:
         "无人物卡的即兴角色只知道眼前可见的东西。",
         # actor_questions / context 的**字段写法**不在这里展开（2026-09-13 用户指出：
         # 二级先于一级，此处提到 context 时它还没被定义）——只讲机制并指向一级。
-        "抉择归属：标（配 Actor）的角色撞上深抉择（内心判断 / 涉密反应 / 是否信任）时，"
+        "抉择归属：标（配 Actor）的角色撞上深抉择时，"
         "把这一拍写到抉择点为止，在 actor_questions 里上缴（字段写法见「一级 · 输出格式」）——"
-        "这一拍交给他的 Actor 决定，引擎决定后再把整场写全；"
-        "标（导演代笔）的角色或普通对话由你直接写出来。"
+        "决策回来后再改稿补完；"
+        "标（导演代笔）的角色与普通对话由你直接写出来。"
         + roster_clause,
         "设定一致（位置）：在场名单是最近一次记录的快照，可能已过期——结合每人最后被目击的时刻"
         "与其人物卡合理推断他此刻在哪，找到、扑空、他挪了地方都是合理的叙事。",
@@ -763,15 +855,15 @@ def writer_output_format(player_name: str = "玩家") -> list[str]:
         '{"prose": "正文全文", "summary": "一句话摘要（不超过30字）",'
         ' "actor_questions": [{"npc_id": "朱明", "question": "…", "context": "…"}]}',
         "prose：本场戏正文全文——从第一句话写到本场结束（每稿都是完整全文）。",
-        "summary：本场戏从头到尾的核心事件摘要，供事件日志使用（与 prose 同样覆盖整场）。",
+        "summary：整场核心事件的摘要，供事件日志使用（与 prose 同样覆盖整场）。",
         "actor_questions：深抉择的提问清单，没有时给空数组 []；每项三个字段：",
         "  · npc_id：必须是在场名单方括号里逐字出现的角色名（如 朱明）。",
         "  · question：你要问他的那个抉择本身。",
-        f"  · context：人称约定只约束这个字段（正文照旧）——以该 NPC 为「你」，"
-        f"提到玩家一律写{ctx_clause}，一句只用一个人称；这个字段的范围就是该 NPC "
-        "本人会知道的情境，你的判断、私密与幕后注留在戏外。",
-        "时间、地点、在场者、私密情境等世界变化都由引擎从你的正文里结算——你只把变化写清楚"
-        "（如「天黑了」「走出网吧」）。输出字段以上面三个为准。",
+        f"  · context：人称约定只约束这个字段——以该 NPC 为「你」，"
+        f"提到玩家一律写{ctx_clause}，一句只用一个人称；范围限于该 NPC "
+        "本人会知道的情境，不留你的判断与幕后注。",
+        "时间、地点、在场者、私密情境等世界变化由引擎从你的正文结算——你只把变化写清楚"
+        "（如「天黑了」）。字段以上面三个为准。",
     ]
 
 
@@ -786,12 +878,14 @@ def actor_contract(npc_name: str, player_name: str = "玩家") -> list[str]:
     return [
         f"你正在扮演：{npc_name}。你的决定只用下面「你知道的事」里的信息。",
         "人称读法（先把这几个词认准）：",
-        f"- 「你」= 你自己（{npc_name}）；情境里用「他/她/名字」这类第三人称提到你时，那也是在说你。",
+        f"- 「你」= 你自己（{npc_name}）；情境里用「他/她/名字」提到你，也是在说你。",
         f"- 「{player_name}」= 你的对话对象（人类玩家），是另一个人，不是你。",
-        "- 某件事的归属出现矛盾（像是你做的、又像不是你做的）时，以「你知道的事」清单为准："
-        "清单里没有的事，就不是你做的。",
+        "- 归属有矛盾时以「你知道的事」为准：清单里没有的事，就不是你做的。",
         "纪律（本契约的硬边界）：",
         "- 你说的话来自「你知道的事」；超出这个范围的部分，留给知道的人去说。",
+        "- 「你此刻的状态」与「在场旁人的状态」两段（若出现）与「你知道的事」同级，"
+        "都能拿来作决定：前者是你自己身上的事，"
+        "后者是你当场看得出来的样子。两段都没写到的，就是你不知道的。",
         f"- 只输出你自己的决定（decision / action_hint / tone）；{player_name}的抉择留给本人。",
         '只返回 JSON，格式如下：',
         '{"decision": "你的决定", "action_hint": "你会做的动作/行为", "tone": "语气"}',
@@ -807,7 +901,8 @@ def build_actor_work_order(
     """Physically isolated work order for one NPC's deep choice.
 
     Cut per TDD §6: the actor gets world hard rules, the scene's perceptible
-    area, its own card (incl. persona patch) and its own memory slice only.
+    area, its own card (incl. persona patch), **its own states + the present
+    others' ``public`` ones** (2026-09-15) and its own memory slice only.
     No private notes, no other NPCs' secrets, no lore candidates, no goals,
     no conflicts, no writer motivation.
     """
@@ -822,6 +917,9 @@ def build_actor_work_order(
     ]
     if npc.personal_secrets:
         parts.append(f"你心里的事（只有你自己知道）：{npc.personal_secrets}")
+    # 状态紧贴人物卡：自己身上发生的事，与"他是谁"同一段读起来最自然（与编剧侧
+    # character_block 同一位置逻辑）。自己的全给、旁人只给 public（见函数注释）。
+    parts += actor_state_block(ledger, npc.id, ledger.present_at(scene_id))
     # 在场名单剔掉自己；主角在名单里自带「（玩家）」标注，Actor 据此认人
     #（2026-09-13 主角入人物表后不再需要"显式补上玩家"那一步）。
     parts += scene_snapshot_block(world, ledger, scene_id, exclude=[npc_id])
@@ -879,32 +977,32 @@ def build_director_chat_system(
         # action 的触发条件只在下方"输出字段"一节说一次（2026-09-12 去冗余）：
         # 此前抬头也重复了一遍"只在玩家明确要求时才填 action"。
         "可执行的幕后操作：",
-        "- 静默覆写 override：玩家声明某人/某物在哪或去做某事 → payload {subject, location}",
-        "- 记忆注入 inject_memory：玩家要求给某 NPC 私下注入一条记忆 → payload {npc_id, memory}（只有他知道）",
-        "- 事件访问改判 access_rejudge：玩家要求某事件公开或私密 → payload {event_id, known_by: [知情者...] 或 null}",
-        "- 剧情目标 set_goal：玩家要求设立/废弃剧情目标 → payload {text, kind: big|small, subject?, big_goal_id?, npc_id?}（设立）或 {goal_id, status: abandoned}（废弃）；"
-        "大目标=主线（章节，往哪去），小目标=支线（节拍，下一步做什么）；subject=目标归属者（留空=主角的目标，玩家替某角色设立时给该角色的中文名）；"
-        "小目标要用 big_goal_id 挂到某个大目标下（挂靠后才能多挂，也才能被编剧当作主线的下一步推进）；"
-        "额度：大目标上限 2 条、单个大目标下子目标上限 3 条、未挂靠支线上限 2 条；大目标完成/废弃时其下子目标一并撤下；"
-        "设立大目标不需要 big_goal_id（层级只有一层）",
-        "- 角色退场 retire：玩家要求某人永久退场（死亡/远行/消失，不再出现在任何场景）→ payload {npc_id}；"
-        "不可逆，退场者从此退出在场推导与主动调度",
-        "- 状态新增 state_add：玩家要求给某人加一条状态（长期事实）→ payload {npc_id, text, until?, public?}；"
-        "text 一行不超过 30 字，写「他此刻是什么」而不是「发生了什么」；until 只在玩家说了明确期限时填（如「三天」→ 当前时间 +3 天的 ISO 时刻），否则留空；"
-        "public = 这个状态的外在表现是否旁人看得出来（左腿瘸了 = true，其实色盲 = false），默认 false",
-        "- 状态撤销 state_revoke：玩家要求撤掉某人的某条状态 → payload {state_id}（上方清单里的方括号 id，逐字照抄）；"
-        "找不到 id 时退而给 {npc_id, text}（text 与清单逐字一致）；撤销删掉这条长期事实并留痕，正文与事件日志不动",
-        "（人物卡编辑、Actor 档位、转正/场景注册一律由世界工作台直接编辑，不走导演窗口。）",
-        "纪律：action 是一份提案——玩家确认之后才生效。"
-        "state_add 与 state_revoke 由玩家明确要求时才提（这是玩家在改自己的世界，你不需要替他去正文里找理由）；"
-        "语义上像前史也没关系——玩家说了算，不要因为「这条不算长期事实」而拒绝。",
-        "讨论剧情时，若结论明确，最后给一句简短的输入建议（玩家可直接复制进正文框）。",
+        "- 覆写 override：声明某人/某物在哪或去做什么 → payload {subject, location}",
+        "- 记忆注入 inject_memory：给某 NPC 私下注入一条记忆（只有他知道）→ payload {npc_id, memory}",
+        "- 访问改判 access_rejudge：某事件改为公开或私密 → payload {event_id, known_by: [知情者...] 或 null}",
+        "- 剧情目标 set_goal：设立 → payload {text, kind: big|small, subject?, big_goal_id?, npc_id?}；"
+        "废弃 → payload {goal_id, status: abandoned}。"
+        "大目标=主线章节、小目标=支线节拍；subject=归属者（留空=主角）；"
+        "小目标用 big_goal_id 挂到大目标下；"
+        "额度：大 ≤2 / 单大目标下子 ≤3 / 未挂靠支线 ≤2；大目标完成或废弃时其下子目标一并撤下",
+        "- 退场 retire：某人永久离开舞台（死亡/远行/消失）→ payload {npc_id}；"
+        "不可逆，退场者退出在场推导与主动调度",
+        f"- 状态新增 state_add：加一条长期事实 → payload {{npc_id, text, until?, public?}}；"
+        f"text ≤ {STATE_TEXT_MAX} 字，只写「他此刻是什么」不写成因；"
+        "until 只在玩家给了明确期限时填（「三天」→ 当前时间 +3 天的 ISO 时刻）；"
+        "public = 旁人看不看得见，默认 false",
+        "- 状态撤销 state_revoke：→ payload {state_id}（上方清单里的方括号 id，逐字照抄）；"
+        "找不到 id 时退而给 {npc_id, text}（与清单逐字一致）",
+        "（人物卡、Actor 档位、转正/场景注册走世界工作台，不走这里。）",
+        "纪律：action 是一份提案，玩家确认后才生效。"
+        "state_add / state_revoke 只在玩家明确要求时提——他在改自己的世界，"
+        "不必拿「这算不算长期事实」拦他。",
+        "讨论有明确结论时，末尾给一句可直接复制进正文框的输入建议。",
         "",
-        "输出必须是 JSON 对象，字段：",
-        '{"reply": "你的回复文本（直接回答玩家，必填）", "action": null | {"type": "override|inject_memory|access_rejudge|set_goal|retire|state_add|state_revoke", "payload": {"字段": "值"}}}',
-        "reply：给玩家的戏外回复。",
-        "action：只有当玩家明确要求执行幕后操作时才填；否则为 null。",
-        "注意：payload 里的 npc_id / subject 用角色中文名（与在场名单/角色资料逐字一致）。",
+        "只返回 JSON，字段：",
+        '{"reply": "给玩家的戏外回复", "action": null | {"type": "override|inject_memory|access_rejudge|set_goal|retire|state_add|state_revoke", "payload": {"字段": "值"}}}',
+        "action：只有玩家明确要求执行幕后操作时才填，否则 null。",
+        "payload 里的 npc_id / subject 用角色中文名（与在场名单、角色资料逐字一致）。",
         "输出字段只有 reply 与 action 两个。",
     ]
     return "\n".join(parts)
@@ -939,77 +1037,64 @@ def build_audit_work_order(
         else []
     )
     state_lines = [
-        "- state_add：只收**长期事实**——这个角色**此刻是什么**（体质 / 伤残 / 长期病症 / "
-        "能力 / 身份处境）。先自问一句：**过几天、几十轮回头看，这条还成立吗？**"
-        "这一场戏结束就没了 → 不要写。",
-        "  **不算状态的，一律不要输出**："
-        "① 消息、情报、听说的别人的事（\"听说她妈住院了\"\"他昨天被打了\"）——"
-        "那是**事件**，事件日志已经记了；要长期追踪这条线请走**剧情目标**，不要塞进状态。"
-        "② 一次性的当下（心情不好 / 手上沾了泥 / 手里拿着棍子）——随时会变，不是\"他是什么\"。"
-        "③ 某个角色自己的隐秘或前史（\"他爸欠了债\"）——那是**人物卡**的事，不是状态。",
-        "  只填正文**已经写成事实**的变化，不写意图、不写别人的评价"
-        "（\"想变强\"\"听说他很厉害\"都不算）。**拿不准 → 空数组**：状态会常年挂在"
-        "后面每一轮的提示词里，宁缺勿滥。",
-        f"  同一角色本回合最多 {STATE_ADD_PER_CHAR} 条；text 不超过 {STATE_TEXT_MAX} 字、"
-        "写成事实（\"沐浴龙血，普通刀剑伤不了他\"）。能说清持续终点的给 until"
-        "（\"病倒三天\" → 按当前时间往后推的日期），长期成立的留空——"
-        "**若你说不出这能量到一个日子以后，多半它本来就不该是状态**。"
-        "public 指这条状态的**表现**会不会被旁人看出来"
-        "（当众挨一刀没事 → true；体内有龙血 → false）。",
-        "- state_remove：正文明确写出某个**已有状态结束**（伤好了 / 毒解了 / 失去了能力）时，"
-        "给出下「角色状态」清单里对应的方括号 id；拿不准就给空数组（宁可留着，不要误删）。",
+        "- state_add：只收**长期事实**（体质 / 伤残 / 病症 / 能力 / 身份处境）。"
+        "自检：**过几天、几十轮回头看，这条还成立吗？**戏散就没了 → 不写。",
+        "  **一律不收**：① 消息 / 情报 / 别人的事（\"听说她妈住院了\"）——那是**事件**，"
+        "长线追踪走**剧情目标**；② 一次性的当下（心情 / 手上有泥）；"
+        "③ 该角色自己的隐秘与前史（\"他爸欠债\"）——那是**人物卡**。",
+        "  只填正文**已经写成事实**的；不写意图、不写别人的评价。"
+        "**拿不准 → 空数组**（状态常驻后续每轮的提示词，宁缺勿滥）。",
+        f"  同一角色本回合最多 {STATE_ADD_PER_CHAR} 条；text ≤ {STATE_TEXT_MAX} 字，**只写"
+        "「他此刻是什么」，不写「他怎么变成这样的」**——成因（含括号补注）留在产生它的"
+        "那场戏里，不复述（写「左腿瘸了」，不写「沐浴龙血」）。"
+        "until：能说清终点才给（\"病倒三天\" → 当前时间 +3 天的 ISO 时刻），说不出的留空"
+        "——**说不出终点，多半它就不该是状态**。"
+        "public = 旁人**看不看得见**：可见 → 写可观察的表现（\"左腿瘸了\"）；"
+        "不可见（默认）→ 写不外露的事实（\"其实色盲\"）。",
+        "- state_remove：正文写出某个**已有状态结束**（伤好 / 毒解 / 失能）时，"
+        "给出「角色状态」清单里的方括号 id；拿不准 → 空数组（宁可留着）。",
     ]
     return "\n".join(
         [
-            "你是 AIWorld 的世界审计：玩家采纳一条正文后，你从正文里结算世界的副作用，并判定剧情目标与生命周期。",
-            "只返回 JSON，格式如下：",
-            '{"location": "场景id", "scene_name": "地点名（新地点给中文名）", "register_scene": false,'
+            "你是 AIWorld 的世界审计：从**已采纳**的正文里结算世界副作用，并判定目标 / 退场 / 状态。",
+            "只返回 JSON：",
+            '{"location": "场景id", "scene_name": "", "register_scene": false,'
             f' "participants": ["{player_name}", "朱明"], "private": false, "delta_minutes": 0,'
             ' "npc_moves": [{"npc_id": "朱明", "location": "朱明家"}],'
             ' "clock_to": "",'
             ' "completed_goal_ids": ["达成目标id"], "lifecycle": [{"npc_id": "朱明", "status": "retired"}],'
-            ' "state_add": [{"npc_id": "刘星", "text": "沐浴龙血，普通刀剑伤不了他", "public": true, "until": ""}],'
+            ' "state_add": [{"npc_id": "刘星", "text": "普通刀剑伤不了他", "public": true, "until": ""}],'
             ' "state_remove": ["st_3f2a91c04d7e"]}',
             "判定规则：",
             *settle_lines,
             *state_lines,
-            "- location：正文里玩家此刻所在之处。玩家在正文中明确移动（离开/去别处/回家）时更新，否则保持当前场景。",
+            "- location：玩家此刻所在之处；正文明确写他移动（离开 / 去别处 / 回家）才更新，否则保持原场景。",
             "- participants（与 location 联动，二选一）：",
-            "  · 玩家**没移动**：以工作单给出的在场名单为**默认基线**——正文没有明确的进出场就原样继承整份名单；"
-            "只有正文明确写出某人离开（走掉/告辞）才移除，明确写出新人到场并需记入史实才添加。"
-            "正文用\"她/他\"等代词指代的在场者视为仍在场（代词指代不清时保守保留原名单）；"
-            "摊主、路人等叙事背景人物不进名单——他们只是舞台布景，不是这段史实的参与者。"
-            "location 与 participants 都以下方给出的当前状态为基线。",
-            "  · 玩家**移动了**：留在原地的人不进名单——他们的位置自然停在原地；"
-            "正文里在**新场景出现并互动**的角色——无论同行、被玩家找到、还是主动搭话——都计入 participants"
-            "（他们亲身参与了这段史实）。",
-            "- npc_moves：正文明确写出某个 NPC **离开去了别处**（回家/回店/告辞离去）并写明去向时输出，"
-            "每项 {\"npc_id\": \"...（角色中文名）\", \"location\": \"去向场景名（新地点给中文名）\"}。"
-            "只写了\"走了\"没写去哪 → 该人不输出，位置保持原样；"
-            "玩家自己的移动由 location 覆盖——这项只记 NPC。多数回合为空数组。",
-            "- 场景若已在场景表里，用其中文名（见已注册场景清单）；正文进入未注册的新地点时，location 给一个中文名，scene_name 同名给出。"
-            "register_scene：玩家声明要去/回访/会复用该地点时为 true（注册为可导航场景）；"
-            "剧情顺笔的一次性舞台（如今晚的草地、密室）为 false（不进导航集，显示名仍可用）。",
-            "- private：按正文内容判定这场戏是否只限在场者知道——判据是\"外人会不会知道这事发生过\"，不单看地点。"
-            "私下交底、咬耳朵只让对方听见、无人看见的交易、隐蔽处行事 → true；"
-            "当众冲突、大庭广众下的对话、旁人可见可闻的活动 → false。",
-            "- delta_minutes：你估计\"这场戏实际经过了多少分钟\"——以正文结束那一刻故事内的时钟为准。"
-            "判定依据是玩家经历了什么，不是文本里出现了什么时间词："
-            "对话/商量/闲聊 → 5~15；一顿饭 → 30~60；顺笔赶路 → 按路程；"
-            "干活/训练一个下午 → 120~240；睡觉 → 480。"
-            "给 0 的情况：只是说到时间（\"明天见\"\"你昨天答应的\"\"三点在那碰面\"——被说的不是被经历的），"
-            "以及没有新的经历性事件（原地续聊）。",
-            "- clock_to：正文**明确说了故事时间走到了几点**（\"到了晚上八点\"\"已经是第二天早上七点\"）时，"
-            "输出该绝对时间，格式 YYYY-MM-DDTHH:MM:SS（日期默认跟当前时间走，正文说了跨天/某天才改）；"
-            "给了 clock_to 就不用再估 delta_minutes。正文没明确说到点 → 留空字符串。",
-            "- completed_goal_ids：正文已达到目标文本所述（小目标=当事达成；大目标=关键真相/冲突已解决）。"
-            "只推进未达成的不填——推进由编剧纪律负责，审计只判终点。"
-            "注意：目标归属者为 NPC 时，该目标 NPC 提及/推进目标只是推进（如王蓉提起接货），"
-            "只有当正文里目标所述之事真正发生（如玩家答应了）才判完成——推进不算完成。"
-            "大目标是章节：其下「子目标 x/y 已完成」只作参考证据、不是判据——"
-            "正文若给出明确的关键了结（即使子目标没走完，如玩家绕道达成）即可判完成；"
-            "反之，只是把子目标推了推、关键冲突没解决，就不判。",
-            "- lifecycle：按正文语义识别角色退场（死亡/永久离开）→ retired。",
+            "  · **没移动**：以下方在场名单为**默认基线**原样继承；只有正文明确写某人离开（走掉 / 告辞）"
+            "才移除，明确写新人到场且需记入史实才加；代词指代不清时保守保留；"
+            "摊主 / 路人等布景人物不进名单。",
+            "  · **移动了**：留在原地的人不进名单；正文里在**新场景出现并互动**的角色"
+            "（同行 / 被找到 / 搭话）都计入。",
+            "- npc_moves：正文明确写出某 NPC **离开去了别处**并写明去向 → 给 "
+            "{\"npc_id\": \"中文名\", \"location\": \"去向（新地点给中文名）\"}；"
+            "只说\"走了\"没说去哪 → 不给（位置不变）。只记 NPC"
+            "（玩家移动由 location 覆盖），多数回合为空。",
+            "- 场景已在场景表 → 用其中文名；进入新地点 → location 与 scene_name 都给同一个中文名。"
+            "register_scene：玩家要去 / 回访 / 会复用 → true；剧情顺笔的一次性舞台（如今晚的草地）"
+            "→ false（不进导航，显示名仍可用）。",
+            "- private：判据是\"外人会不会知道这事发生过\"，不单看地点。私下交底 / 咬耳朵 / "
+            "无人看见的交易 / 隐蔽处行事 → true；当众冲突、公开对话 → false。",
+            "- delta_minutes：这场戏**实际经过**多久，以玩家经历了什么为准（不看时间词）："
+            "闲聊 5~15 / 一顿饭 30~60 / 顺笔赶路按路程 / 干活一下午 120~240 / 睡觉 480。"
+            "只是说到时间（\"明天见\"\"三点碰面\"）或原地续聊 → 0。",
+            "- clock_to：正文**明确说了时间走到几点**（\"到了晚上八点\"）才给，"
+            "格式 YYYY-MM-DDTHH:MM:SS（日期默认跟当前钟走，跨天才改）；给了它就不用再估 "
+            "delta_minutes；没说 → 留空。",
+            "- completed_goal_ids：正文已达到目标所述才填。**推进不算完成**"
+            "（NPC 提及 / 推进目标只是推进）——审计只判终点，推进是编剧的事。"
+            "大目标是章节：其下「子目标 x/y」只作参考证据、不是判据——正文给出关键了结"
+            "即可判完成（玩家绕道达成也算），只推了推、冲突没解决 → 不判。",
+            "- lifecycle：正文语义上的退场（死亡 / 永久离开）→ retired。",
             "当前时间：" + (ledger.save.clock or "-"),
             "当前场景：" + (scene.id if scene else scene_id),
             "在场：" + ("、".join(names) or "暂无"),
@@ -1017,7 +1102,7 @@ def build_audit_work_order(
             # 结论（玩家免疫普通武器，正文却写他被砍成重伤）。带 id——移除状态
             # 要靠 id 精确定位（Step 2）。
             *states_block(ledger, present_ids, include_ids=True),
-            "已注册场景：location 用下列中文名（id 即中文名）；未注册的新地点同样给中文名（与场景表风格一致）：" + (scene_list or "（无）"),
+            "已注册场景（location 用这些中文名，新地点也照此给中文名）：" + (scene_list or "（无）"),
             "活动目标：",
             *audit_goals_lines(ledger),
             *world.meta.summary,

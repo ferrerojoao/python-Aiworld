@@ -507,8 +507,9 @@ function renderStatePanel(data) {
       const text = it.until ? `${it.text}（至 ${String(it.until).slice(0, 10)}）` : it.text;
       const right = document.createElement("span");
       right.className = "st-act";
-      // public=false = 这条状态的**表现**外人看不出来（"沐浴过龙血"没人知道，
-      // "当众挨一刀没事"人尽皆知）——面板上标出来，省得玩家疑惑 NPC 为什么没反应。
+      // public=false = 这条状态外人看不出来（"其实色盲"没人知道，"左腿瘸了"人尽皆知）
+      // ——面板上标出来，省得玩家疑惑 NPC 为什么没反应。
+      // 注意：状态只写**现状**，成因（"为什么"）在它来源的那条事件里，不在状态上。
       if (tag) right.appendChild(stTag(tag));
       if (!it.public) right.appendChild(stTag("外人看不出"));
       right.appendChild(stRevoke(it.id));

@@ -79,7 +79,7 @@ async def main() -> None:
         ledger.save.entities["朱明"] = EntityRuntime(
             states=[
                 StateItem(
-                    text="额角缠着纱布（前几天打架留的）",
+                    text="额角缠着纱布",
                     since="2001-07-09T18:00:00",
                     public=True,
                 )
@@ -184,10 +184,15 @@ async def main() -> None:
                 for e in state_events
             ),
         )
+        # Step 2c（2026-09-14 晚）改了语义：到期**失效不删条目**——条目留在存档里
+        # 供玩家查看与撤销，只有注入侧过滤它（旧断言"已从列表移除"是当时的口径）。
         check(
-            "过期条目已从存档实体列表移除",
+            "过期条目留在存档里但已标记失效（Step 2c：失效不删除）",
             all(
-                not any(s["text"] == x["text"] for s in ents.get(x["npc_id"], {}).get("states", []))
+                any(
+                    s["text"] == x["text"] and s.get("expired_at")
+                    for s in ents.get(x["npc_id"], {}).get("states", [])
+                )
                 for x in exp_made
             ),
         )

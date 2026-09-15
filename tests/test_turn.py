@@ -1119,18 +1119,18 @@ def test_audit_state_add_lands_with_source_event(session, settings):
         session,
         settings,
         _base_audit(
-            state_add=[{"npc_id": "刘星", "text": "沐浴龙血，普通刀剑伤不了他", "public": True}]
+            state_add=[{"npc_id": "刘星", "text": "普通刀剑伤不了他", "public": True}]
         ),
     )
     states = session.ledger.save.entities["刘星"].states
-    assert [s.text for s in states] == ["沐浴龙血，普通刀剑伤不了他"]
+    assert [s.text for s in states] == ["普通刀剑伤不了他"]
     assert states[0].public is True
     assert states[0].source_event  # 指得着才叫可追溯（撤销靠它）
 
     ev = session.ledger.by_id[states[0].source_event]
     assert ev["body"] == ""  # 记账条目不是叙述
     assert ev["location"] is None  # 不给位置语义，免得污染 where_is
-    assert ev["summary"] == "刘星获得状态：沐浴龙血，普通刀剑伤不了他"
+    assert ev["summary"] == "刘星获得状态：普通刀剑伤不了他"
     assert ev["participants"] == ["刘星"]
     assert ev["known_by"] == ["刘星"]
     assert ev["source"] == "state"
@@ -1193,7 +1193,7 @@ def test_state_add_blank_text_is_ignored(session, settings):
 
 
 def test_state_text_is_truncated(session, settings):
-    """提示词要求 ≤30 字；模型不听话时按上限截断，别把整段设定塞进常驻块。"""
+    """提示词要求 ≤STATE_TEXT_MAX 字；模型不听话时按上限截断，别把整段设定塞进常驻块。"""
     _state_turn(
         session, settings, _base_audit(state_add=[{"npc_id": "刘星", "text": "很长" * 40}])
     )
@@ -1220,6 +1220,23 @@ def test_state_remove_accepts_dict_shape(session, settings):
 def test_state_remove_unknown_id_is_skipped(session, settings):
     _state_turn(session, settings, _base_audit(state_remove=["st_不存在"]))
     assert session.ledger.save.last_state_change["skipped"][0]["reason"] == "找不到该状态 id"
+
+
+def test_state_remove_skips_already_expired_same_turn(session, settings):
+    """到期与移除撞在同一回合：① 已宣布它结束（写 ``expired_at`` + 落事件），
+    ③ 再 pop 一次会**重复记一条「状态结束」**，还把条目从存档抹掉——「失效不删除」
+    是留给玩家撤销入口的，删了就撤不成。所以 ③ 跳过，记 skipped。
+    """
+    item = _seed_state(session, "刘星", "病倒", until="2026-07-13T08:00:00")  # 早于当前时钟
+    _state_turn(session, settings, _base_audit(state_remove=[item.id]))
+    stored = session.ledger.save.entities["刘星"].states
+    assert [s.id for s in stored] == [item.id]  # 条目还在（没被移除抹掉）
+    assert stored[0].expired_at  # 但已标记失效
+    change = session.ledger.save.last_state_change
+    assert change["removed"] == []
+    assert change["skipped"][0]["reason"] == "已到期（到期清算已处理）"
+    ends = [e for e in session.ledger.events if "状态结束" in (e.get("summary") or "")]
+    assert len(ends) == 1  # 只记一次账，不重复
 
 
 def test_until_expiry_marks_the_state_without_deleting_it(session, settings):
@@ -1402,7 +1419,7 @@ def _seed_change(session, **extra) -> dict:
 
 def test_revoke_removes_state_and_records_counter_event(session, settings):
     """撤销 = 删条目 + 一条对冲记账事件（正文与事件日志不动，改的是运行态）。"""
-    item = _seed_state(session, "刘星", "沐浴龙血，普通刀剑伤不了他")
+    item = _seed_state(session, "刘星", "普通刀剑伤不了他")
     _seed_change(session)
     session.ledger.persist_save()
     assert _revoke(session, settings, item.id) is True
@@ -1412,7 +1429,7 @@ def test_revoke_removes_state_and_records_counter_event(session, settings):
     assert revoked["id"] == item.id and revoked["npc_id"] == "刘星"
 
     ev = session.ledger.by_id[revoked["event_id"]]
-    assert ev["summary"] == "刘星状态撤销：沐浴龙血，普通刀剑伤不了他（玩家撤销）"
+    assert ev["summary"] == "刘星状态撤销：普通刀剑伤不了他（玩家撤销）"
     assert ev["source"] == "state"
     assert ev["body"] == "" and ev["location"] is None
     assert ev["participants"] == ["刘星"]
@@ -1475,13 +1492,13 @@ def test_revoked_state_leaves_the_writer_order(session, settings):
     """撤销的实质效果：编剧此后不再认为他有（提示词里那一行消失）。"""
     from app.core.workorder import build_work_order
 
-    item = _seed_state(session, "刘星", "沐浴龙血，普通刀剑伤不了他")
+    item = _seed_state(session, "刘星", "普通刀剑伤不了他")
     session.ledger.persist_save()
-    assert "沐浴龙血" in build_work_order(
+    assert "普通刀剑伤不了他" in build_work_order(
         "writer", session.world, session.ledger, session.ledger.current_scene()
     )
     _revoke(session, settings, item.id)
-    assert "沐浴龙血" not in build_work_order(
+    assert "普通刀剑伤不了他" not in build_work_order(
         "writer", session.world, session.ledger, session.ledger.current_scene()
     )
 

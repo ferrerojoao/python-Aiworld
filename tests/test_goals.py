@@ -212,7 +212,7 @@ def test_audit_prompt_guards_advance_vs_complete(session):
 
     assert "活动目标：" in order
     assert "让主角答应下周跟她一起去接货" in order  # 目标全文在活动目标行
-    assert "该目标 NPC 提及/推进目标" in order  # 推进≠完成防误判
+    assert "NPC 提及 / 推进目标只是推进" in order  # 推进≠完成防误判
     assert "推进不算完成" in order
 
 

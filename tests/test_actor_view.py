@@ -216,7 +216,7 @@ def test_writer_roster_clause_follows_presence_and_tickets(session):
     )
     order = build_work_order("writer", session.world, ledger, "网吧")
     assert "本轮可上缴深抉择的角色：朱明" in order
-    assert "其余角色一律由你直接决定并写进正文" in order
+    assert "其余你直接写" in order  # 名单外的人不逐一点名（2026-09-15 压缩）
 
 
 def test_actor_contract_explains_pronouns():
@@ -229,7 +229,7 @@ def test_actor_contract_explains_pronouns():
     # 2026-09-12 去否定化：改为正向陈述（决定的归属在本人）。
     assert "刘星的抉择留给本人" in contract
     assert "不要替刘星做决定" not in contract
-    assert "以「你知道的事」清单为准" in contract
+    assert "以「你知道的事」为准" in contract  # 归属冲突的判据（2026-09-15 压缩后仍逐字保留）
 
     # 占位名回退：主角名未设定时仍是「玩家」。
     fallback = "\n".join(actor_contract("朱明"))
