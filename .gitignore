@@ -7,7 +7,7 @@ __pycache__/
 .venv/
 venv/
 .env
-content/**/saves/
+/content/
 web/node_modules/
 web/dist/.vite/
 *.log
