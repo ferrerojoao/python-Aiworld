@@ -3,7 +3,7 @@
 覆盖：玩家进在场名单且 Actor 视图剔掉自己；写手侧同样有玩家；占位名「你」
 降级为「玩家」、真名标注「名（玩家）」；context 人称一律写主角名（未设定时
 退化「玩家」），writer / actor 两侧契约同口径；known_set 含全域公开事件（王蓉
-0 条亲历但有「开场」）；memory_limit=0 不出记忆块；clean_context 不改人称；
+0 条亲历但有「开场」）；known_set 的 0 = 全部；clean_context 不改人称；
 写手工作单的三级梯队顺序（二级 → 三级 → 一级，整体前置于资料区）与抬头不带解释句。
 """
 
@@ -89,19 +89,28 @@ def test_known_set_includes_global_public_event(session):
     """王蓉 0 条亲历，但全域公开的「开场」应进她的已知集（第三来源）。"""
     ledger = session.ledger
     assert ledger.by_participant.get("王蓉", []) == []
-    mem = ledger.known_set("王蓉", "主街")
+    mem = ledger.known_set("王蓉", "主街", 0)
     assert any("开场" in line for line in mem)
 
 
-def test_memory_limit_zero_omits_memory_block(session):
-    """memory_limit=0 = 不开记忆：条目块整块消失（[-0:] 守卫）。"""
-    ledger = session.ledger
-    _narrative(ledger, location="主街", participants=["刘星", "朱明"], body="两人在街上碰面。", summary="碰面")
-    session.world.meta.memory_limit = 0
+def test_known_set_zero_returns_everything(session):
+    """0 = 全部（2026-09-16 反转旧口径"0 = 不给"）。
 
-    order = build_actor_work_order(session.world, ledger, "朱明", "主街")
-    assert "你知道的事：" not in order
-    assert ledger.known_set("朱明", "主街", limit=0) == []
+    旧语义与玩家直觉相反，也与事件日志的 0 不一致；用户实测反馈"NPC 总是
+    忘记事"，正是因为上限太小——0 让玩家能一把放开。"""
+    ledger = session.ledger
+    for i in range(8):
+        _narrative(
+            ledger,
+            location="主街",
+            participants=["刘星", "朱明"],
+            body=f"第{i}件事。",
+            summary=f"第{i}件事",
+        )
+    everything = ledger.known_set("朱明", "主街", 0)
+    assert all(f"第{i}件事" in "\n".join(everything) for i in range(8))  # 全部
+    assert len(everything) >= 8  # 另有世界自带的「开场」等公开事件
+    assert len(ledger.known_set("朱明", "主街", 3)) == 3  # 仍可截断
 
 
 def test_clean_context_does_not_rewrite_pronouns():

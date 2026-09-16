@@ -219,16 +219,15 @@ function settlementTooltip(s) {
   const stamp = (v) => String(v || "-").slice(0, 16).replace("T", " ");
   const sourceLabel =
     {
-      clock_to: "正文明确到点 → 审计对钟",
-      clock_to_rule: "玩家明确跳到某时刻 → 规则对钟",
+      clock_to: "审计按明确时刻对钟",
       audit: "审计估时",
-      rule: "规则兜底（审计没给时长）",
       none: "未推进",
+      // 历史留痕（2026-09-16 去规则化前落盘的老记录，读到旧存档时仍能翻成人话）
+      clock_to_rule: "玩家明确跳到某时刻 → 规则对钟（历史）",
+      rule: "规则兜底（历史）",
     }[s.source] || s.source;
   const lines = [`时间结算：${stamp(s.clock_before)} → ${stamp(s.clock_after)}`, `依据：${sourceLabel}`];
   const bits = [];
-  if (s.settle_rule) bits.push(`规则意图 ${stamp(s.settle_rule)}${s.source === "clock_to_rule" ? "" : "（未采用）"}`);
-  if (s.delta_rule) bits.push(`规则 ${s.delta_rule} 分${s.source === "rule" ? "" : "（未采用）"}`);
   if (s.delta_audit_raw != null) {
     bits.push(
       s.audit_capped
@@ -239,8 +238,7 @@ function settlementTooltip(s) {
   if (s.delta_applied) bits.push(`实际推进 ${s.delta_applied} 分`);
   if (bits.length) lines.push(bits.join(" / "));
   if (s.clock_to_audit && s.source === "clock_to") lines.push(`对钟目标：${stamp(s.clock_to_audit)}`);
-  if (s.clock_to_rejected) lines.push(`已拒绝审计对钟：${s.clock_to_rejected}`);
-  if (s.settle_rule_rejected) lines.push(`已拒绝规则对钟：${s.settle_rule_rejected}`);
+  if (s.clock_to_rejected) lines.push(`已拒绝对钟：${s.clock_to_rejected}`);
   if (s.audit_negative) lines.push("审计给了负数时长，已按 0 处理");
   if (s.error) lines.push(`⚠ ${s.error}`);
   if (s.audit_error) lines.push(`⚠ 本次审计失败：${s.audit_error}`);
@@ -374,9 +372,12 @@ function stRow(name, text, right, cls) {
 // 撤销控件：点 × → 原地变成「确认 / 取消」（不弹窗）。撤销是破坏性动作，但它留痕、
 // 且状态还能重新获得，一道轻确认就够；反过来若点完行直接消失，玩家会怀疑自己是不是
 // 点错了、撤掉的到底是哪条。
-function stRevoke(stateId) {
+// ``leadTag``：可选的前置标签（如「已修订」），与 × 同放进右侧动作区——修订过的行
+// 既要说明它被动过，也仍要能撤销（改错了同样得能反悔）。
+function stRevoke(stateId, leadTag) {
   const box = document.createElement("span");
   box.className = "st-act";
+  if (leadTag) box.appendChild(stTag(leadTag));
   const x = document.createElement("span");
   x.className = "st-x";
   x.textContent = "×";
@@ -415,13 +416,45 @@ function stRevoke(stateId) {
 // skipped 是内部诊断（审计报歪了 / 找不到 id），不露给玩家。
 function stateChangeRows(change) {
   const revoked = new Set((change.revoked || []).map((r) => r.id));
+  const revised = new Map((change.revised || []).map((r) => [r.id, r]));
   const rows = [];
   for (const it of change.added || []) {
-    rows.push({ ...it, kind: "added", revoked: revoked.has(it.id) });
+    const r = revised.get(it.id);
+    // 本回合新增又被修订：`added` 里存的是**当时快照的文字**，直接用会在屏幕上报旧字。
+    rows.push({
+      npc_id: it.npc_id,
+      id: it.id,
+      text: r ? r.text : it.text,
+      old_text: r ? r.old_text : "",
+      kind: "added",
+      revised: !!r,
+      revoked: revoked.has(it.id),
+    });
+  }
+  // 改的是几回合前就存在的那条（不在 added 里）→ 单出一行。否则玩家改完在
+  // 「本回合变化」里什么都看不到，只能去翻事件流。
+  const addedIds = new Set((change.added || []).map((a) => a.id));
+  for (const r of change.revised || []) {
+    if (addedIds.has(r.id)) continue;
+    rows.push({
+      npc_id: r.npc_id,
+      id: r.id,
+      text: r.text,
+      old_text: r.old_text,
+      kind: "revised",
+    });
   }
   for (const it of change.removed || []) rows.push({ ...it, kind: "removed" });
   for (const it of change.expired || []) rows.push({ ...it, kind: "expired" });
   return rows;
+}
+
+// 修订过的行显示「旧 → 新」；只改了期限/可见性时文字没动，就照原样显示（旁边
+// 「已修订」标签说明这条被动过，细节在事件流里）。
+function stRowText(row) {
+  return row.revised && row.old_text && row.old_text !== row.text
+    ? `${row.old_text} → ${row.text}`
+    : row.text;
 }
 
 function renderStateChange(data) {
@@ -443,12 +476,21 @@ function renderStateChange(data) {
   box.appendChild(at);
   for (const row of rows) {
     if (row.kind === "added" && !row.revoked) {
-      box.appendChild(stRow(row.npc_id, row.text, stRevoke(row.id)));
+      // 修订过的仍可撤销（改错了同样要能反悔），所以标签与 × 一起给。
+      box.appendChild(
+        stRow(row.npc_id, stRowText(row), stRevoke(row.id, row.revised ? "已修订" : ""))
+      );
       continue;
     }
     // 已撤销的留在原地变灰（不是消失）：玩家刚点完，行立刻没了会让人怀疑点错了。
-    const tag = row.revoked ? "已撤销" : row.kind === "expired" ? "已到期结束" : "已结束";
-    box.appendChild(stRow(row.npc_id, row.text, stTag(tag), "grey"));
+    const tag = row.revoked
+      ? "已撤销"
+      : row.kind === "expired"
+        ? "已到期结束"
+        : row.kind === "revised"
+          ? "已修订"
+          : "已结束";
+    box.appendChild(stRow(row.npc_id, stRowText(row), stTag(tag), "grey"));
   }
 }
 
@@ -498,10 +540,9 @@ function renderStatePanel(data) {
       ...(entry.expired || []).map((it) => ({ it, grey: true, tag: "已到期" })),
     ];
     if (!items.length) {
-      const empty = document.createElement("div");
-      empty.className = "st-empty";
-      empty.textContent = "此刻没有任何状态";
-      group.appendChild(empty);
+      // 一条都没有的人不显示（后端已过滤，这里是兜底）：面板是"此刻谁是什么"的
+      // 查询视图，列一堆空组只是噪音。
+      continue;
     }
     for (const { it, grey, tag } of items) {
       const text = it.until ? `${it.text}（至 ${String(it.until).slice(0, 10)}）` : it.text;
@@ -930,6 +971,10 @@ async function loadSettings() {
   $("#setting-model-cheap").value = data.model_cheap || "";
   $("#setting-reasoning").value = data.reasoning_effort || "auto";
   $("#setting-qc-enabled").checked = data.qc_enabled !== false;
+  // 注入上限（0 = 给全部）：编剧 / 质检 / Actor 三处共用这三个数。
+  $("#setting-event-log-limit").value = data.event_log_limit;
+  $("#setting-event-log-full").value = data.event_log_full;
+  $("#setting-known-set-limit").value = data.known_set_limit;
 
   const fontSize = localStorage.getItem("aiworld_font_size") || "14";
   const theme = localStorage.getItem("aiworld_theme") || "dark";
@@ -949,6 +994,10 @@ async function loadUsage() {
 }
 
 async function saveSettings() {
+  // 注入上限就地 clamp：0 = 不限制，但"给正文原文的条数"最少 1（0 条原文
+  // 等于让编剧无从续写）。后端 Settings.limits() 还会再夹一次，这里先兜住
+  // 空输入，免得用户清空输入框就吃到 422。
+  const limitNum = (sel, min) => Math.max(min, Math.round(Number($(sel).value) || 0));
   await api(`/api/settings`, {
     method: "PUT",
     body: JSON.stringify({
@@ -958,6 +1007,9 @@ async function saveSettings() {
       model_cheap: $("#setting-model-cheap").value,
       reasoning_effort: $("#setting-reasoning").value,
       qc_enabled: $("#setting-qc-enabled").checked,
+      event_log_limit: limitNum("#setting-event-log-limit", 0),
+      event_log_full: limitNum("#setting-event-log-full", 1),
+      known_set_limit: limitNum("#setting-known-set-limit", 0),
     }),
   });
 
@@ -967,6 +1019,7 @@ async function saveSettings() {
   localStorage.setItem("aiworld_theme", theme);
   applyFontSize(fontSize);
   applyTheme(theme);
+  await loadSettings(); // 回填 clamp 后的真值，避免界面显示与后端不一致
   alert("系统设置已保存");
 }
 
@@ -1537,10 +1590,6 @@ function renderEditOverview(data) {
             <label>开局场景（场景中文名；留空 = 取场景表第一个。主角自此开场，之后由事件流水推导其位置）</label>
             <input class="edit-field" data-field="start_scene" type="text" placeholder="主街" value="${escapeHtml(ov.start_scene || "")}" />
           </div>
-          <div class="field">
-            <label>记忆回溯条数上限（experiences 每次回看的最大事件条数）</label>
-            <input class="edit-field" data-field="memory_limit" type="number" value="${ov.memory_limit ?? 50}" />
-          </div>
         </div>
       </div>
 
@@ -2086,7 +2135,6 @@ function splitLines(str) {
 function readOverview() {
   const tab = $("#world-tab-overview");
   const val = (field) => tab.querySelector(`[data-field="${field}"]`)?.value ?? "";
-  const rawMemory = val("memory_limit").trim();
   return {
     id: val("id"),
     name: val("name"),
@@ -2094,7 +2142,6 @@ function readOverview() {
     summary: splitLines(val("summary")),
     start_time: val("start_time"),
     start_scene: val("start_scene").trim(),
-    memory_limit: rawMemory === "" ? 50 : Math.max(0, Number(rawMemory) || 0),
   };
 }
 

@@ -48,6 +48,28 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+@dataclass(frozen=True)
+class InjectionLimits:
+    """注入上限（2026-09-16 从世界配置搬到系统设置，三处共用同一份）。
+
+    口径与直觉一致：**0 = 不限制（给全部）**。唯一的例外是 ``event_log_full``
+    ——"最近几条给正文原文"，最少 1；0 条原文等于让编剧无从续写。
+
+    为什么搬到系统设置：这些是**玩家的阅读与成本偏好**，不是世界设定。写在
+    world.json 里意味着换个世界就得重配一遍，而"嫌 NPC 记性太差"是跨世界的
+    诉求（2026-09-16 用户实测反馈：缓存命中后 token 没那么疼，条数才是瓶颈）。
+    """
+
+    event_log_limit: int = 10  # 事件日志取最近几条（0 = 全部）
+    event_log_full: int = 3  # 其中最近几条给正文原文（>= 1）
+    known_set_limit: int = 5  # 每个 NPC 已知集条数（0 = 全部）
+
+
+# 装配层的兜底默认值：探针与单测直接调装配函数时用；生产路径一律传
+# ``Settings.limits()``，保证"设置改了就真生效"。
+DEFAULT_LIMITS = InjectionLimits()
+
+
 @dataclass
 class Settings:
     """Runtime configuration from AIWORLD_* environment variables."""
@@ -83,6 +105,19 @@ class Settings:
     candidate_ttl_days: int = field(default_factory=lambda: _env_int("CANDIDATE_TTL_DAYS", 7))
     audit_enabled: bool = field(default_factory=lambda: _env_bool("AUDIT_ENABLED", True))
     qc_enabled: bool = field(default_factory=lambda: _env_bool("QC_ENABLED", True))
+
+    # 注入上限（系统设置，2026-09-16）：编剧 / QC / Actor 三处共用。0 = 给全部。
+    # 这里只存原始值，clamp 统一在 limits() 里做（单一事实源）。
+    event_log_limit: int = field(
+        default_factory=lambda: _env_int("EVENT_LOG_LIMIT", DEFAULT_LIMITS.event_log_limit)
+    )
+    event_log_full: int = field(
+        default_factory=lambda: _env_int("EVENT_LOG_FULL", DEFAULT_LIMITS.event_log_full)
+    )
+    known_set_limit: int = field(
+        default_factory=lambda: _env_int("KNOWN_SET_LIMIT", DEFAULT_LIMITS.known_set_limit)
+    )
+
     reasoning_effort: str = field(
         default_factory=lambda: _env("REASONING_EFFORT", "").lower()
     )  # ""=不传(自动) | low | medium | high
@@ -97,6 +132,15 @@ class Settings:
         if worker in {"qc", "audit", "classify"}:
             return self.model_cheap
         return self.model_main
+
+    def limits(self) -> InjectionLimits:
+        """注入上限快照。clamp 只在这一处收口：负数一律当 0（不限制），
+        正文条数最少 1——UI 与 env 都可能塞进非法值，装配层不该自己防御。"""
+        return InjectionLimits(
+            event_log_limit=max(0, self.event_log_limit),
+            event_log_full=max(1, self.event_log_full),
+            known_set_limit=max(0, self.known_set_limit),
+        )
 
     def check_host_security(self) -> None:
         """Refuse to start on a non-loopback address without a token."""
@@ -126,6 +170,10 @@ SETTINGS_OVERRIDE_FIELDS = (
     "model_cheap",
     "reasoning_effort",
     "qc_enabled",
+    # 注入上限（2026-09-16 从世界配置搬来）
+    "event_log_limit",
+    "event_log_full",
+    "known_set_limit",
 )
 
 

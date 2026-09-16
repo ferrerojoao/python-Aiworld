@@ -58,11 +58,13 @@ def _clean_until(value) -> str:
 
 
 class SideEffects(BaseModel):
-    delta_minutes: int = 0  # 旧字段：只剩磁盘上的历史候选还在用（规则侧已改走 settle_to）
-    # 规则侧的跳时意图：**绝对时刻**（ISO）。产出时刻而不是时长，是为了让"次日"
-    # 这类意图不被当前钟点污染，也从结构上避免与审计估时长叠加（2026-09-14）。
-    settle_to: str = ""
-    settle_label: str = ""  # 人话标签，供提示词与诊断
+    """候选的世界副作用。**时间不在这里**——时钟由审计在采纳时独家结算。
+
+    规则侧的 ``settle_to`` / ``settle_label`` / ``delta_minutes`` 已于 2026-09-16
+    下线（原委见 ``app/rules/route.py`` 模块注释）。磁盘上的旧候选仍带着这几个键，
+    pydantic 默认忽略未知字段，所以不迁移也能读。
+    """
+
     narrative: dict | None = None
     events: list[dict] = Field(default_factory=list)
     axes: dict[str, int] = Field(default_factory=dict)  # 二期预留
@@ -161,12 +163,11 @@ class Transaction:
     async def commit(self, candidate_id: str, *, audit) -> None:
         """Adopt a candidate.
 
-        规则侧（候选落盘的 pre-solve）：移动目的地 + 跳时的**绝对时刻**
-        （``side_effects.settle_to``）。正文语义副作用（时间/在场/私密、场景注册、
-        目标、生命周期、角色状态）来自审计推断——审计在采纳这一刻作为**唯一结算点**运行，
-        它自己什么都不写，由本方法落地。
+        规则侧（候选落盘的 pre-solve）只剩**移动目的地**；正文语义副作用
+        （时间/在场/私密、场景注册、目标、生命周期、角色状态）来自审计推断——
+        审计在采纳这一刻作为**唯一结算点**运行，它自己什么都不写，由本方法落地。
 
-        时间结算走一条五档优先级链（见下方注释），delta 只可能被加一次；整条链
+        时间结算走两档优先级链（见下方注释），delta 只可能被加一次；整条链
         的留痕写进 ``save.last_settlement``（P1 可观测性，顶栏时钟 hover 可见）。
         """
         candidate = self.candidates.load(candidate_id)
@@ -183,25 +184,24 @@ class Transaction:
                 audit_error = f"{type(exc).__name__}: {exc}"
                 self.ledger.save.audit_last_error = audit_error
 
-        # World clock：结算优先级链（2026-09-14 重写 + 加规则对钟档）。
+        # World clock：两档（2026-09-16 简化）。
         #
-        # ① 审计 clock_to（正文明确到点）
-        # ② 规则 settle_to（玩家明示意图 → 绝对时刻；审计沉默/失败时的确定性来源）
-        # ③ 审计 delta（对"实际跨了多久"的观测，clamp 进 [0, 1440]）
-        # ④ 规则 delta（只剩磁盘上的旧候选还有这个字段）
-        # ⑤ 0
+        # ① 审计 clock_to（正文或玩家输入明确给出到达时刻）
+        # ② 审计 delta_minutes（按剧情实际时长估，clamp 进 [0, 1440]）
+        # ③ 0
         #
-        # delta **只可能被加一次**。原实现是"规则 delta + audit delta"相加，而审计
-        # 工单不接收 rule_bundle（它不知道规则已推过时间）→ 系统性多算：实测
-        # "第二天去学校"多算 5.4h（规则 +12h、审计估 22.6h 被保险丝截到 16h，相加 28h
-        # → 次日 13:25，而正文说的是早上）。另修两处：负数 delta 会让时钟倒流；
-        # clock_to 无方向守卫时，审计把日期填错能把时钟拉回过去。
+        # 规则侧的 settle_to / delta_minutes 已下线：那套词表用正则匹配自由语句，
+        # 假阳越补越多（"没等到明天就走了""三天后我才明白""直到我有一点累"），
+        # 而且它一旦先定钟，就必须再经 settle_hint 通知审计"这一段别再估"——凭空
+        # 造出一个跨工位的重复计费风险。现在审计是唯一的时间结算方，它本来就同时
+        # 看得到正文与玩家输入。
+        #
+        # 两道机械守卫保留：clock_to 过方向守卫（早于当前钟 → 拒，防审计把日期填错
+        # 把时钟拉回过去），delta 走 max(0, …) 并夹进保险丝。
         from app.runtime.session import world_start_time
 
         clock_before = self.ledger.save.clock or world_start_time(self.ledger.world)
         clock = clock_before
-        rule_settle = candidate.side_effects.settle_to or ""
-        delta_rule = max(0, candidate.side_effects.delta_minutes or 0)
         raw_audit = audit_out.delta_minutes if audit_out is not None else None
         delta_audit = max(0, min(raw_audit or 0, AUDIT_DELTA_CAP_MINUTES))
         clock_to_audit = (audit_out.clock_to or "") if audit_out is not None else ""
@@ -218,17 +218,12 @@ class Transaction:
             return parsed, None
 
         target = None
-        target_src = ""
         settlement: dict = {
             "turn_id": candidate.turn_id,
             "candidate_id": candidate.candidate_id,
             "clock_before": clock_before,
             "clock_after": clock_before,
-            "source": "none",  # clock_to | clock_to_rule | audit | rule | none
-            "settle_rule": rule_settle or None,
-            "settle_rule_label": candidate.side_effects.settle_label or None,
-            "settle_rule_rejected": None,
-            "delta_rule": delta_rule,
+            "source": "none",  # clock_to | audit | none
             "delta_audit": delta_audit,
             "delta_audit_raw": raw_audit,
             "delta_applied": 0,
@@ -242,27 +237,18 @@ class Transaction:
 
         if clock_to_audit:
             target, settlement["clock_to_rejected"] = _accept(clock_to_audit)
-            if target is not None:
-                target_src = "clock_to"
-        if target is None and rule_settle:
-            target, settlement["settle_rule_rejected"] = _accept(rule_settle)
-            if target is not None:
-                target_src = "clock_to_rule"
 
         if target is not None:
             # 对钟涵盖估时长 → delta 全部丢弃（不是相加）。
             clock = target.isoformat()
-            settlement["source"] = target_src
-        else:
-            # delta 只加一次：审计（对"实际跨了多久"的观测）优先，规则 delta 兜底。
-            delta = delta_audit or delta_rule
-            settlement["source"] = "audit" if delta_audit else ("rule" if delta_rule else "none")
-            if delta:
-                if base is None:
-                    settlement["error"] = f"当前时钟无法解析，未推进：{clock_before!r}"
-                else:
-                    clock = (base + dt.timedelta(minutes=delta)).replace(microsecond=0).isoformat()
-                    settlement["delta_applied"] = delta
+            settlement["source"] = "clock_to"
+        elif delta_audit:
+            settlement["source"] = "audit"
+            if base is None:
+                settlement["error"] = f"当前时钟无法解析，未推进：{clock_before!r}"
+            else:
+                clock = (base + dt.timedelta(minutes=delta_audit)).replace(microsecond=0).isoformat()
+                settlement["delta_applied"] = delta_audit
 
         self.ledger.save.clock = clock
         settlement["clock_after"] = clock
@@ -284,11 +270,22 @@ class Transaction:
         known_by = participants if private else None
 
         def _resolve_scene(loc: str, *aliases: str) -> str:
-            """场景键纠偏：键命中注册场景直接用；否则按中文名/别名反查
+            """场景键纠偏：**id 或别名**命中注册场景就用它；否则按中文名/别名反查
             （审计偶尔自造变体名；scene_name 通常恰是注册场景名，可机械救回）。
-            都未命中 → 原样（一次性布景）。"""
-            if loc and loc in {s.id for s in self.ledger.world.scenes}:
-                return loc
+            都未命中 → 原样（一次性布景）。
+
+            loc 自己也认别名（2026-09-16 补）：原先第一步只查 ``s.id``，别名仅
+            作为第二参数被反查——审计**只给一个叫法**且那是个别名时（qingshi2 实测
+            里 ``location_name`` 就是空的），"鱼市"的别名"码头鱼市"会凭空多注册
+            一个同义场景。id 仍优先于别名。
+            """
+            if loc:
+                for s in self.ledger.world.scenes:
+                    if loc == s.id:
+                        return s.id
+                for s in self.ledger.world.scenes:
+                    if loc in s.aliases:
+                        return s.id
             for alias in aliases:
                 if not alias:
                     continue
@@ -322,7 +319,10 @@ class Transaction:
             if scene_alias:
                 narrative["location_name"] = scene_alias
             if audit_out and audit_out.register_scene and location:
-                self.ledger.register_scene(location)
+                # 审计给的变体名（scene_alias）一并存进 aliases：同一个地点换个叫法
+                # 下轮才救得回来（否则"老巷旧楼"落表后，"巷子深处的旧楼"会被当成
+                # 新地点再注册一个）。2026-09-16。
+                self.ledger.register_scene(location, scene_alias or "")
         self.ledger.append(narrative, flush=False)
         self.ledger.save.player_scene = location
 
@@ -699,3 +699,97 @@ class Transaction:
         self.ledger.flush_events()
         self.ledger.persist_save()
         return True
+
+    def revise_state(
+        self,
+        state_id: str,
+        *,
+        text: str | None = None,
+        until: str | None = None,
+        public: bool | None = None,
+    ) -> StateItem | None:
+        """玩家修订一条状态的字段（Step 2c 补，2026-09-16）：**原地改，不换条目**。
+
+        与"撤销 + 新增"的关键差别：``id`` / ``since`` / ``source_event`` 全部保留
+        ——起始时间不丢、成因链不断、"他什么时候起就是这样的"这条信息不会因为改掉
+        一个错别字而被重置成"刚刚"。改错了（或撤销）仍然随时可回退。
+
+        参数语义：``None`` = 这一项不动；``until`` 给空串 = 清掉期限；``public`` 只
+        认布尔。三项都没给（全 ``None``）或给的值与现值完全相同 → 不落事件、不写
+        存档（没有变化就不该在事件流里留下"修订过"的痕迹）。
+
+        守卫只管**格式与归属**（与 ``add_state`` 同口径）：``text`` 非空、≤
+        ``STATE_TEXT_MAX``、同角色不重复（只与**其它**未失效条目比——拿自己原来的
+        文字再提交一次不算冲突）。
+
+        已失效（``expired_at`` 非空）的条目不接受修订：注入侧本来就读不到它，改文字
+        玩家看不到效果；改 ``until`` 更是要么立刻又失效、要么等于偷偷复活一条已经
+        记过「状态结束」的史实——两条路都在制造困惑。要它回来请撤销后重加。
+
+        Raises ValueError：格式 / 归属不合规（API 层答 400）。
+        Returns None：``state_id`` 找不到（API 层答 404，与 ``revoke_state`` 同口径）。
+        """
+        hit = self._find_state(state_id)
+        if hit is None:
+            return None
+        npc_id, index = hit
+        runtime = self.ledger.save.entities[npc_id]
+        item = runtime.states[index]
+        if item.expired_at:
+            raise ValueError("已到期的状态不可修订，请撤销后重加")
+        if text is None and until is None and public is None:
+            raise ValueError("text / until / public 至少给一个")
+
+        old_text = item.text or ""
+        changes: list[str] = []
+        if text is not None:
+            new_text = (text or "").strip()[:STATE_TEXT_MAX]
+            if not new_text:
+                raise ValueError("text is required")
+            if new_text != old_text and any(
+                not it.expired_at and it.id != item.id and (it.text or "").strip() == new_text
+                for it in runtime.states
+            ):
+                raise ValueError(f"{npc_id} 已有同一状态：{new_text}")
+            if new_text != old_text:
+                changes.append(f"文字「{old_text}」→「{new_text}」")
+                item.text = new_text
+        if until is not None:
+            new_until = _clean_until(until)
+            if new_until != item.until:
+                changes.append(f"期限「{item.until or '无'}」→「{new_until or '无'}」")
+                item.until = new_until
+        if public is not None:
+            new_public = bool(public)
+            if new_public != item.public:
+                before = "旁人看得见" if item.public else "旁人看不出"
+                after = "旁人看得见" if new_public else "旁人看不出"
+                changes.append(f"可见性「{before}」→「{after}」")
+                item.public = new_public
+
+        if not changes:
+            return item
+
+        clock = self.ledger.save.clock
+        event_id = self.ledger.allocate_event_id()
+        self._append_state_event(
+            event_id, npc_id, clock, f"{npc_id}状态修订：{'、'.join(changes)}（玩家修订）"
+        )
+        # 与撤销对称：留痕进 last_state_change，前端「本回合变化」据此把那一行显示成
+        # 「旧 → 新」。**不改 added/removed**——修订不是增删，混进那两桶会让"这回合
+        # 多了几条状态"的计数失真。
+        change = self.ledger.save.last_state_change
+        if isinstance(change, dict):
+            change.setdefault("revised", []).append(
+                {
+                    "npc_id": npc_id,
+                    "id": item.id,
+                    "text": item.text,
+                    "old_text": old_text,
+                    "event_id": event_id,
+                }
+            )
+        # 与采纳一样"先流水后存档"：存档是提交标记，崩在中间也不会丢记账事件。
+        self.ledger.flush_events()
+        self.ledger.persist_save()
+        return item

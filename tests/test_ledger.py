@@ -94,7 +94,7 @@ def test_retired_npc_absent_from_present_at(session):
 
 def test_index_maintained_incrementally(session):
     """Append updates the derived indexes: later location wins for where_is
-    and by_participant feeds experiences with visibility filtering."""
+    and by_participant / by_knower feed known_set with visibility filtering."""
     ledger = session.ledger
     ledger.append(
         {
@@ -141,7 +141,7 @@ def test_index_maintained_incrementally(session):
             "summary": "王蓉一个人来老巷。",
         }
     )
-    zhuming_mem = "\n".join(ledger.experiences("朱明", "朱明"))
+    zhuming_mem = "\n".join(ledger.known_set("朱明", "校门口", 0))
     assert "朱明在网吧" in zhuming_mem and "到了校门口" in zhuming_mem
     assert "王蓉一个人来老巷" not in zhuming_mem
 
@@ -240,11 +240,13 @@ def test_deferred_events_hit_disk_on_flush(session):
     assert any(item["id"] == ev["id"] for item in on_disk_after)
 
 
-def test_experiences_recalls_knower_not_participant(session):
-    """known_by 名单内但不在 participants 的知情者，记忆切片必须召回该事件。
+def test_known_set_recalls_knower_not_participant(session):
+    """known_by 名单内但不在 participants 的知情者，已知集必须召回该事件。
 
     场景：玩家与王蓉产生秘密，事后告知朱明 → 原初事件 known_by 扩入朱明。
-    visible_to 与 experiences 口径必须一致：谁能引用，谁就能被召回。
+    visible_to 与 known_set 口径必须一致：谁能引用，谁就能被召回。
+    （原 test_experiences_* —— ``experiences()`` 已被 ``known_set`` 取代并删除，
+    2026-09-16；两个方法走同一对索引与同一条可见性过滤，所以断言逐字沿用。）
     """
     ledger = session.ledger
     secret = {
@@ -262,19 +264,19 @@ def test_experiences_recalls_knower_not_participant(session):
 
     # 落账时朱明就不在名单：不可见也不可召回。
     assert secret["id"] not in {e["id"] for e in ledger.visible_to("朱明")}
-    assert "悄悄话" not in "\n".join(ledger.experiences("朱明", "朱明"))
+    assert "悄悄话" not in "\n".join(ledger.known_set("朱明", "主街", 0))
 
     # 改判扩名单（朱明被告知）：可见性放开，记忆召回必须同步跟上。
     apply_access_override(ledger, secret["id"], ["刘星", "王蓉", "朱明"])
     assert secret["id"] in {e["id"] for e in ledger.visible_to("朱明")}
-    assert "悄悄话" in "\n".join(ledger.experiences("朱明", "朱明"))
+    assert "悄悄话" in "\n".join(ledger.known_set("朱明", "主街", 0))
 
     # 改判收名单（朱明被移出）：召回同步撤销，不残留。
     apply_access_override(ledger, secret["id"], ["刘星", "王蓉"])
-    assert "悄悄话" not in "\n".join(ledger.experiences("朱明", "朱明"))
+    assert "悄悄话" not in "\n".join(ledger.known_set("朱明", "主街", 0))
 
 
-def test_experiences_knower_index_survives_reload(session, tmp_path):
+def test_known_set_knower_index_survives_reload(session, tmp_path):
     """by_knower 是派生索引：重建（重开存档）后召回口径不变。"""
     ledger = session.ledger
     secret = {
@@ -292,7 +294,7 @@ def test_experiences_knower_index_survives_reload(session, tmp_path):
     from app.ledger.queries import Ledger as LedgerCls
 
     reloaded = LedgerCls(ledger.world, ledger.save_dir)
-    assert "悄悄话" in "\n".join(reloaded.experiences("朱明", "朱明"))
+    assert "悄悄话" in "\n".join(reloaded.known_set("朱明", "主街", 0))
 
 
 def test_known_set_region_boundary(session):
@@ -336,21 +338,21 @@ def test_known_set_region_boundary(session):
 
     # ① 卡上打标签 region:a 的本地人：同区公开 ✓ + 名单内私密 ✓ + 异区公开 ✗
     ledger.world.npcs["朱明"].region = ["a"]
-    got = "\n".join(ledger.known_set("朱明", "主街"))
+    got = "\n".join(ledger.known_set("朱明", "主街", 0))
     assert "主街集市" in got
     assert "私下给朱明" in got
     assert "电竞比赛" not in got
 
     # ② 出差外地人（卡标签 region:b）：名单内私密无条件纳入；a 区旧事不知；b 区新闻照闻
     ledger.world.npcs["朱明"].region = ["b"]
-    got = "\n".join(ledger.known_set("朱明", "主街"))
+    got = "\n".join(ledger.known_set("朱明", "主街", 0))
     assert "私下给朱明" in got
     assert "主街集市" not in got
     assert "电竞比赛" in got
 
     # ③ 无历史 NPC（卡无标签、零亲历）：保守——公开旧事一律不闻；known_by 不受限
     ledger.world.npcs["朱明"].region = []
-    got = "\n".join(ledger.known_set("朱明", "主街"))
+    got = "\n".join(ledger.known_set("朱明", "主街", 0))
     assert "主街集市" not in got
     assert "电竞比赛" not in got
     assert "私下给朱明" in got
@@ -365,7 +367,7 @@ def test_known_set_region_boundary(session):
         "source": "turn",
     }
     ledger.append(ev_exp)
-    got = "\n".join(ledger.known_set("朱明", "主街"))
+    got = "\n".join(ledger.known_set("朱明", "主街", 0))
     assert "主街集市" in got
     assert "电竞比赛" not in got
 
@@ -373,7 +375,7 @@ def test_known_set_region_boundary(session):
     for s in ledger.world.scenes:
         s.region = ""
     ledger.world.npcs["朱明"].region = []
-    got = "\n".join(ledger.known_set("王蓉", "主街"))
+    got = "\n".join(ledger.known_set("王蓉", "主街", 0))
     assert "主街集市" in got
     assert "电竞比赛" in got
     assert "私下给朱明" not in got
@@ -402,7 +404,7 @@ def test_known_set_adhoc_scene_not_hearsay(session):
     # 任何听域都闻不到 ad-hoc 公开事件：a 区本地人、b 区外地人、无标签全域推手皆然
     for region in (["a"], ["b"], []):
         ledger.world.npcs["朱明"].region = region
-        got = "\n".join(ledger.known_set("朱明", "主街"))
+        got = "\n".join(ledger.known_set("朱明", "主街", 0))
         assert "暗巷" not in got
 
     # 亲历通道不受影响：朱明在场亲历 → 进已知集
@@ -414,7 +416,7 @@ def test_known_set_adhoc_scene_not_hearsay(session):
         "source": "turn",
     })
     ledger.world.npcs["朱明"].region = []
-    got = "\n".join(ledger.known_set("朱明", "主街"))
+    got = "\n".join(ledger.known_set("朱明", "主街", 0))
     assert "朱明同在暗巷" in got
 
     # 亲历 ad-hoc 不把听域推导成 adhoc：另一条 ad-hoc 公开事件仍不风闻
@@ -426,5 +428,5 @@ def test_known_set_adhoc_scene_not_hearsay(session):
         "known_by": None, "body": "天台上有人喊话。", "summary": "楼顶天台有人喊话。",
         "source": "turn",
     })
-    got = "\n".join(ledger.known_set("朱明", "主街"))
+    got = "\n".join(ledger.known_set("朱明", "主街", 0))
     assert "天台" not in got

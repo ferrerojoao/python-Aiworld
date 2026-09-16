@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import datetime as dt
 
+from app.config import DEFAULT_LIMITS, InjectionLimits
 from app.ledger.queries import Ledger
 from app.rules.lorebook import subject_hit_ids
 from app.world.models import NarrativePreset, WorldContent
@@ -210,8 +211,9 @@ def state_view(ledger: Ledger, present_ids: list[str], full: bool = False) -> li
     ``hidden`` 恒空。导演要撤"被上限藏起来的那条"，看不见就无从下手。
 
     顺序 = 主角 → 在场 → 不在场 → 已退场（后端定序，前端照渲染即可，排序规则
-    只有这一处）。无状态的**在场/主角**也返回（空列表）——目的是让面板能显示
-    "这个人此刻没有任何状态"；而从未在册的角色（既无状态又不在场）不返回。
+    只有这一处）。**没有任何状态的角色一律不返回**（2026-09-16 用户要求）——面板
+    是"此刻谁是什么"的查询视图，列一堆空组只是噪音，主角与在场者也不例外；
+    唯一的例外是"只剩失效条目"的人：面板是唯一的撤销入口，漏掉就永远清不掉。
     """
     player = ledger.world.player_name()
     present = {n for n in present_ids if n}
@@ -244,9 +246,10 @@ def state_view(ledger: Ledger, present_ids: list[str], full: bool = False) -> li
             # 不在场 / 已退场者压根不注入，对他们截断只会造出假的"超上限"分层
             # ——面板会说"这几条超出注入上限"，而真实原因是"他不在场"。所以全给。
             items, rest = live, []
-        # 不在场（含已退场）且**连失效条目都没有**的角色不进面板——列出来只是噪音；
+        # 一条状态都没有（含失效条目）的角色不进面板——列个空组只是噪音，**主角与
+        # 在场者也不例外**（2026-09-16 用户要求："无状态的人物不要显示"）。
         # 有失效条目的必须进：否则那条永远撤不掉（面板是唯一的撤销入口）。
-        if not items and not dead and not (is_player or in_present):
+        if not items and not dead:
             continue
         view.append(
             {
@@ -411,9 +414,23 @@ def character_block(
     return lines
 
 
-def event_log_block(world: WorldContent, ledger: Ledger, limit: int = 10, recent_full: int = 3, summary_len: int = 60, input_len: int = 30, include_ids: bool = False) -> list[str]:
-    """Event log for the writer: older ones as summaries, the newest 3 as
+def event_log_block(
+    world: WorldContent,
+    ledger: Ledger,
+    *,
+    limit: int,
+    recent_full: int,
+    summary_len: int = 60,
+    input_len: int = 30,
+    include_ids: bool = False,
+) -> list[str]:
+    """Event log for the writer: older ones as summaries, the newest as
     full prose (so the writer can "continue" straight after them).
+
+    ``limit`` = 取最近几条，**0 = 全部**（2026-09-16 改：旧口径是"0 = 不给"，
+    与玩家的直觉相反）。``recent_full`` = 其中最近几条给正文原文（>= 1）。
+    两者**不留默认值**——数字只在系统设置里有权威版本，函数默认值再写一遍，
+    改一处忘一处就是 bug；调用方一律从 ``Settings.limits()`` 取。
 
     每行标注发生地、在场者与时间——写手据此执行「角色不是你」知情总纲
     （公开事件 ≠ 人人皆知、异地不知、即兴角色只知眼前）。
@@ -449,7 +466,10 @@ def event_log_block(world: WorldContent, ledger: Ledger, limit: int = 10, recent
             line = f"- {_id_tag(ev)}{at} {_ctx_tag(ev)} {summary}"
         return line
 
-    recent = ledger.narratives[-limit:]
+    # 0 = 全部（旧口径"0 = 不给"已废）：必须显式判断，`[-0:]` 在 Python 里等于
+    # `[0:]`（取全部）——正好是想要的结果，但那是巧合，不是可读的意图；
+    # 负数同理会把尾部砍掉，装配层不该依赖这种巧合。
+    recent = ledger.narratives if limit <= 0 else ledger.narratives[-limit:]
     if not recent:
         return []
     lines = ["事件日志（世界近期发生的事）："]
@@ -532,8 +552,19 @@ def scene_snapshot_block(
     ]
 
 
-def known_set_block(world: WorldContent, ledger: Ledger, present_ids: list[str], scene_id: str, per_npc: int = 5) -> list[str]:
+def known_set_block(
+    world: WorldContent,
+    ledger: Ledger,
+    present_ids: list[str],
+    scene_id: str,
+    *,
+    known_limit: int,
+) -> list[str]:
     """在场 NPC 已知集：机械计算的知识边界（亲历 ∪ known_by ∪ 同区域公开）。
+
+    ``known_limit`` = 每个 NPC 几条，**0 = 全部**（2026-09-16 改，旧口径是
+    "0 = 不给"）；同样**不留默认值**，由调用方从 ``Settings.limits()`` 取，
+    与 QC / Actor 三处同步。
 
     取代旧"近况块"——写手与 QC 共用同一份清单，单一事实源。
     """
@@ -545,7 +576,7 @@ def known_set_block(world: WorldContent, ledger: Ledger, present_ids: list[str],
         npc = ledger.world.npcs.get(pid)
         if npc is None:
             continue
-        mem = ledger.known_set(pid, scene_id, per_npc)
+        mem = ledger.known_set(pid, scene_id, known_limit)
         if mem:
             lines.append(f"[{npc.id}] 知道的事：{'；'.join(mem)}")
         else:
@@ -897,6 +928,8 @@ def build_actor_work_order(
     ledger: Ledger,
     npc_id: str,
     scene_id: str,
+    *,
+    limits: InjectionLimits = DEFAULT_LIMITS,
 ) -> str:
     """Physically isolated work order for one NPC's deep choice.
 
@@ -923,9 +956,10 @@ def build_actor_work_order(
     # 在场名单剔掉自己；主角在名单里自带「（玩家）」标注，Actor 据此认人
     #（2026-09-13 主角入人物表后不再需要"显式补上玩家"那一步）。
     parts += scene_snapshot_block(world, ledger, scene_id, exclude=[npc_id])
-    # 记忆口径与写手/QC 一致：known_set（亲历 ∪ known_by 含己 ∪ 听域内公开），
-    # 条数上限统一由 world.meta.memory_limit 管，不再有第二处硬编码。
-    mem = ledger.known_set(npc_id, scene_id, limit=world.meta.memory_limit)
+    # 记忆口径与写手/QC 一致：known_set（亲历 ∪ known_by 含己 ∪ 听域内公开）。
+    # 条数上限 2026-09-16 起统一走系统设置（原先挂 world.meta.memory_limit——
+    # 那是世界设定，可"嫌 NPC 记性差"是跨世界的偏好，换个世界就得重配一遍）。
+    mem = ledger.known_set(npc_id, scene_id, limits.known_set_limit)
     if mem:
         parts += ["你知道的事：", *mem]
     return "\n".join(parts)
@@ -935,6 +969,8 @@ def build_director_chat_system(
     world: WorldContent,
     ledger: Ledger,
     scene_id: str,
+    *,
+    limits: InjectionLimits = DEFAULT_LIMITS,
 ) -> str:
     """Work order for the director-window chat (OOC).
 
@@ -955,11 +991,19 @@ def build_director_chat_system(
         "当前场景：" + (scene.id if scene else scene_id),
         "在场：" + ("、".join(names) or "暂无"),
     ]
-    parts += event_log_block(world, ledger, include_ids=True)
+    parts += event_log_block(
+        world,
+        ledger,
+        limit=limits.event_log_limit,
+        recent_full=limits.event_log_full,
+        include_ids=True,
+    )
     # include_ids=True：导演要靠 id 废弃目标、把子目标挂到某个大目标下
     #（2026-09-12 之前一律不吐 id，导致 set_goal 的废弃/挂父实际填不出来）。
     parts += goals_block(ledger, include_ids=True)
-    parts += known_set_block(world, ledger, present_ids, scene_id)
+    parts += known_set_block(
+        world, ledger, present_ids, scene_id, known_limit=limits.known_set_limit
+    )
     parts += active_lore_block(ledger, present_ids)
     parts += private_notes_block(world, ledger, present_ids)
     # with_states=False：状态改由下面那份全量带 id 的清单统一给（见
@@ -993,14 +1037,20 @@ def build_director_chat_system(
         "public = 旁人看不看得见，默认 false",
         "- 状态撤销 state_revoke：→ payload {state_id}（上方清单里的方括号 id，逐字照抄）；"
         "找不到 id 时退而给 {npc_id, text}（与清单逐字一致）",
+        f"- 状态修订 state_revise：**改**一条已有状态的字段（写错的字 / 期限 / 可见性）"
+        f"→ payload {{state_id, 要改的字段}}。**只给要改的字段，其余键不要出现**"
+        f"（写了 public: false 就等于把它改成 false）；until 给空串＝清掉期限；"
+        f"文字仍受 ≤ {STATE_TEXT_MAX} 字与同角色不重复的约束；已到期的条目改不了"
+        "（它已经宣布结束了，要复活得撤销后重加）。只是改错别字就用它，"
+        "别用「撤销 + 新增」——那会把「什么时候起就是这样的」重置成现在",
         "（人物卡、Actor 档位、转正/场景注册走世界工作台，不走这里。）",
         "纪律：action 是一份提案，玩家确认后才生效。"
-        "state_add / state_revoke 只在玩家明确要求时提——他在改自己的世界，"
+        "state_add / state_revoke / state_revise 只在玩家明确要求时提——他在改自己的世界，"
         "不必拿「这算不算长期事实」拦他。",
         "讨论有明确结论时，末尾给一句可直接复制进正文框的输入建议。",
         "",
         "只返回 JSON，字段：",
-        '{"reply": "给玩家的戏外回复", "action": null | {"type": "override|inject_memory|access_rejudge|set_goal|retire|state_add|state_revoke", "payload": {"字段": "值"}}}',
+        '{"reply": "给玩家的戏外回复", "action": null | {"type": "override|inject_memory|access_rejudge|set_goal|retire|state_add|state_revoke|state_revise", "payload": {"字段": "值"}}}',
         "action：只有玩家明确要求执行幕后操作时才填，否则 null。",
         "payload 里的 npc_id / subject 用角色中文名（与在场名单、角色资料逐字一致）。",
         "输出字段只有 reply 与 action 两个。",
@@ -1008,17 +1058,16 @@ def build_director_chat_system(
     return "\n".join(parts)
 
 
-def build_audit_work_order(
-    world: WorldContent, ledger: Ledger, scene_id: str, settle_hint: str = ""
-) -> str:
+def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -> str:
     """Audit work order: settle world side effects from the prose.
 
     The audit infers time advance, location, presence, privacy and one-shot
     vs registered scenes from the narrative, then judges goal completion
     (M14 剧情目标)、生命周期，以及**角色状态的获得与结束**（Step 2，2026-09-14）。
 
-    ``settle_hint``：规则侧已按玩家明示意图定好的绝对时刻。告知审计是为了
-    消除"规则推一次、审计再估一次"的双重计费（2026-09-14）。
+    时间是这块的**唯一结算方**（2026-09-16 起）：规则侧的跳时解析已整条下线，
+    所以这里不再有 ``settle_hint``——没有"规则先定钟、审计改估"的重复计费问题，
+    审计按常识自行估计即可（原委见 ``app/rules/route.py`` 模块注释）。
     """
     scene_id = scene_id or ledger.current_scene()
     player_name = world.player_name()
@@ -1026,16 +1075,6 @@ def build_audit_work_order(
     present_ids = ledger.present_at(scene_id)
     names = [pid for pid in present_ids]
     scene_list = "、".join(s.id for s in world.scenes)
-    settle_lines = (
-        [
-            f"- ⚠ 引擎已按玩家明示意图把时钟定到 {settle_hint}（玩家输入里写了跳时）。"
-            "这段跨度**不要再估**：delta_minutes 给 0、clock_to 留空。"
-            "只有当正文自己明确写出另一个到达时刻（如\"到那儿已经是夜里十点\"）时，"
-            "才用 clock_to 给出那个绝对时刻覆盖它。"
-        ]
-        if settle_hint
-        else []
-    )
     state_lines = [
         "- state_add：只收**长期事实**（体质 / 伤残 / 病症 / 能力 / 身份处境）。"
         "自检：**过几天、几十轮回头看，这条还成立吗？**戏散就没了 → 不写。",
@@ -1066,7 +1105,6 @@ def build_audit_work_order(
             ' "state_add": [{"npc_id": "刘星", "text": "普通刀剑伤不了他", "public": true, "until": ""}],'
             ' "state_remove": ["st_3f2a91c04d7e"]}',
             "判定规则：",
-            *settle_lines,
             *state_lines,
             "- location：玩家此刻所在之处；正文明确写他移动（离开 / 去别处 / 回家）才更新，否则保持原场景。",
             "- participants（与 location 联动，二选一）：",
@@ -1084,12 +1122,13 @@ def build_audit_work_order(
             "→ false（不进导航，显示名仍可用）。",
             "- private：判据是\"外人会不会知道这事发生过\"，不单看地点。私下交底 / 咬耳朵 / "
             "无人看见的交易 / 隐蔽处行事 → true；当众冲突、公开对话 → false。",
-            "- delta_minutes：这场戏**实际经过**多久，以玩家经历了什么为准（不看时间词）："
-            "闲聊 5~15 / 一顿饭 30~60 / 顺笔赶路按路程 / 干活一下午 120~240 / 睡觉 480。"
-            "只是说到时间（\"明天见\"\"三点碰面\"）或原地续聊 → 0。",
-            "- clock_to：正文**明确说了时间走到几点**（\"到了晚上八点\"）才给，"
-            "格式 YYYY-MM-DDTHH:MM:SS（日期默认跟当前钟走，跨天才改）；给了它就不用再估 "
-            "delta_minutes；没说 → 留空。",
+            "- clock_to（**优先**）：只要**玩家输入或正文给出了任何明确时刻或日界**"
+            "（\"明天八点去学校\"\"第二天早上\"\"晚上十点见\"\"后天\"），就落这个时刻，"
+            "格式 YYYY-MM-DDTHH:MM:SS（日期默认跟当前钟走，跨天才改；只说了日界没说钟点时"
+            "按常识取一个合理钟点）——**此时 delta_minutes 必须给 0**，不要退回估时长。",
+            "- delta_minutes：**仅当上面没有任何明确时刻**时才用——自行估计这场戏"
+            "实际经过多久（分钟），以玩家经历了什么为准；没推出任何时间就 0。",
+            "- 时间**只向前**：宁可给 0 也不要倒退，也不要因为剧情提到过去就回拨时钟。",
             "- completed_goal_ids：正文已达到目标所述才填。**推进不算完成**"
             "（NPC 提及 / 推进目标只是推进）——审计只判终点，推进是编剧的事。"
             "大目标是章节：其下「子目标 x/y」只作参考证据、不是判据——正文给出关键了结"
@@ -1120,11 +1159,15 @@ def build_work_order(
     ledger: Ledger,
     scene_id: str,
     preset: NarrativePreset | None = None,
+    limits: InjectionLimits = DEFAULT_LIMITS,
 ) -> str:
     """Final work order for one agent.
 
     viewer="writer": merged director+storyteller (omniscient).
     viewer="actor_<npc_id>": physically isolated NPC deep-choice view.
+
+    ``limits`` = 注入上限（系统设置）。生产路径由 TurnRunner 传
+    ``settings.limits()``；不传时退回 ``DEFAULT_LIMITS``（探针/单测用）。
     """
     if viewer == "writer":
         scene_id = scene_id or ledger.current_scene()
@@ -1165,17 +1208,24 @@ def build_work_order(
         # 场景快照（此刻环境：当前时间/在场/场景/可感知）
         parts += scene_snapshot_block(world, ledger, scene_id)
         # 在场 NPC 已知集（机械知识边界，取代旧近况块）
-        parts += known_set_block(world, ledger, present_ids, scene_id)
+        parts += known_set_block(
+            world, ledger, present_ids, scene_id, known_limit=limits.known_set_limit
+        )
         # 剧情目标（写作引导，贴近动笔位置）
         parts += goals_block(ledger)
         # 事件日志（更早摘要在前 → 最近原文在后，收尾紧贴玩家输入以便续写）
-        parts += event_log_block(world, ledger)
+        parts += event_log_block(
+            world,
+            ledger,
+            limit=limits.event_log_limit,
+            recent_full=limits.event_log_full,
+        )
         return "\n".join(parts)
 
     if viewer.startswith("actor_"):
         npc_id = viewer[len("actor_"):]
         return build_actor_work_order(
-            world, ledger, npc_id, scene_id or ledger.current_scene()
+            world, ledger, npc_id, scene_id or ledger.current_scene(), limits=limits
         )
 
     raise ValueError(f"unknown viewer: {viewer}")

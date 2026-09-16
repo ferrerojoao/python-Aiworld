@@ -62,7 +62,10 @@ async def _director_chat(request, session, message: str):
     settings = request.app.state.settings
 
     system = build_director_chat_system(
-        session.world, session.ledger, session.ledger.current_scene()
+        session.world,
+        session.ledger,
+        session.ledger.current_scene(),
+        limits=settings.limits(),
     )
     history = session.director_history[-20:]
     messages = [{"role": "system", "content": system}]
@@ -280,7 +283,42 @@ def _execute_action(request, session, action_type: str, payload: dict) -> dict:
             )
         return {"ok": True, "action": action_type, "state_id": state_id}
 
-    # 导演窗口只管改账本（覆写/记忆注入/改判/剧情目标/退场/状态增撤）。模型越权
+    if action_type == "state_revise":
+        # 状态修订（2026-09-16）：原地改一条状态的字段，**不换条目**——id / since /
+        # source_event 全保留，所以"他什么时候起就是这样的"不会被改错字重置。
+        # 与 state_revoke 的关键差别：它只认 state_id，**不做 {npc_id, text} 退路**
+        # ——那个退路在这里有歧义（text 到底是"要改的那条"还是"改成什么"），
+        # 猜错就是改错一条事实。导演工单里的清单逐条带方括号 id，照抄即可。
+        runner = request.app.state.turn_runner_factory(session)
+        state_id = str(payload.get("state_id") or payload.get("id") or "").strip()
+        if not state_id:
+            raise HTTPException(
+                status_code=400,
+                detail="state_revise 需要 state_id（上方清单里的方括号 id，逐字照抄）",
+            )
+        # 「有没有给这个字段」与「给了什么值」必须分开：until 给空串是"清掉期限"
+        # （合法意图），而**不给** = 这一项不动。所以判定看键在不在 payload 里。
+        kwargs: dict = {}
+        if "text" in payload:
+            kwargs["text"] = str(payload.get("text") or "")
+        if "until" in payload:
+            kwargs["until"] = str(payload.get("until") or "")
+        if "public" in payload:
+            kwargs["public"] = bool(payload.get("public"))
+        try:
+            item = runner.transaction.revise_state(state_id, **kwargs)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if item is None:
+            raise HTTPException(status_code=404, detail=f"状态不存在：{state_id}")
+        return {
+            "ok": True,
+            "action": action_type,
+            "state_id": item.id,
+            "state": item.model_dump(),
+        }
+
+    # 导演窗口只管改账本（覆写/记忆注入/改判/剧情目标/退场/状态增撤改）。模型越权
     # 提议世界资产动作时，给玩家一句人话并指向正确的入口，而不是裸 400。
     raise HTTPException(
         status_code=400,

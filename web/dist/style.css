@@ -356,6 +356,28 @@ button:hover {
   margin: 0 0 10px;
 }
 
+/* 设置面板分组小标题（2026-09-16 条目变多后重排）：一条细下划线把各组切开。
+   第一组不留额外上边距，免得抽屉顶部凭空多出一段空档。 */
+.tab-panel h4 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 16px 0 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab-panel h4:first-of-type {
+  margin-top: 4px;
+}
+
+.tab-panel .setting-note {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+  margin: 6px 0 0;
+}
+
 .debug-output {
   background: var(--panel-4);
   border: 1px solid var(--border);
@@ -483,6 +505,7 @@ button:hover {
 
 .tab-panel input[type="text"],
 .tab-panel input[type="password"],
+.tab-panel input[type="number"],
 .tab-panel textarea,
 .tab-panel select,
 #style-input,
@@ -1501,12 +1524,6 @@ body.light .rail-item.current {
   gap: 6px;
   font-size: 13px;
   margin-bottom: 4px;
-}
-
-.st-empty {
-  color: var(--muted);
-  font-size: 12px;
-  padding: 2px;
 }
 
 .st-note {

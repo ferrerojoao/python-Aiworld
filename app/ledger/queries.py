@@ -55,7 +55,7 @@ class Ledger:
         self.narratives: list[dict[str, Any]] = []
         # 小抄①：每个实体（主角与 NPC 同权，键都是中文名）当前由最近一条定位事件确定的位置
         self.last_location: dict[str, dict[str, Any]] = {}
-        # 小抄②：每个人参与过哪些事件（experiences 热路径）
+        # 小抄②：每个人参与过哪些事件（known_set / 亲历通道的热路径）
         self.by_participant: dict[str, list[dict[str, Any]]] = {}
         # 小抄③：私密事件按 known_by 成员挂账（知情即可召回）；
         # _knower_members 记录每个事件当前挂了哪些成员，改判时同步增删。
@@ -202,15 +202,29 @@ class Ledger:
     def cache_stats_snapshot(self) -> dict[str, int]:
         return dict(self.cache_stats)
 
-    def register_scene(self, scene_id: str) -> bool:
+    def register_scene(self, scene_id: str, *aliases: str) -> bool:
         """Register a reusable scene node in the world (M17 转正，仅玩家声明的
-        可复用地点；一次性布景不注册). 场景键 = 中文名：id 即显示名。"""
+        可复用地点；一次性布景不注册). 场景键 = 中文名：id 即显示名。
+
+        ``aliases`` 是审计同轮给的变体名（``AuditOutput.scene_name``）。存进去是
+        为了**下一轮能被 ``_resolve_scene`` 救回**——同一个地点换个叫法（"老巷旧楼"
+        / "巷子深处的旧楼"）本该认得出来；不存就会当成新地点再注册一个（2026-09-16）。
+        """
+        scene_id = (scene_id or "").strip()
         if not scene_id or any(s.id == scene_id for s in self.world.scenes):
             return False
         from app.core.store import write_json_atomic
-        from app.world.models import Scene
+        from app.world.models import SCENE_PLACEHOLDER, Scene
 
-        scene = Scene(id=scene_id, aliases=[scene_id], perceivable="这里看起来是个还没仔细描述的地方。")
+        # id 自己算一个别名；空串与重复名不收——审计把 location 与 scene_name
+        # 填成同一个中文名是常态（提示词就是这么要求的），不是异常。
+        names = [scene_id]
+        for alias in aliases:
+            alias = (alias or "").strip()
+            if alias and alias not in names:
+                names.append(alias)
+
+        scene = Scene(id=scene_id, aliases=names, perceivable=SCENE_PLACEHOLDER)
         self.world.scenes.append(scene)
         write_json_atomic(self.save_dir / "scenes.json", [s.model_dump() for s in self.world.scenes])
         return True
@@ -228,43 +242,6 @@ class Ledger:
             if known_by is None or viewer in known_by:
                 result.append(event)
         return result
-
-    def experiences(self, entity: str, viewer: str) -> list[str]:
-        """Memory entries for an entity from the viewer's view.
-
-        Candidates come from two indexes — by_participant（亲历）and
-        by_knower（known_by 名单内的知情，含改判扩名单者）— then the
-        effective known_by visibility filter applies per event. Knower
-        recall keeps experiences aligned with visible_to: a private event
-        whose known_by lists someone who is not a participant (改判扩名单 /
-        幕后得知) still reaches their memory slice.
-        """
-        limit = self.world.meta.memory_limit
-        lines: list[str] = []
-        seen: set[str] = set()
-        candidates = (
-            self.by_participant.get(entity, [])
-            + self.by_participant.get(viewer, [])
-            + self.by_knower.get(entity, [])
-            + self.by_knower.get(viewer, [])
-        )
-        for ev in candidates:
-            ev_id = ev["id"]
-            if ev_id in seen:
-                continue
-            seen.add(ev_id)
-            known_by = self.save.access_overrides.get(ev_id, ev.get("known_by"))
-            if known_by is not None and viewer not in known_by:
-                continue
-            participants = ev.get("participants", [])
-            in_known = known_by is not None and (entity in known_by or viewer in known_by)
-            if entity not in participants and viewer not in participants and not in_known:
-                continue
-            summary = ev.get("summary") or (ev.get("body") or "")[:40]
-            lines.append(f"{ev.get('at', '')} {summary}")
-        # 防御 [-0:]：Python 里 lines[-0:] == lines[0:]（取全部），与"上限 0 = 不给记忆"
-        # 的直觉相反；负数同理（会砍掉尾部若干条）。≤0 一律判定为不注入记忆。
-        return lines[-limit:] if lines and limit > 0 else []
 
     def _scene_region(self, scene_id: str) -> str | None:
         """读取场景的 region（消息域）；空 = 全域公共区（None）."""
@@ -310,8 +287,14 @@ class Ledger:
                 derived.add(r)
         return derived
 
-    def known_set(self, npc_id: str, scene_id: str, limit: int = 6) -> list[str]:
+    def known_set(self, npc_id: str, scene_id: str, limit: int) -> list[str]:
         """Mechanical knowledge boundary for one NPC (装配层单一事实源).
+
+        ``limit``：取最近几条，**0 = 全部**（2026-09-16 反转旧口径"0 = 不注入"
+        ——旧语义与玩家的直觉相反，也与事件日志的 0 不一致）。**不留默认值**：
+        唯一权威是系统设置 ``Settings.limits()``，签名里再写一个数字就是隐患。
+
+        取代旧 ``experiences()``（2026-09-16 删除：app 内零调用点，仅单测在跑）。
 
         已知集 = 亲历（全量 by_participant，不随滑窗） ∪ known_by 含己（含改判）
         ∪ 听域内公开事件。听域取自人物卡 `region` 字段（来属地/听域），缺省按
@@ -351,7 +334,6 @@ class Ledger:
             picked.append(ev)
         picked.sort(key=lambda e: e.get("at", ""))
         lines = [f"{e.get('at', '')} {e.get('summary') or (e.get('body') or '')[:40]}" for e in picked]
-        # 防御 [-0:]：Python 里 lines[-0:] == lines[0:]（取全部），与"上限 0 = 不开记忆"
-        # 的直觉相反；负数同理（会砍掉尾部若干条）。≤0 一律判定为不注入，
-        # 与 experiences 的 0 口径对齐（2026-09-11）。
-        return lines[-limit:] if lines and limit > 0 else []
+        # 0 = 全部（2026-09-16 反转旧口径）。必须显式判断：`[-0:]` 恰好也等于
+        # "取全部"，但那是巧合，不该靠它表达意图；负数同理会砍掉尾部若干条。
+        return lines if limit <= 0 else lines[-limit:]

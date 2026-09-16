@@ -96,8 +96,10 @@ class SaveData(BaseModel):
     goals: list[Goal] = Field(default_factory=list)  # 剧情目标（M14，替代钩子台账）
     # 最近一次采纳的时间结算留痕（P1 可观测性，2026-09-14）：审计结算结果原本
     # 算完即丢，玩家看到时钟跳了几小时查不出原因。整条优先级链落在这里
-    # （clock_before/after、delta_rule、delta_audit、source、对钟是否被拒），
+    # （clock_before/after、delta_audit、source、对钟是否被拒），
     # 由 /state 透出给顶栏时钟 hover。诊断用，不参与任何逻辑判定。
+    # 2026-09-16 去规则化后链只剩两档（审计 clock_to / 审计 delta），老存档里
+    # 的 delta_rule / settle_rule 等键仍在，读取方需按缺省处理。
     last_settlement: dict | None = None
     # 最近一次采纳的角色状态变更（Step 2，2026-09-14）：added / removed / expired /
     # skipped（含跳过原因）。误加一条长期事实的代价高（它会改变此后每一轮提示词），

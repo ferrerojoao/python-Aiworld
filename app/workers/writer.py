@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.config import DEFAULT_LIMITS, InjectionLimits
 from app.core.workorder import build_work_order
 from app.ledger.queries import Ledger
 from app.world.models import NarrativePreset, WorldContent
@@ -9,22 +10,17 @@ from app.workers.schemas import WriterOutput
 def _rule_brief(bundle: dict) -> str:
     """规则段预结算说人话。
 
-    原来是把整个 dict 原样 repr 进 prompt（``规则段预结算：{'route': 'jump',
-    'delta_minutes': 720}``）——编剧只能靠猜字段名，而且 route/delta 这类
-    引擎内部词汇对它毫无意义（2026-09-14 改）。
+    规则侧现在只剩**移动**一件事（跳时解析已于 2026-09-16 整条下线）：时间由
+    审计在采纳时从正文推断，编剧不需要任何"时钟将被定到几点"的预告。
+
+    历史（2026-09-14）：原先把整个 dict 原样 repr 进 prompt（``规则段预结算：
+    {'route': 'jump', 'delta_minutes': 720}``）——编剧只能靠猜字段名，而且
+    route/delta 这类引擎内部词汇对它毫无意义。
     """
     lines: list[str] = []
     destination = bundle.get("destination")
     if destination:
         lines.append(f"- 主角这一拍确定移动到：{destination}（正文从离开当前场景写起）")
-    settle = bundle.get("settle_to")
-    if settle:
-        label = bundle.get("time_label") or ""
-        suffix = f"（{label}）" if label else ""
-        lines.append(
-            f"- 故事时间将推进到：{settle}{suffix}——"
-            "正文的时序要与这个时刻一致，不要再自行另算经过多久"
-        )
     if not lines:
         return ""
     return (
@@ -47,6 +43,7 @@ async def run_writer(
     own_decisions: str = "",
     rewrite_note: str = "",
     writer_directive: str = "",
+    limits: InjectionLimits = DEFAULT_LIMITS,
     model: str = "fake",
     temperature: float = 0.8,
 ) -> WriterOutput:
@@ -67,7 +64,7 @@ async def run_writer(
       「必须由你直接拍板」——这是第二稿能补全残稿的关键（2026-09-12 去否定化：
       原句尾还挂着一句"不要把这一拍留空"，已删——标题本身已把要求说清）。
     """
-    system = build_work_order("writer", world, ledger, scene_id or "", preset=preset)
+    system = build_work_order("writer", world, ledger, scene_id or "", preset=preset, limits=limits)
     if player_input.strip():
         player_msg = {"role": "user", "content": f"玩家输入：{player_input}"}
     else:

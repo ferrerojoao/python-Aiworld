@@ -147,7 +147,6 @@ def save_world_assets(root: str | Path, data: dict) -> None:
         "opening": overview.get("opening", ""),
         "start_time": overview.get("start_time", ""),
         "start_scene": overview.get("start_scene", ""),
-        "memory_limit": overview.get("memory_limit", 50),
     }
     npcs = data.get("npcs") or {}
     players = [npc_id for npc_id, card in npcs.items() if (card or {}).get("is_player")]

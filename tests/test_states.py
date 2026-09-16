@@ -310,12 +310,15 @@ def test_state_view_hands_over_overflow_items(session) -> None:
     assert "另有 2 条状态未列出" in out
 
 
-def test_state_view_skips_absent_names_without_states(session) -> None:
-    """不在场又没有任何状态的人不进面板（列出来只是噪音）；主角即使空也进。"""
-    player = session.world.player_name()
-    view = _view(session)
-    assert [v["name"] for v in view] == [player]
-    assert view[0]["visible"] == [] and view[0]["hidden"] == []
+def test_state_view_skips_names_without_states(session) -> None:
+    """一条状态都没有的人不进面板（列个空组只是噪音），**主角与在场者也不例外**。
+
+    2026-09-16 用户要求："状态面板，无状态的人物不要显示"。面板是"此刻谁是什么"
+    的查询视图——空组不承载任何信息，只会让人以为"说好了要显示他却什么都没有"。
+    """
+    npc = _an_npc(session)
+    _place(session, npc)  # 在场，但一条状态都没有
+    assert _view(session) == []
 
 
 def test_state_view_does_not_fake_truncation_for_absent_names(session) -> None:

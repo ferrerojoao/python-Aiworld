@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AIWorld</title>
-  <link rel="stylesheet" href="style.css?v=57" />
+  <link rel="stylesheet" href="style.css?v=58" />
 </head>
 <body>
   <div id="app">
@@ -98,13 +98,15 @@
 
       <div id="tab-settings" class="tab-panel">
         <h3>系统设置</h3>
+
+        <h4>模型接口</h4>
         <label>API Base URL</label>
         <input id="setting-api-url" type="text" placeholder="http://127.0.0.1:11434/v1" />
         <label>API Key</label>
         <input id="setting-api-key" type="password" placeholder="sk-..." />
-        <label>主模型</label>
+        <label>主模型（编剧 / 导演 / Actor）</label>
         <input id="setting-model-main" type="text" placeholder="qwen2.5:7b" />
-        <label>辅助模型</label>
+        <label>辅助模型（质检 / 审计 / 分类）</label>
         <input id="setting-model-cheap" type="text" placeholder="qwen2.5:7b" />
         <label>推理等级（自动 = 不指定）</label>
         <select id="setting-reasoning">
@@ -113,6 +115,17 @@
           <option value="high">高（high）</option>
           <option value="max">最高（max）</option>
         </select>
+
+        <h4>注入上限</h4>
+        <label>事件日志条数（0 = 给全部）</label>
+        <input id="setting-event-log-limit" type="number" min="0" step="1" />
+        <label>其中给正文原文的条数（至少 1）</label>
+        <input id="setting-event-log-full" type="number" min="1" step="1" />
+        <label>每个 NPC 已知集条数（0 = 给全部）</label>
+        <input id="setting-known-set-limit" type="number" min="0" step="1" />
+        <p class="setting-note">编剧、质检、Actor 三处共用这三个数。填 0 = 不限制，用于"NPC 老忘事"的场合。</p>
+
+        <h4>界面与流程</h4>
         <label><input id="setting-qc-enabled" type="checkbox" checked /> 启用质检环节（关闭后编剧初稿直接进候选）</label>
         <label>字体大小</label>
         <select id="setting-font-size">
@@ -200,6 +213,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=70"></script>
+  <script src="app.js?v=74"></script>
 </body>
 </html>

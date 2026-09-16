@@ -1,15 +1,26 @@
 from __future__ import annotations
 
+from app.config import DEFAULT_LIMITS
 from app.ledger.queries import Ledger
 from app.world.models import NarrativePreset, WorldContent
 from app.workers.schemas import QCOutput
 
 
-def build_qc_reference(world: WorldContent, ledger: Ledger, participants: list[str]) -> str:
+def build_qc_reference(
+    world: WorldContent,
+    ledger: Ledger,
+    participants: list[str],
+    *,
+    known_limit: int = DEFAULT_LIMITS.known_set_limit,
+) -> str:
     """Reference area for the QC checker: what each speaking entity may know.
 
     The merged writer is omniscient, so the QC pass is the last gate against
     knowledge leaks: a character's lines must stay inside their visible set.
+
+    ``known_limit`` 必须与编剧侧**同一份**（2026-09-16）：QC 是拿编剧的正文去
+    比对知识边界的，两边条数不一致就会出现"编剧写了、QC 却以为泄漏"的假警报。
+    默认值直接取 ``DEFAULT_LIMITS``，不另写数字。
 
     Player secrets are the opposite boundary: personal_secrets are known to
     the player only (no NPC may mention them — disguise identity), and
@@ -40,7 +51,7 @@ def build_qc_reference(world: WorldContent, ledger: Ledger, participants: list[s
         npc = world.npcs.get(pid)
         if npc is None:
             continue
-        mem = ledger.known_set(pid, scene_id, 5)
+        mem = ledger.known_set(pid, scene_id, known_limit)
         memo = "；".join(mem) if mem else "（无——该角色的知识从眼前开始）"
         blocks.append(
             f"{npc.id} 知道的事：{memo}（另：本区域公开旧事该角色均有耳闻；"

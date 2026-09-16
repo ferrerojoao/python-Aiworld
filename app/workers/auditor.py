@@ -15,7 +15,6 @@ async def run_audit(
     *,
     model: str = "fake",
     temperature: float = 0.2,
-    settle_hint: str = "",
 ) -> AuditOutput:
     """Audit worker: infers world side effects from an adopted prose and
     judges goal completion / lifecycle.
@@ -24,10 +23,11 @@ async def run_audit(
     applies the returned AuditOutput (clock, narrative, scene registration,
     goals, lifecycle).
 
-    ``settle_hint``：规则侧已算好的跳时绝对时刻。传给它，审计就不会把同一段
-    跨度再估一遍（双重计费）。
+    时间是审计的独家职责（2026-09-16）：规则侧不再预算，玩家输入随 user
+    message 一并送达，所以“玩家给了具体时间就按玩家要求、没给就自行估计”
+    无需额外的 ``settle_hint`` 通道。
     """
-    system = build_audit_work_order(world, ledger, ledger.current_scene(), settle_hint)
+    system = build_audit_work_order(world, ledger, ledger.current_scene())
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": f"已采纳正文：\n{prose}\n\n玩家输入：{player_input}"},

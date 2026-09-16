@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.config import DEFAULT_LIMITS, InjectionLimits
 from app.core.workorder import build_work_order
 from app.ledger.queries import Ledger
 from app.world.models import NpcCard, WorldContent
@@ -36,6 +37,7 @@ async def run_actor(
     *,
     context: str = "",
     scene_id: str | None = None,
+    limits: InjectionLimits = DEFAULT_LIMITS,
     model: str = "fake",
     temperature: float = 0.8,
 ) -> ActorDecision:
@@ -47,7 +49,7 @@ async def run_actor(
     own memory slice (already filtered by known_by visibility). It never sees
     private notes, other NPCs' secrets, goals, or the writer's motivation.
     """
-    system = build_work_order(f"actor_{npc.id}", world, ledger, scene_id or "")
+    system = build_work_order(f"actor_{npc.id}", world, ledger, scene_id or "", limits=limits)
     scene = clean_context(context)
     messages = [
         {"role": "system", "content": system},

@@ -8,9 +8,9 @@ from app.config import Settings
 from app.core.store import new_id
 from app.rules.lorebook import hit_entry_ids, merge_active_lore
 from app.rules.movement import resolve_destination
-from app.rules.route import day_start_hour, looks_like_move, parse_time_intent
+from app.rules.route import looks_like_move
 from app.rules.scenes import scene_description
-from app.runtime.session import GameSession, world_start_time
+from app.runtime.session import GameSession
 from app.runtime.transaction import Candidate, CandidateStore, SideEffects, Transaction
 from app.world.models import NarrativePreset
 from app.workers.actor import run_actor
@@ -148,6 +148,7 @@ class TurnRunner:
             preset=self.preset,
             rewrite_note=rewrite_note,
             writer_directive=writer_directive,
+            limits=self.settings.limits(),
             model=self.settings.resolved_model("story"),
             temperature=self.settings.temp_writer,
         )
@@ -220,6 +221,7 @@ class TurnRunner:
                         q.question,
                         context=q.context,
                         scene_id=scene,
+                        limits=self.settings.limits(),
                         model=self.settings.resolved_model("actor"),
                         temperature=0.8,
                     )
@@ -241,6 +243,7 @@ class TurnRunner:
                 own_decisions="\n".join(f"- {name}：{question}" for name, question in own),
                 rewrite_note=rewrite_note,
                 writer_directive=writer_directive,
+                limits=self.settings.limits(),
                 model=self.settings.resolved_model("story"),
                 temperature=self.settings.temp_writer,
             )
@@ -277,10 +280,9 @@ class TurnRunner:
         # 本回合导演指令：((...)) 行内语法，剥离后不进路由/不进账本。
         player_input, writer_directive = _extract_directive(player_input)
 
-        # 规则预结算：**移动**与**跳时**是正交的两件事，各自独立判定（2026-09-14 修）。
-        # 原来共用一个单标签 route（move | jump | chat_act），"第二天去学校"命中 jump
-        # 就把移动整条吞掉 → 规则侧目的地丢失、编剧工单里的 scene 还是旧场景，全靠
-        # 审计从正文判 location 兜。现在两者可以同时成立。
+        # 规则段只做一件事：**移动**。原先的"跳时"解析已于 2026-09-16 整条下线
+        # （原委见 ``app/rules/route.py`` 模块注释）——时间全交审计，
+        # 规则侧不再产出 settle_to / delta，也就没有跨工位重复计费的问题。
         scene = self.session.ledger.current_scene()
         rule_bundle: dict = {"scene": scene}
 
@@ -289,15 +291,6 @@ class TurnRunner:
             if dest:
                 rule_bundle.update({"destination": dest, "scene": dest})
                 scene = dest
-
-        # 跳时：规则产出**绝对时刻**（不是时长）——"次日"这类意图不该被当前钟点污染，
-        # 也能避免与审计估时长叠加。识别不出就什么都不给，全交审计。
-        clock_now = self.session.ledger.save.clock or world_start_time(self.session.world)
-        intent = parse_time_intent(
-            player_input, clock_now, day_start=day_start_hour(self.session.world)
-        )
-        if intent:
-            rule_bundle.update({"settle_to": intent.settle_to, "time_label": intent.label})
 
         # World book pre-solve: this turn's player input triggers concepts
         # (merge into the active list previous prose facts still hold slots).
@@ -328,7 +321,12 @@ class TurnRunner:
                 out.prose,
                 participants=qc_participants,
                 preset=self.preset,
-                reference=build_qc_reference(self.session.world, self.session.ledger, qc_participants),
+                reference=build_qc_reference(
+                    self.session.world,
+                    self.session.ledger,
+                    qc_participants,
+                    known_limit=self.settings.limits().known_set_limit,
+                ),
                 summary_hint=out.summary,
                 model=self.settings.resolved_model("qc"),
                 temperature=self.settings.temp_qc,
@@ -358,10 +356,7 @@ class TurnRunner:
             writer_directive=writer_directive,
             prose=prose,
             side_effects=SideEffects(
-                # 规则侧的跳时意图：绝对时刻（旧 delta_minutes 保留给磁盘上的旧候选）。
-                settle_to=rule_bundle.get("settle_to", ""),
-                settle_label=rule_bundle.get("time_label", ""),
-                # 规则段可定移动目的地；正文语义副作用（时间/在场/私密）由采纳时审计推断。
+                # 规则段只可定移动目的地；正文语义副作用（时间/在场/私密）由采纳时审计推断。
                 narrative={
                     "location": rule_bundle.get("destination"),
                     "summary": summary,
@@ -409,7 +404,12 @@ class TurnRunner:
                 self.session.ledger,
                 out.prose,
                 preset=self.preset,
-                reference=build_qc_reference(self.session.world, self.session.ledger, []),
+                reference=build_qc_reference(
+                    self.session.world,
+                    self.session.ledger,
+                    [],
+                    known_limit=self.settings.limits().known_set_limit,
+                ),
                 summary_hint=out.summary,
                 model=self.settings.resolved_model("qc"),
                 temperature=self.settings.temp_qc,
@@ -450,16 +450,11 @@ class TurnRunner:
     # Internal
     # ------------------------------------------------------------------
     async def _audit_callback(self, candidate):
-        """Audit input adapter: run_audit now takes prose + player input.
+        """Audit input adapter: run_audit takes prose + player input.
 
-        规则侧的跳时意图一并告知审计——否则审计不知道时钟已经按玩家明示意图
-        定到某刻，会把整段跨度再估一遍 delta（双重计费的老根因之一）。
+        时间与在场全由审计从正文+玩家输入推断，规则侧不再预结算，所以这里
+        没有 settle_hint 要转达（2026-09-16 去规则化）。
         """
-        settle = candidate.side_effects.settle_to
-        settle_hint = ""
-        if settle:
-            label = candidate.side_effects.settle_label or settle
-            settle_hint = f"{settle}（{label}）"
         return await run_audit(
             self.llm,
             self.session.world,
@@ -468,7 +463,6 @@ class TurnRunner:
             candidate.player_input or "",
             model=self.settings.resolved_model("audit"),
             temperature=0.2,
-            settle_hint=settle_hint,
         )
 
     async def adopt(self, candidate_id: str) -> None:

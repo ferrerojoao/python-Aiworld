@@ -552,10 +552,9 @@ def test_revoke_state_route(tmp_path):
         session = client.app.state.sessions[sid]
         player = session.world.player_name()
 
-        # 空存档：面板只给主角一个空条目（他永远在场，且要能显示"此刻没有任何状态"）。
+        # 空存档：没有任何状态 → 面板为空（2026-09-16：无状态的人不显示，含主角）。
         view = client.get(f"/api/sessions/{sid}/state").json()["state_view"]
-        assert [v["name"] for v in view] == [player]
-        assert view[0]["is_player"] is True and view[0]["visible"] == []
+        assert view == []
 
         session.ledger.save.entities[player] = EntityRuntime(
             states=[StateItem(text="普通刀剑伤不了他", public=False)]
@@ -573,7 +572,7 @@ def test_revoke_state_route(tmp_path):
         )
         state = client.get(f"/api/sessions/{sid}/state").json()
         assert state["states"] == {}
-        assert state["state_view"][0]["visible"] == []
+        assert state["state_view"] == []  # 撤光了 → 这一组也不再显示
         events = client.get(f"/api/sessions/{sid}/ledger/events").json()["events"]
         assert any(
             e.get("source") == "state" and "（玩家撤销）" in (e.get("summary") or "")
@@ -592,17 +591,20 @@ def test_world_start_time_roundtrip(tmp_path):
     from pathlib import Path as _Path
 
     # The qinghsi fixture has start_time 2026-07-14T08:00:00.
-    with _make_client(tmp_path) as client:
+    # 让审计给出 4h 时长来推钟（规则侧的跳时解析已于 2026-09-16 下线，
+    # 时钟现在只由审计推进——"等到中午"不再自动落 12:00）。
+    resp = dict(GENERIC_LLM_RESPONSE, delta_minutes=240)
+    with _make_client(tmp_path, llm=FakeLLM({"*": resp})) as client:
         r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
         sid = r.json()["sid"]
         state = client.get(f"/api/sessions/{sid}/state").json()
         assert state["clock"] == "2026-07-14T08:00:00"  # 内容包 start_time
 
         # 推钟后 reset 应回到起点（第二次输入自动采纳第一回合的候选）。
-        client.post(f"/api/sessions/{sid}/turn", json={"input": "等到中午"})
+        client.post(f"/api/sessions/{sid}/turn", json={"input": "在街上耗了一上午"})
         client.post(f"/api/sessions/{sid}/turn", json={"input": "然后呢"})
         state = client.get(f"/api/sessions/{sid}/state").json()
-        assert state["clock"] != "2026-07-14T08:00:00"
+        assert state["clock"] == "2026-07-14T12:00:00"
         client.post(f"/api/sessions/{sid}/reset")
         state = client.get(f"/api/sessions/{sid}/state").json()
         assert state["clock"] == "2026-07-14T08:00:00"
@@ -921,6 +923,8 @@ def test_settings_and_director_chat(tmp_path):
         settings = client.get("/api/settings").json()
         assert "llm_base_url" in settings
         assert "reasoning_effort" in settings
+        # 注入上限（2026-09-16）：三个数字都从系统设置透出。
+        assert {"event_log_limit", "event_log_full", "known_set_limit"} <= set(settings)
 
         put = client.put(
             "/api/settings",
@@ -939,16 +943,26 @@ def test_settings_and_director_chat(tmp_path):
 
 
 def test_settings_persist_across_restart(tmp_path):
-    """UI 改的推理等级/质检开关落盘 data/settings.json，重启（新 app 实例）后恢复。"""
+    """UI 改的推理等级/质检开关/注入上限落盘 data/settings.json，重启后恢复。"""
     with _make_client(tmp_path) as client:
         put = client.put(
             "/api/settings",
-            json={"reasoning_effort": "high", "qc_enabled": False},
+            json={
+                "reasoning_effort": "high",
+                "qc_enabled": False,
+                # 0 = 给全部（合法值，不该被夹成 1）
+                "event_log_limit": 0,
+                "event_log_full": 1,
+                "known_set_limit": 0,
+            },
         )
         assert put.status_code == 200
         state = client.get("/api/settings").json()
         assert state["reasoning_effort"] == "high"
         assert state["qc_enabled"] is False
+        assert state["event_log_limit"] == 0
+        assert state["event_log_full"] == 1
+        assert state["known_set_limit"] == 0
         assert (tmp_path / "data" / "settings.json").exists()
 
     # 重启 = 全新 Settings（回到 env 默认）+ 同一 data_dir → lifespan 应用覆盖层。
@@ -964,6 +978,9 @@ def test_settings_persist_across_restart(tmp_path):
         state = client.get("/api/settings").json()
         assert state["reasoning_effort"] == "high"
         assert state["qc_enabled"] is False
+        assert state["event_log_limit"] == 0
+        assert state["event_log_full"] == 1
+        assert state["known_set_limit"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1045,7 +1062,6 @@ def test_create_world_from_draft_payload(tmp_path):
             "opening": "你站在主街上。",
             "start_time": "",
             "start_scene": "主街",
-            "memory_limit": 50,
         },
         "lorebook": [],
         "scenes": [{"id": "主街", "aliases": [], "perceivable": "", "region": ""}],
@@ -1288,3 +1304,145 @@ def test_director_state_revoke_falls_back_to_npc_and_text(tmp_path):
         # 两个字段都不给 → 400。
         bare = _confirm(client, sid, {"type": "state_revoke", "payload": {}})
         assert bare.status_code == 400
+
+
+def _adopt_round(client, sid, text="继续待着"):
+    """跑一轮并采纳。采纳会写 last_state_change（修订留痕挂在它上面），
+    并跑一次到期清算（已到期的条目靠它才被标记）。"""
+    sse = client.post(f"/api/sessions/{sid}/turn", json={"input": text}).text
+    client.post(f"/api/sessions/{sid}/candidates/{_candidate_id_from_sse(sse)}/adopt")
+
+
+def test_director_state_revise_edits_in_place(tmp_path):
+    """导演窗口修订状态（2026-09-16）：**原地改，不换条目**。
+
+    "撤销 + 新增"也能换文字，但会把 since 重置成现在、把 source_event 指向新事件
+    ——"他什么时候起就是这样的"这条信息会因为改一个错别字而丢掉。修订保留
+    id / since / source_event 三个锚，改完仍是同一条事实（要反悔仍是同一个撤销入口）。
+
+    只认 state_id、**不做 {npc_id, text} 退路**：那个退路在修订里天然有歧义
+    （text 到底是"要改的那条"还是"改成什么"），猜错就是改错一条事实。
+    """
+    with _make_client(tmp_path) as client:
+        sid = client.post(
+            "/api/sessions", json={"world_id": "qinghsi", "save_name": "main"}
+        ).json()["sid"]
+        _adopt_round(client, sid)
+
+        add = _confirm(
+            client,
+            sid,
+            {
+                "type": "state_add",
+                "payload": {"npc_id": "朱明", "text": "左腿摔伤，走路瘸", "public": True},
+            },
+        )
+        item = add.json()["state"]
+
+        rev = _confirm(
+            client,
+            sid,
+            {"type": "state_revise", "payload": {"state_id": item["id"], "text": "右腿摔伤，走路瘸"}},
+        )
+        assert rev.status_code == 200
+        after = rev.json()["state"]
+        assert after["text"] == "右腿摔伤，走路瘸"
+        # 三个锚全保留
+        assert after["id"] == item["id"]
+        assert after["since"] == item["since"]
+        assert after["source_event"] == item["source_event"]
+        assert after["public"] is True  # 没给的字段不动
+
+        # 面板立刻是新文字（state_view 由引擎从存档现算）
+        state = client.get(f"/api/sessions/{sid}/state").json()
+        entry = next(v for v in state["state_view"] if v["name"] == "朱明")
+        assert [it["text"] for it in entry["visible"]] == ["右腿摔伤，走路瘸"]
+
+        # 留痕：revised 记新文字与旧文字（前端据此显示「旧 → 新」）；added 里仍是
+        # 当年的快照——所以前端拿 revised 覆盖它，否则屏幕上会报旧字。
+        change = state["last_state_change"]
+        row = change["revised"][-1]
+        assert row["id"] == item["id"]
+        assert row["old_text"] == "左腿摔伤，走路瘸"
+        assert row["text"] == "右腿摔伤，走路瘸"
+        assert [a["text"] for a in change["added"] if a["id"] == item["id"]] == [
+            "左腿摔伤，走路瘸"
+        ]
+        events = client.get(f"/api/sessions/{sid}/ledger/events").json()["events"]
+        summary = next(e["summary"] for e in events if "（玩家修订）" in (e["summary"] or ""))
+        assert "左腿摔伤，走路瘸" in summary and "右腿摔伤，走路瘸" in summary
+
+        # 只改期限 / 可见性：until 给空串＝清掉期限；public 显式给才动。
+        lim = _confirm(
+            client,
+            sid,
+            {
+                "type": "state_revise",
+                "payload": {
+                    "state_id": item["id"],
+                    "until": "2001-07-20T08:00:00",
+                    "public": False,
+                },
+            },
+        )
+        assert lim.status_code == 200
+        assert lim.json()["state"]["until"] == "2001-07-20T08:00:00"
+        assert lim.json()["state"]["public"] is False
+        clr = _confirm(
+            client, sid, {"type": "state_revise", "payload": {"state_id": item["id"], "until": ""}}
+        )
+        assert clr.json()["state"]["until"] == ""
+
+        # 提交与现值完全相同的字段 → 不落事件（没变化就不该留下"修订过"的痕迹）。
+        before = len(client.get(f"/api/sessions/{sid}/ledger/events").json()["events"])
+        same = _confirm(
+            client,
+            sid,
+            {
+                "type": "state_revise",
+                "payload": {"state_id": item["id"], "text": "右腿摔伤，走路瘸", "until": ""},
+            },
+        )
+        assert same.status_code == 200
+        assert len(client.get(f"/api/sessions/{sid}/ledger/events").json()["events"]) == before
+
+        # 守卫：三项都不给 400 / 抄错 id 404 / 撞另一条已有文字 400 / 空文字 400。
+        _confirm(
+            client, sid, {"type": "state_add", "payload": {"npc_id": "朱明", "text": "左臂骨裂"}}
+        )
+        for payload, code in [
+            ({"state_id": item["id"]}, 400),
+            ({"state_id": "st_nope", "text": "随便"}, 404),
+            ({"state_id": item["id"], "text": "左臂骨裂"}, 400),
+            ({"state_id": item["id"], "text": "   "}, 400),
+            ({}, 400),
+        ]:
+            assert _confirm(client, sid, {"type": "state_revise", "payload": payload}).status_code == code, payload
+
+        # 已到期的条目不可修订：它在注入侧读不到，改文字玩家看不到效果；改期限更是
+        # 要么立刻又失效、要么等于偷偷复活一条已经记过「状态结束」的史实。
+        gone = _confirm(
+            client,
+            sid,
+            {
+                "type": "state_add",
+                "payload": {"npc_id": "朱明", "text": "伤口未愈", "until": "2001-07-11T08:00:00"},
+            },
+        ).json()["state"]
+        _adopt_round(client, sid)  # 采纳时到期清算 → expired_at 落上
+        assert (
+            _confirm(
+                client,
+                sid,
+                {"type": "state_revise", "payload": {"state_id": gone["id"], "text": "伤口已愈"}},
+            ).status_code
+            == 400
+        )
+
+        # 撤销仍然有效，撤的是同一条（id 未变）。
+        assert (
+            _confirm(
+                client, sid, {"type": "state_revoke", "payload": {"state_id": item["id"]}}
+            ).status_code
+            == 200
+        )

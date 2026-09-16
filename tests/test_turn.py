@@ -11,6 +11,7 @@ from app.ledger.save import EntityRuntime, StateItem
 from app.rules.lorebook import merge_active_lore
 from app.runtime.session import open_session
 from app.runtime.turn import NeedChooseCandidate, TurnRunner
+from app.world.models import SCENE_PLACEHOLDER
 
 
 class PrefixKeyLLM(FakeLLM):
@@ -222,25 +223,18 @@ def test_unresolved_npc_id_is_surfaced_not_silent(session, settings):
     assert candidate.prose == writer_second["prose"]
 
 
-def test_jump_settles_to_absolute_time(session, fake_llm, settings):
-    """跳时产出**绝对时刻**，不再是"加多少分钟"（08:00 → 当日 19:00）。"""
-    runner = _runner(session, fake_llm, settings)
-    candidate = asyncio.run(runner.run_turn("等到晚上"))
-    assert candidate.side_effects.settle_to == "2026-07-14T19:00:00"
-    assert candidate.side_effects.settle_label
+def test_rule_bundle_solves_move_only(session, fake_llm, settings):
+    """规则段只剩**移动**：目的地照旧预结算，时间不再预结算（2026-09-16 去规则化）。
 
-
-def test_move_and_jump_are_solved_together(session, fake_llm, settings):
-    """移动与跳时是**正交**的两件事，各自独立结算。
-
-    原来 `if route == "move" … elif route == "jump"` 是单标签互斥，"第二天去鱼市"
-    命中 jump 就把移动预结算整条吞掉 → 规则侧目的地为 None、编剧工单里的 scene
-    还是旧场景，只能靠审计从正文判 location 兜。
+    以前"第二天去鱼市"还会带一个 settle_to 绝对时刻进候选；现在这里必须没有
+    ——时间由审计在采纳时独家结算（玩家给了具体时刻就照办、没给就自行估计）。
     """
     runner = _runner(session, fake_llm, settings)
     candidate = asyncio.run(runner.run_turn("第二天去鱼市"))
     assert candidate.side_effects.narrative["location"] == "鱼市"
-    assert candidate.side_effects.settle_to == "2026-07-15T08:00:00"
+    dumped = candidate.side_effects.model_dump()
+    assert "settle_to" not in dumped
+    assert "delta_minutes" not in dumped
 
 
 def test_candidate_has_summary(session, fake_llm, settings):
@@ -365,6 +359,96 @@ def test_audit_registers_reusable_scene(session, settings):
 
     assert any(s.id == "街角奶茶店" for s in session.world.scenes)
     assert session.ledger.save.player_scene == "街角奶茶店"
+
+
+def test_registered_scene_keeps_the_audit_alias(session, settings, world_root):
+    """注册新场景时，审计同轮给的变体名要一并进 aliases（2026-09-16）。
+
+    ``register_scene`` 原先只拿 ``location``，``scene_name`` 直接被丢掉——
+    "老巷旧楼"落表后，"巷子深处的旧楼"这个审计知道的叫法就没人记得，
+    以后要么认不出、要么被当成新地点重复注册。
+    """
+    audit_out = {
+        "location": "村东苇塘",
+        "scene_name": "苇塘",
+        "register_scene": True,
+        "participants": ["刘星"],
+        "private": False,
+        "delta_minutes": 0,
+        "lifecycle": [],
+    }
+    llm = PrefixKeyLLM(
+        {
+            "玩家输入：": {
+                "prose": "你绕到村东的苇塘边坐下。",
+                "summary": "刘星去了村东苇塘。",
+                "actor_questions": [],
+            },
+            "正文：": {"status": "pass", "prose": "你绕到村东的苇塘边坐下。", "issues": []},
+            "已采纳正文": audit_out,
+        }
+    )
+    runner = _runner(session, llm, settings)
+    candidate = asyncio.run(runner.run_turn("去村东的苇塘"))
+    asyncio.run(runner.adopt(candidate.candidate_id))
+
+    scene = next((s for s in session.world.scenes if s.id == "村东苇塘"), None)
+    assert scene is not None
+    # id 自己算一个别名，审计给的变体名跟在后面；同名的重复项不收。
+    assert scene.aliases == ["村东苇塘", "苇塘"]
+
+    # 落盘一致（世界资产 = 磁盘真相）：新场景只带名字，描述是占位。
+    on_disk = {
+        s["id"]: s
+        for s in json.loads((world_root / "scenes.json").read_text(encoding="utf-8"))
+    }
+    assert on_disk["村东苇塘"]["aliases"] == ["村东苇塘", "苇塘"]
+    assert on_disk["村东苇塘"]["perceivable"] == SCENE_PLACEHOLDER
+
+
+def test_audit_alias_of_registered_scene_is_not_reregistered(session, settings):
+    """审计把已注册场景的**别名**单独当 location 给出时，应救回原场景（2026-09-16）。
+
+    ``_resolve_scene`` 原先第一步只认 ``s.id``，别名只在第二个参数（审计的
+    ``scene_name``）里被反查。于是审计**只给一个叫法**时（qingshi2 实测里
+    ``location_name`` 就是空的），"鱼市"的别名"码头鱼市"会凭空多出一个场景。
+    """
+    before = {s.id for s in session.world.scenes}
+    fish = next(s for s in session.world.scenes if s.id == "鱼市")
+    assert "码头鱼市" in fish.aliases  # 别名一直都在，问题只是纠偏时没用上
+
+    audit_out = {
+        "location": "码头鱼市",  # 已注册场景的别名，不是新地点
+        "scene_name": "",
+        "register_scene": True,
+        "participants": ["刘星"],
+        "private": False,
+        "delta_minutes": 0,
+        "lifecycle": [],
+    }
+    llm = PrefixKeyLLM(
+        {
+            # 玩家输入刻意不含任何场景名/别名：让规则侧解不出目的地，
+            # 逼 location 走审计那条路（否则 resolve_destination 先救了）。
+            "玩家输入：": {
+                "prose": "你在附近转了转，最后走到码头边。",
+                "summary": "刘星在码头边转了一圈。",
+                "actor_questions": [],
+            },
+            "正文：": {
+                "status": "pass",
+                "prose": "你在附近转了转，最后走到码头边。",
+                "issues": [],
+            },
+            "已采纳正文": audit_out,
+        }
+    )
+    runner = _runner(session, llm, settings)
+    candidate = asyncio.run(runner.run_turn("在附近转转"))
+    asyncio.run(runner.adopt(candidate.candidate_id))
+
+    assert {s.id for s in session.world.scenes} == before  # 没有多出同义场景
+    assert session.ledger.save.player_scene == "鱼市"
 
 
 def test_multiple_candidates_blocks_new_turn(session, fake_llm, settings):
@@ -584,7 +668,7 @@ def test_audit_npc_moves_updates_snapshot(session, settings):
     # 快照更新：朱明从网吧在场名单消失（快照已随离场事件走到未注册的"朱明家"）
     assert "朱明" not in session.ledger.present_at("网吧")
     # 他的已知集含亲历：主事件（被找到聊天）+ 自己的移动
-    got = "\n".join(session.ledger.known_set("朱明", "网吧"))
+    got = "\n".join(session.ledger.known_set("朱明", "网吧", 0))
     assert "朱明前往" in got
     # 非法条目静默跳过：未知 npc_id 不落账
     assert not any(e["location"] == "somewhere" for e in evs)
@@ -719,69 +803,30 @@ def _clock_audit_case(session, settings, audit_out, player_input="继续待着")
     return session.ledger.save.last_settlement, candidate
 
 
-def test_rule_settle_is_not_added_to_audit_delta(session, settings):
-    """规则对钟与审计估时长是「或」关系，绝不叠加（2026-09-14 修）。
+def test_time_is_settled_by_audit_only(session, settings):
+    """时钟推进的唯一来源是审计（2026-09-16 去规则化）。
 
-    审计工单原先不接收规则意图，它不知道时钟已经按玩家明示意图定到某刻，会把
-    整段跨度再估一遍——实测"第二天去学校"多算 5.4h（规则 +12h、审计估 22.6h 被
-    保险丝截到 16h，相加 28h → 次日 13:25，而正文说的是早上）。
-    现在规则给的是绝对时刻、优先级高于审计估时长。
+    以前"第二天去学校"是规则对钟 + 审计估时长走「或」关系（两条链互不叠加）；
+    现在规则侧不再产出任何时间，玩家没给明确时刻时，落点完全由审计的 delta 决定。
     """
-    writer_out = {
-        "prose": "一觉睡到第二天早上，你背上书包出门。",
-        "summary": "次日清晨出门。",
-        "actor_questions": [],
-    }
-    qc_out = {"status": "pass", "prose": writer_out["prose"], "issues": []}
     audit_out = {
         "location": "家",
         "participants": ["刘星"],
         "private": False,
-        "delta_minutes": 480,  # 审计又估了 8 小时——必须被规则对钟涵盖
+        "delta_minutes": 480,
         "lifecycle": [],
     }
-    llm = PrefixKeyLLM({"玩家输入：": writer_out, "正文：": qc_out, "已采纳正文": audit_out})
-    runner = _runner(session, llm, settings)
-    candidate = asyncio.run(runner.run_turn("第二天去学校"))
-    assert candidate.side_effects.settle_to == "2026-07-15T08:00:00"
-    asyncio.run(runner.adopt(candidate.candidate_id))
+    settlement, _ = _clock_audit_case(session, settings, audit_out, player_input="第二天去学校")
 
-    assert session.ledger.save.clock == "2026-07-15T08:00:00"
-    s = session.ledger.save.last_settlement
-    assert s["source"] == "clock_to_rule"
-    assert s["delta_audit"] == 480  # 看见了，但一分没加
-    assert s["delta_applied"] == 0
-
-
-def test_audit_clock_to_beats_rule_settle(session, settings):
-    """正文自己写明了另一个到达时刻 → 审计的 clock_to 覆盖规则对钟。"""
-    writer_out = {
-        "prose": "你睡到第二天，醒来已是下午一点。",
-        "summary": "次日午后醒来。",
-        "actor_questions": [],
-    }
-    qc_out = {"status": "pass", "prose": writer_out["prose"], "issues": []}
-    audit_out = {
-        "location": "家",
-        "participants": ["刘星"],
-        "private": False,
-        "delta_minutes": 0,
-        "clock_to": "2026-07-15T13:00:00",
-        "lifecycle": [],
-    }
-    llm = PrefixKeyLLM({"玩家输入：": writer_out, "正文：": qc_out, "已采纳正文": audit_out})
-    runner = _runner(session, llm, settings)
-    candidate = asyncio.run(runner.run_turn("第二天去学校"))
-    asyncio.run(runner.adopt(candidate.candidate_id))
-
-    assert session.ledger.save.clock == "2026-07-15T13:00:00"
-    s = session.ledger.save.last_settlement
-    assert s["source"] == "clock_to"
-    assert s["settle_rule"] == "2026-07-15T08:00:00"
+    assert session.ledger.save.clock == "2026-07-14T16:00:00"  # 08:00 + 480
+    assert settlement["source"] == "audit"
+    assert settlement["delta_applied"] == 480
+    assert "settle_rule" not in settlement
+    assert "delta_rule" not in settlement
 
 
 class _AuditBoomLLM(PrefixKeyLLM):
-    """审计那一笔必炸，用来验证"审计失败时规则对钟仍生效"。"""
+    """审计那一笔必炸，用来验证"审计失败时采纳不回滚、时钟不动"。"""
 
     async def complete_json(self, messages, schema, **kwargs):
         if getattr(schema, "__name__", "") == "AuditOutput":
@@ -789,8 +834,12 @@ class _AuditBoomLLM(PrefixKeyLLM):
         return await super().complete_json(messages, schema, **kwargs)
 
 
-def test_rule_settle_survives_audit_failure(session, settings):
-    """审计调用失败 → 采纳不回滚，且玩家说的时间照定（否则"第二天"原地不动）。"""
+def test_audit_failure_does_not_roll_back_or_advance(session, settings):
+    """审计调用失败 → 采纳照旧成功、时钟原地不动，但失败必须留痕（不静默）。
+
+    去规则化后规则侧不再兜底时间，所以正确行为就是「什么都不推进」——
+    误推进（玩家没明说时间却跳掉几个小时）比不推进严重得多。
+    """
     writer_out = {
         "prose": "第二天早上，你醒了。",
         "summary": "第二天早上。",
@@ -802,38 +851,11 @@ def test_rule_settle_survives_audit_failure(session, settings):
     candidate = asyncio.run(runner.run_turn("第二天去学校"))
     asyncio.run(runner.adopt(candidate.candidate_id))
 
-    assert session.ledger.save.clock == "2026-07-15T08:00:00"
-    s = session.ledger.save.last_settlement
-    assert s["source"] == "clock_to_rule"
-    assert "audit down" in (s["audit_error"] or "")
-
-
-def test_rule_settle_earlier_than_now_is_rejected(session, settings):
-    """规则对钟早于当前时钟（比如另一个候选已把时钟推过头）→ 拒绝，退回审计估时。"""
-    writer_out = {
-        "prose": "你在屋里待着。",
-        "summary": "屋里待着。",
-        "actor_questions": [],
-    }
-    qc_out = {"status": "pass", "prose": writer_out["prose"], "issues": []}
-    audit_out = {
-        "location": "主街",
-        "participants": ["刘星"],
-        "private": False,
-        "delta_minutes": 0,
-        "lifecycle": [],
-    }
-    llm = PrefixKeyLLM({"玩家输入：": writer_out, "正文：": qc_out, "已采纳正文": audit_out})
-    runner = _runner(session, llm, settings)
-    candidate = asyncio.run(runner.run_turn("第二天去鱼市"))
-    # 时钟被别处推到次日之后，规则算出的"次日 08:00"就成了过去。
-    session.ledger.save.clock = "2026-07-20T12:00:00"
-    asyncio.run(runner.adopt(candidate.candidate_id))
-
-    assert session.ledger.save.clock == "2026-07-20T12:00:00"
+    assert session.ledger.save.clock == "2026-07-14T08:00:00"
+    assert session.ledger.events[-1]["source"] == "turn"  # 采纳仍然落地
     s = session.ledger.save.last_settlement
     assert s["source"] == "none"
-    assert s["settle_rule_rejected"] == "早于当前时钟，疑似日期填错"
+    assert "audit down" in (s["audit_error"] or "")
 
 
 def test_audit_negative_delta_does_not_rewind_clock(session, settings):
@@ -909,20 +931,26 @@ def test_writer_gets_human_readable_rule_brief(session, fake_llm, settings):
 
     旧实现贴的是 `规则段预结算：{'route': 'jump', 'delta_minutes': 720}`——
     编剧只能靠猜字段名，而 route/delta 这类引擎内部词汇对它毫无意义。
+    2026-09-16 起规则段只剩移动，所以**绝对时刻不再进正文约束**（时间交审计）。
     """
     runner = _runner(session, fake_llm, settings)
     asyncio.run(runner.run_turn("第二天去鱼市"))
     blob = json.dumps(fake_llm.calls, ensure_ascii=False)
 
     assert "规则段预结算" in blob
-    assert "2026-07-15T08:00:00" in blob  # 绝对时刻进了正文约束
-    assert "鱼市" in blob  # 目的地也进了
+    assert "鱼市" in blob  # 目的地进了
+    assert "2026-07-15T08:00:00" not in blob  # 时间不再预结算
     assert "'route'" not in blob
     assert "'delta_minutes'" not in blob
+    assert "'settle_to'" not in blob
 
 
-def test_audit_is_told_about_rule_settlement(session, settings):
-    """规则意图必须随审计工单一起下去，否则审计把同一段跨度再估一遍（双重计费）。"""
+def test_audit_gets_player_input_without_rule_hint(session, settings):
+    """审计必须拿到玩家输入（"玩家给了时间就照办"全靠它），且不再有规则预告。
+
+    去规则化前这里会塞 settle_hint（"时钟已定到 X，这段不要再估"）；现在规则侧
+    不产时间，审计是唯一结算方，任何"别再估"的提示都是错的。
+    """
     writer_out = {
         "prose": "第二天早上，你醒了。",
         "summary": "第二天早上。",
@@ -941,15 +969,20 @@ def test_audit_is_told_about_rule_settlement(session, settings):
     candidate = asyncio.run(runner.run_turn("第二天去学校"))
     asyncio.run(runner.adopt(candidate.candidate_id))
 
-    systems = [
-        call["messages"][0].get("content", "")
+    audit_calls = [
+        call
         for call in llm.calls
         if call["messages"] and "世界审计" in (call["messages"][0].get("content") or "")
     ]
-    assert systems
-    system = systems[-1]
-    assert "2026-07-15T08:00:00" in system
-    assert "不要再估" in system
+    assert audit_calls
+    last = audit_calls[-1]
+    system = last["messages"][0]["content"]
+    user_blob = " ".join(m.get("content", "") for m in last["messages"] if m["role"] == "user")
+
+    assert "第二天去学校" in user_blob  # 玩家输入随审计下去
+    assert "不要再估" not in system
+    assert "settle_hint" not in system
+    assert "自行估计" in system  # 没给时刻就自行估时长
 
 
 def test_settlement_record_is_persisted_to_save_json(session, world_root, settings):

@@ -759,6 +759,10 @@ class SettingsBody(BaseModel):
     model_cheap: str | None = None
     reasoning_effort: str | None = None
     qc_enabled: bool | None = None
+    # 注入上限（2026-09-16）：0 = 给全部；event_log_full 最少 1（见 Settings.limits）。
+    event_log_limit: int | None = None
+    event_log_full: int | None = None
+    known_set_limit: int | None = None
 
 
 @router.get("/settings")
@@ -771,6 +775,9 @@ async def get_system_settings(request: Request):
         "model_cheap": s.model_cheap,
         "reasoning_effort": s.reasoning_effort or "auto",
         "qc_enabled": s.qc_enabled,
+        "event_log_limit": s.event_log_limit,
+        "event_log_full": s.event_log_full,
+        "known_set_limit": s.known_set_limit,
     }
 
 
@@ -798,6 +805,14 @@ async def update_system_settings(request: Request, body: SettingsBody):
         s.reasoning_effort = "" if effort in {"auto", "none", ""} else effort
     if body.qc_enabled is not None:
         s.qc_enabled = body.qc_enabled
+    # 注入上限：clamp 交给 Settings.limits()（负数→0，正文条数→至少 1），
+    # 这里只做落值，避免"接口层夹一次、装配层再夹一次"的两套口径。
+    if body.event_log_limit is not None:
+        s.event_log_limit = body.event_log_limit
+    if body.event_log_full is not None:
+        s.event_log_full = body.event_log_full
+    if body.known_set_limit is not None:
+        s.known_set_limit = body.known_set_limit
     from app.config import save_settings_overrides
     from app.core.llm import LLMGateway
 

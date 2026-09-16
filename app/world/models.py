@@ -5,6 +5,13 @@ from pydantic import BaseModel, Field
 # 世界包没写主角卡时由 load_world 合成的占位名（作者在人物编辑里改名即可）。
 PLAYER_PLACEHOLDER = "主角"
 
+# 自动注册场景的感知描述占位（``Ledger.register_scene``）。**引擎不代笔**——
+# 由审计顺手编一句"空气里有霉味"看着像设定，进 world 资产后每轮注入编剧与 QC，
+# 作者日后分不清哪句是自己写的。留个明说"没有"的短句，等人在工作台补（2026-09-16）。
+# 必须是一句能独立成句的话：``scene_description`` 把它夹在"这里是X。"与"在场：…"
+# 之间直接拼（写成"暂无"会拼出"这里是家。暂无四下无人。"这种病句）。
+SCENE_PLACEHOLDER = "暂无描述。"
+
 
 class WorldInfo(BaseModel):
     id: str
@@ -13,7 +20,6 @@ class WorldInfo(BaseModel):
     opening: str = ""  # opening prose: becomes the first ledger event of a save
     start_time: str = ""  # 世界钟起点（ISO 时间）；空=回退引擎默认 2026-07-14T08:00:00
     start_scene: str = ""  # 开局场景（中文名，须为已注册场景）；空=取第一个注册场景
-    memory_limit: int = Field(default=50, ge=0)  # experiences 回溯条数上限（0=不给记忆）
 
 
 class LoreEntry(BaseModel):

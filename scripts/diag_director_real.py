@@ -33,7 +33,8 @@ async def main() -> None:
             session.world,
             session.ledger,
             "去网吧找朱明，问他昨天为什么打架",
-            rule_bundle={"route": "move", "scene": "main_street", "destination": "net_bar", "delta_minutes": 10},
+            # 规则段只剩移动目的地（时间已于 2026-09-16 交审计）。
+            rule_bundle={"scene": "main_street", "destination": "net_bar"},
             scene_id="main_street",
             preset=preset,
             model=settings.resolved_model("story"),
