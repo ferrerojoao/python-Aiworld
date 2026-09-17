@@ -6,6 +6,7 @@ import asyncio
 import json
 
 from app.core.llm import FakeLLM
+from app.workers.drafter import run_world_draft
 from app.world.draft import (
     DEFAULT_START_SCENE,
     DraftLore,
@@ -16,7 +17,6 @@ from app.world.draft import (
     draft_to_assets,
     validate_assets,
 )
-from app.workers.drafter import run_world_draft
 
 # 一份「形状合法、语义不过关」的草稿：世界书条目没有关键词。
 # check_world 会因为"永远不会被命中"报问题，正好用来测一次修正那条路。
@@ -182,7 +182,7 @@ def test_drafter_returns_assets_without_retry_when_clean():
 
 def test_drafter_retries_once_and_reports_remaining_problems():
     llm = FakeLLM({"*": BAD_DRAFT})
-    _, assets, problems = _draft(llm)
+    _, _assets, problems = _draft(llm)
     # 修正一次（共两次调用）；仍不合格就如实报出来，不假装通过
     assert len(llm.calls) == 2
     assert problems

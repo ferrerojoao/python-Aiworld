@@ -5,7 +5,6 @@ from pydantic import BaseModel
 
 from app.core.workorder import build_director_chat_system
 from app.ledger.access import apply_access_override
-from app.ledger.save import EntityRuntime
 from app.workers.schemas import DirectorAction, DirectorReply
 
 router = APIRouter(prefix="/api/sessions")
@@ -33,7 +32,7 @@ async def director(request: Request, sid: str, body: DirectorBody):
             raise HTTPException(status_code=400, detail="action is required")
         try:
             action = DirectorAction.model_validate(body.action)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise HTTPException(status_code=400, detail=f"bad action: {exc}") from exc
         return _execute_action(request, session, action.type, action.payload)
     if body.topic == "chat":
@@ -73,7 +72,7 @@ async def _director_chat(request, session, message: str):
     messages.append({"role": "user", "content": message})
 
     out = None
-    for attempt in range(2):
+    for _attempt in range(2):  # 导演回空话就地重试一次，仍空则给兜底话术
         data = await llm.complete_json(
             messages,
             DirectorReply,
@@ -119,7 +118,6 @@ def _execute_action(request, session, action_type: str, payload: dict) -> dict:
             raise HTTPException(status_code=404, detail=f"npc not found: {payload.get('npc_id')}")
         if not memory:
             raise HTTPException(status_code=400, detail="memory is required")
-        npc = session.world.npcs.get(npc_id)
         event = {
             "id": ledger.allocate_event_id(),
             "kind": "narrative",
@@ -206,8 +204,6 @@ def _execute_action(request, session, action_type: str, payload: dict) -> dict:
         location = payload.get("location", "")
         if subject is None or not location:
             raise HTTPException(status_code=400, detail="subject and location are required")
-        npc = session.world.npcs.get(subject)
-        scene = next((s for s in session.world.scenes if s.id == location), None)
         subject_name = subject
         location_name = location
         event = {

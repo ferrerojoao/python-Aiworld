@@ -6,11 +6,10 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from app.core.store import new_id, write_json_atomic
-from app.core.workorder import STATE_ADD_PER_CHAR, STATE_TEXT_MAX
+from app.core.store import write_json_atomic
+from app.core.workorder import STATE_TEXT_MAX
 from app.ledger.queries import Ledger
 from app.ledger.save import EntityRuntime, StateItem
-
 
 # 单回合审计估时长的保险丝（分钟）：审计偶尔把"聊天里提到时间"当成时间流逝，
 # 不截断会静默漂移。24 小时——睡觉（480）过半，"睡两天"这类要被截到一天。
@@ -113,7 +112,7 @@ class CandidateStore:
                     data = json.load(f)
                 if data.get("candidate_id") == candidate_id:
                     return Candidate.model_validate(data)
-            except Exception:
+            except Exception:  # noqa: BLE001 - 候选文件损坏/半写就跳过，别让一个坏文件卡住整轮
                 continue
         return None
 
@@ -126,7 +125,7 @@ class CandidateStore:
                 cand = Candidate.model_validate(data)
                 if cand.status == "pending":
                     result.append(cand)
-            except Exception:
+            except Exception:  # noqa: BLE001 - 候选文件损坏/半写就跳过，别让一个坏文件卡住整轮
                 continue
         return sorted(result, key=lambda c: c.created_at)
 
@@ -141,7 +140,7 @@ class CandidateStore:
                 if data.get("candidate_id") == candidate_id:
                     path.unlink()
                     return
-            except Exception:
+            except Exception:  # noqa: BLE001 - 候选文件损坏/半写就跳过，别让一个坏文件卡住整轮
                 continue
 
     def delete_turn(self, turn_id: str) -> None:

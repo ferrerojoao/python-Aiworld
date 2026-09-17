@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from app.config import Settings
 from app.core.llm import FakeLLM
 from app.main import create_app
-from tests.conftest import WORLD_ROOT, GENERIC_LLM_RESPONSE
+from tests.conftest import GENERIC_LLM_RESPONSE, WORLD_ROOT
 
 
 def _make_client(tmp_path, llm=None):
@@ -394,7 +394,6 @@ def test_world_edit_and_save_as(tmp_path):
         world2 = client.get(f"/api/sessions/{sid}/world").json()
         assert world2["overview"]["name"] == "青石镇（已改）"
         import json as _json
-
         from pathlib import Path as _Path
 
         on_disk = _json.loads(_Path(tmp_path / "qinghsi" / "world.json").read_text(encoding="utf-8"))
@@ -474,8 +473,9 @@ def test_world_browser_and_reset(tmp_path):
         # 工作台编辑实例（改一张 NPC 卡 + 一条世界书），随后重置应保留。
         npc_id = next(iter(world["npcs"]))
         world["npcs"][npc_id]["persona"] = "重置后应保留的人设"
-        world["lorebook"] = list(world.get("lorebook") or []) + [
-            {"id": "reset_probe", "keywords": ["重置探针"], "body": "reset lore probe"}
+        world["lorebook"] = [
+            *(world.get("lorebook") or []),
+            {"id": "reset_probe", "keywords": ["重置探针"], "body": "reset lore probe"},
         ]
         put = client.put(f"/api/sessions/{sid}/world", json=world)
         assert put.status_code == 200
@@ -598,7 +598,6 @@ def test_revoke_state_route(tmp_path):
 def test_world_start_time_roundtrip(tmp_path):
     """world.json start_time seeds save clock, and reset returns to it."""
     import json as _json
-
     from pathlib import Path as _Path
 
     # The qinghsi fixture has start_time 2026-07-14T08:00:00.
@@ -1090,9 +1089,9 @@ def test_create_world_from_draft_payload(tmp_path):
         assert r.json()["problems"] == []
         data = json.loads((tmp_path / "draft1" / "world.json").read_text(encoding="utf-8"))
         assert data["name"] == "草稿镇"
-        assert set(
+        assert {
             p.stem for p in (tmp_path / "draft1" / "npcs").glob("*.json")
-        ) == {"刘星", "朱明"}
+        } == {"刘星", "朱明"}
 
 
 def test_create_world_rejects_unclean_assets_before_writing(tmp_path):

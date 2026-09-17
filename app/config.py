@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
-
 _DOTENV_CACHE: dict[str, str] | None = None
 
 

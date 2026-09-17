@@ -36,7 +36,6 @@ from app.ledger.queries import Ledger
 from app.rules.lorebook import subject_hit_ids
 from app.world.models import NarrativePreset, WorldContent
 
-
 # ---------------------------------------------------------------------------
 # 客观层 · 账本快照（纯函数，只陈述事实，不含指令）
 # ---------------------------------------------------------------------------
@@ -549,10 +548,8 @@ def scene_snapshot_block(
     for pid in present_ids:
         ev = ledger.where_is(pid)
         seen = _rel_seen(clock, ev.get("at", "")) if ev else ""
-        if pid == player:
-            label = name if name == "玩家" else f"{pid}（玩家）"
-        else:
-            label = pid
+        # 玩家写其姓名；姓名本身退化成「玩家」时补 id 以示区分
+        label = (name if name == "玩家" else f"{pid}（玩家）") if pid == player else pid
         parts.append(f"{label}（最后目击：{seen}）" if seen else label)
     return [
         "当前时间：" + (clock or "-"),
@@ -887,10 +884,7 @@ def writer_output_format(player_name: str = "玩家") -> list[str]:
     **姓名**（2026-09-11 用户改口径，此前是写「玩家」）；主角名未设定时退化
     为「玩家」。
     """
-    if player_name == "玩家":
-        ctx_clause = "「玩家」"
-    else:
-        ctx_clause = f"玩家姓名「{player_name}」"
+    ctx_clause = "「玩家」" if player_name == "玩家" else f"玩家姓名「{player_name}」"
     return [
         "【一级 · 输出格式】",
         "输出必须是 JSON 对象，字段：",
@@ -992,7 +986,7 @@ def build_director_chat_system(
     scene_id = scene_id or ledger.current_scene()
     present_ids = ledger.present_at(scene_id)
     scene = next((s for s in world.scenes if s.id == scene_id), None)
-    names = [pid for pid in present_ids]
+    names = list(present_ids)
 
     parts: list[str] = [
         "你是 AIWorld 的导演，玩家正在戏外（OOC）和你讨论。你不是正文执笔者，一切建议都要玩家采纳后才生效。",
@@ -1084,7 +1078,7 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
     player_name = world.player_name()
     scene = next((s for s in world.scenes if s.id == scene_id), None)
     present_ids = ledger.present_at(scene_id)
-    names = [pid for pid in present_ids]
+    names = list(present_ids)
     scene_list = "、".join(s.id for s in world.scenes)
     state_lines = [
         "- state_add：只收**长期事实**（体质 / 伤残 / 病症 / 能力 / 身份处境）。"

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from app.core.store import write_json_atomic
 from app.rules.lorebook import LORE_SUBJECT_CAP
+
 from .models import (
     PLAYER_PLACEHOLDER,
     Axis,
@@ -75,7 +76,7 @@ def check_world(root: str | Path) -> list[str]:
     problems: list[str] = []
     try:
         world = load_world(root)
-    except Exception as exc:  # pragma: no cover - diagnostic helper
+    except Exception as exc:  # noqa: BLE001 - 诊断工具：任何加载失败都要变成问题条目 # pragma: no cover - diagnostic helper
         return [f"world load failed: {exc}"]
 
     for entry in world.lorebook:

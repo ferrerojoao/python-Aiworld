@@ -49,7 +49,7 @@ class TraceRecorder:
             result = await self._llm.complete_json(
                 messages, schema, model=model, temperature=temperature
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             entry["error"] = f"{type(exc).__name__}: {exc}"
             raise
         else:
@@ -73,7 +73,7 @@ class TraceRecorder:
             result = await self._llm.complete_text(
                 messages, model=model, temperature=temperature
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             entry["error"] = f"{type(exc).__name__}: {exc}"
             raise
         else:

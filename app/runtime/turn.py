@@ -2,22 +2,22 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from typing import Any, Mapping, NamedTuple
+from collections.abc import Mapping
+from typing import Any, NamedTuple
 
 from app.config import Settings
 from app.core.store import new_id
 from app.rules.lorebook import hit_entry_ids, merge_active_lore
 from app.rules.movement import resolve_destination
 from app.rules.route import looks_like_move
-from app.rules.scenes import scene_description
 from app.runtime.session import GameSession
-from app.runtime.transaction import Candidate, CandidateStore, SideEffects, Transaction
-from app.world.models import NarrativePreset
+from app.runtime.transaction import Candidate, SideEffects, Transaction
 from app.workers.actor import run_actor
 from app.workers.auditor import run_audit
 from app.workers.qc import build_qc_reference, run_qc
 from app.workers.schemas import ActorQuestion, WriterOutput
 from app.workers.writer import run_writer
+from app.world.models import NarrativePreset
 
 
 class NeedChooseCandidate(Exception):

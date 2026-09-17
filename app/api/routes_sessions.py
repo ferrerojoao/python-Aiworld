@@ -16,9 +16,9 @@ from app.core.presets import save_global_preset
 from app.core.store import write_json_atomic
 from app.core.workorder import state_view
 from app.runtime.session import create_session, open_session
+from app.workers.drafter import run_world_draft
 from app.world.draft import blank_world_assets, check_assets, validate_assets
 from app.world.loader import check_world, save_world_assets
-from app.workers.drafter import run_world_draft
 
 router = APIRouter(prefix="/api")
 
@@ -204,7 +204,7 @@ async def draft_world(request: Request, body: WorldDraftBody):
             model=settings.resolved_model("story"),
             temperature=settings.temp_writer,
         )
-    except Exception as exc:  # LLM 侧的失败如实转告，不吞
+    except Exception as exc:
         raise HTTPException(status_code=502, detail=f"起草失败：{exc}") from exc
     return {"draft": draft.model_dump(), "assets": assets, "problems": problems}
 
@@ -276,7 +276,7 @@ async def check_session_world(request: Request, sid: str):
 @router.post("/sessions/{sid}/world/save-as")
 async def save_session_world_as(request: Request, sid: str, body: SaveAsWorldBody):
     """复制当前世界（含全部演化）为一个新内容包——fork，不动原世界。"""
-    session = _get_session(request, sid)
+    _get_session(request, sid)  # 仅做存在性校验：未知 sid 一律 404
     new_id = body.new_world_id.strip()
     if not new_id:
         raise HTTPException(status_code=400, detail="new_world_id is required")
@@ -351,7 +351,6 @@ async def get_session(request: Request, sid: str):
 async def get_state(request: Request, sid: str):
     session = _get_session(request, sid)
     player_scene = session.ledger.current_scene()
-    scene = next((s for s in session.world.scenes if s.id == player_scene), None)
     # 最近去过的 3 个场景（从玩家事件流取，替代旧邻接导航）
     recent: list[str] = []
     for ev in reversed(session.ledger.narratives):
@@ -611,7 +610,7 @@ async def import_save(request: Request, body: ImportWorldBody):
         raise HTTPException(status_code=400, detail="zip must contain save.json (导出存档包)")
     try:
         raw_save = json.loads(zf.read("save.json"))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise HTTPException(status_code=400, detail=f"bad save.json: {exc}") from exc
     meta = raw_save.get("meta") or {}
     world_id = str(meta.get("world_id") or "").strip()
@@ -658,7 +657,7 @@ async def import_save(request: Request, body: ImportWorldBody):
 
 @router.post("/sessions/{sid}/world/import")
 async def import_world(request: Request, sid: str, body: ImportWorldBody):
-    session = _get_session(request, sid)
+    _get_session(request, sid)  # 仅做存在性校验：未知 sid 一律 404
     data = base64.b64decode(body.content)
     if not data:
         raise HTTPException(status_code=400, detail="empty upload")
@@ -671,7 +670,7 @@ async def import_world(request: Request, sid: str, body: ImportWorldBody):
     try:
         raw_world = json.loads(zf.read("world.json"))
         world_id = raw_world.get("id")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise HTTPException(status_code=400, detail="zip must contain world.json") from exc
     if not world_id:
         raise HTTPException(status_code=400, detail="world.json must contain id")

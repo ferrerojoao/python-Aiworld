@@ -45,10 +45,9 @@ def append_event(path: Path, event: dict[str, Any]) -> None:
     sufficient; a multi-process deployment would need a real file lock/DB.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    with _write_lock:
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(event, ensure_ascii=False) + "\n")
-            f.flush()
+    with _write_lock, path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(event, ensure_ascii=False) + "\n")
+        f.flush()
 
 
 def new_id(prefix: str) -> str:

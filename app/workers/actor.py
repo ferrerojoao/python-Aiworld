@@ -3,8 +3,8 @@ from __future__ import annotations
 from app.config import DEFAULT_LIMITS, InjectionLimits
 from app.core.workorder import build_work_order
 from app.ledger.queries import Ledger
-from app.world.models import NpcCard, WorldContent
 from app.workers.schemas import ActorDecision
+from app.world.models import NpcCard, WorldContent
 
 
 def clean_context(text: str) -> str:

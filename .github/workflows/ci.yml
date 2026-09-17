@@ -20,10 +20,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      # 静态检查放在测试前面：它更快，能先把 import 顺序/未用变量这类问题挡回去。
+      # 规则集与 ignore 全在 pyproject.toml 的 [tool.ruff] 里，CI 不再另写一份。
+      # 注：只跑 check，不跑 `ruff format`——格式化会重排 50+ 个文件，是另一次
+      # 独立决策，不该混进 lint 闸门。
+      - name: Lint (ruff)
+        run: python -m ruff check --output-format=github
+
       # 测试全部用 FakeLLM 离线跑，不需要任何 API key。
       # addopts 已在 pyproject.toml 里设好（-p no:cacheprovider --basetemp=bt_all）。
+      # 覆盖率闸门（fail_under = 90）也写在 pyproject.toml 的 [tool.coverage.report]。
       - name: Run tests
-        run: python -m pytest -q
+        run: python -m pytest -q --cov=app --cov-report=term-missing
 
   frontend:
     runs-on: ubuntu-latest

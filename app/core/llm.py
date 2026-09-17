@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from typing import Any, Type
+from typing import Any
 
 from openai import APIConnectionError, APITimeoutError, AsyncOpenAI, Timeout
 from pydantic import BaseModel
@@ -123,7 +123,7 @@ class LLMGateway:
     async def complete_json(
         self,
         messages: list[dict[str, str]],
-        schema: Type[BaseModel],
+        schema: type[BaseModel],
         *,
         model: str,
         temperature: float = 0.2,
@@ -164,7 +164,7 @@ class LLMGateway:
                 obj = schema.model_validate(data)
                 self._add_usage(response)
                 return obj.model_dump()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 last_error = exc
                 if text:
                     last_raw = text
@@ -217,7 +217,7 @@ class LLMGateway:
         try:
             async with self._sem:
                 response = await self._client.chat.completions.create(**kwargs)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if "reasoning_effort" in str(exc).lower():
                 self.reasoning_effort = ""
                 async with self._sem:

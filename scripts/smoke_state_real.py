@@ -156,14 +156,13 @@ async def main() -> None:
 
         add_made = change.get("added") or []
         exp_made = change.get("expired") or []
-        rm_made = change.get("removed") or []
 
         # 断言对任意输入都成立（自定义输入可能**故意不含**长期变化 → added 空是对的）：
         # 有新增就必须可追溯；磁盘与内存必须一致。
         if add_made:
             check("审计提议落地（正文写伤 → 至少 1 条 state_add）", True, f"added={add_made}")
         else:
-            print(f"[--] 本次审计没有提议新状态（added 空）——自定义输入下这可能正是期望结果")
+            print("[--] 本次审计没有提议新状态（added 空）——自定义输入下这可能正是期望结果")
         check(
             "到期清算跑通（until 过期 → 1 条 expired）",
             len(exp_made) == 1,
@@ -206,7 +205,7 @@ async def main() -> None:
 
     print("\n================ 汇总 ================")
     failed = [n for n, ok, _ in RESULTS if not ok]
-    for name, ok, detail in RESULTS:
+    for name, ok, _ in RESULTS:
         print(f"  {'✔' if ok else '✘'} {name}")
     print(f"\nS{'TEP 2a SMOKE FAILED: ' + ', '.join(failed) if failed else 'TEP 2a SMOKE PASSED'}")
 
@@ -214,6 +213,6 @@ async def main() -> None:
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"STEP 2a SMOKE FAILED: {type(exc).__name__}: {exc}")
         raise

@@ -3,8 +3,8 @@ from __future__ import annotations
 from app.config import DEFAULT_LIMITS, InjectionLimits
 from app.core.workorder import build_work_order
 from app.ledger.queries import Ledger
-from app.world.models import NarrativePreset, WorldContent
 from app.workers.schemas import WriterOutput
+from app.world.models import NarrativePreset, WorldContent
 
 
 def _rule_brief(bundle: dict) -> str:

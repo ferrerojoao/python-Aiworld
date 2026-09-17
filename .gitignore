@@ -21,5 +21,9 @@ data/settings.json
 # presets.json = 你调好的写作预设（文风准则 / 屏蔽词 / 样本），运行态、可能含个人内容，
 # 不进版本库。缺文件时首次运行会写一份 DEFAULT_PRESET（见 app/core/presets.py）。
 data/presets.json
+# pytest-cov / coverage 的产物（CI 会自己再生成一份）
+.coverage
+.coverage.*
+htmlcov/
 backup_content_*.tar.gz
 backup_content_*.zip

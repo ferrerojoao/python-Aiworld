@@ -224,7 +224,7 @@ def test_actor_gets_own_states_and_only_public_ones_of_others(session) -> None:
 
     out = build_actor_work_order(session.world, session.ledger, npc, scene)
     assert "你此刻的状态：怕水；左腿瘸了" in out  # 自己的全给（含不公开的）
-    assert f"在场旁人的状态" in out
+    assert "在场旁人的状态" in out
     assert f"{player}（玩家）：普通刀剑伤不了他" in out  # 旁人的公开表现给
     assert "其实色盲" not in out  # 旁人的秘不给
     assert "左腿瘸了（" not in out  # 不带到期日标记（那是编剧排布用的）

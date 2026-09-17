@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
-import re
 
 from app.core.store import append_event, read_events, read_json, write_json_atomic
 from app.ledger.save import SaveData
@@ -188,7 +188,7 @@ class Ledger:
 
     def present_at(self, scene: str) -> list[str]:
         result = []
-        for subject in self.world.npcs.keys():
+        for subject in self.world.npcs:
             event = self._probe(subject)
             if event is None:
                 continue

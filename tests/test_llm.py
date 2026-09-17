@@ -2,6 +2,7 @@ import asyncio
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import ClassVar
 
 import pytest
 from pydantic import BaseModel
@@ -28,12 +29,16 @@ def test_extract_json_raises_for_garbage():
 
 
 class _ScriptedServer(BaseHTTPRequestHandler):
-    """按预设顺序回话的 mock OpenAI 兼容端点，记录每次收到的请求体。"""
+    """按预设顺序回话的 mock OpenAI 兼容端点，记录每次收到的请求体。
 
-    script: list[dict] = []
-    calls: list[dict] = []
+    ``script`` / ``calls`` 必须是**类属性**：HTTPServer 每个请求都重新实例化
+    handler，只有类上那份是共享的 —— 测试也是直接写在类上。
+    """
 
-    def do_POST(self):  # noqa: N802
+    script: ClassVar[list[dict]] = []
+    calls: ClassVar[list[dict]] = []
+
+    def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
         self.calls.append(json.loads(self.rfile.read(length) or b"{}"))
         content = json.dumps(self.script[len(self.calls) - 1], ensure_ascii=False)

@@ -14,7 +14,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "pytest-cov>=7.0",
     "httpx>=0.27",
+    "ruff>=0.16",
 ]
 
 [tool.setuptools.packages.find]
@@ -24,3 +26,45 @@ include = ["app*"]
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-p no:cacheprovider --basetemp=bt_all"
+
+# --- 静态检查 -------------------------------------------------------------
+# ruff 的规则集比老版本宽得多（0.16 起含 YTT/ASYNC/BLE/DTZ），这里显式钉死
+# select，避免它升级时把一堆与项目无关的规则塞进 CI。
+#
+# RUF001/002/003（全角标点等"易混淆字符"）对中文项目是纯噪声——正文里
+# 一堆「，。」——故整组忽略，不是漏配。
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+exclude = [".venv", "bt_all", "web/node_modules", "data", "content"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "BLE", "C4", "SIM", "RUF"]
+ignore = [
+    "RUF001", # ambiguous-unicode-character-string（中文标点）
+    "RUF002", # ambiguous-unicode-character-docstring
+    "RUF003", # ambiguous-unicode-character-comment
+]
+
+[tool.ruff.lint.per-file-ignores]
+# 测试里 `from tests.helpers import *` 之类的重导出、以及刻意的长断言
+"tests/**" = ["F401", "F841"]
+
+# --- 覆盖率 ---------------------------------------------------------------
+# 覆盖率不进 addopts：本地 `pytest -q` 要保持干净快跑，CI 与合作方要数时
+# 再加 --cov。命令见 README 与 .github/workflows/ci.yml。
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/main.py"]
+
+[tool.coverage.report]
+skip_covered = true
+show_missing = true
+# 棘轮：2026-09-17 实测 92%（229 用例），闸门设在 90 留 2 个点余量。
+# 往上调可以，往下调必须说出理由。
+fail_under = 90
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == \"__main__\":",
+]

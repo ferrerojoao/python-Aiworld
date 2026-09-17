@@ -80,7 +80,8 @@ async def run_world_draft(
     # 一次修正：把引擎体检出的问题原文回灌（与 complete_json 的 schema 重试同构，
     # 但这里处理的是 check_world 的语义问题——关键词为空、主角名撞占位名之类，
     # Pydantic 看得见形状、看不见语义）。
-    retry_messages = messages + [
+    retry_messages = [
+        *messages,
         {"role": "assistant", "content": draft.model_dump_json()},
         {
             "role": "user",
