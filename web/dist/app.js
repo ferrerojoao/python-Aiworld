@@ -1693,13 +1693,15 @@ function loreSubjectCounts() {
 /** 把当前脚本版本显示在世界工作台标题旁。
  *
  *  用途：改前端后用户"刷新了没"这件事必须可见——不然改了代码对方还跑着旧
- *  JS，两边一起猜。版本号取自 <script src="app.js?v=NN"> 的查询串。
+ *  JS，两边一起猜。版本号取自 <script src="app.js?v=xx"> 的查询串，而那个号
+ *  由 scripts/bump_frontend_version.py 写成**文件内容哈希**（不是手改的序号，
+ *  手改就会忘）。tests/test_frontend_version.py 守着这条不变量。
  */
 function showFrontendVersion() {
   const el = $("#wb-version");
   if (!el) return;
   const tag = document.querySelector('script[src*="app.js"]');
-  const m = tag && tag.getAttribute("src").match(/[?&]v=(\d+)/);
+  const m = tag && tag.getAttribute("src").match(/[?&]v=([0-9a-zA-Z._-]+)/);
   el.textContent = m ? `前端 v${m[1]}` : "";
 }
 

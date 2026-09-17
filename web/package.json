@@ -1,0 +1,12 @@
+{
+  "name": "aiworld-web",
+  "private": true,
+  "type": "module",
+  "description": "AIWorld 前端（原生 HTML/JS 单页，无构建步骤——dist/ 就是源码）。这里的 npm 依赖只服务于测试。",
+  "scripts": {
+    "test": "node --test tests/"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.0"
+  }
+}
