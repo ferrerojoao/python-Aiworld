@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.routes_director import router as director_router
 from app.api.routes_sessions import router as sessions_router
 from app.api.routes_turn import router as turn_router
+from app.api.security import TokenAuthMiddleware
 from app.config import (
     Settings,
     apply_settings_overrides,
@@ -46,7 +47,7 @@ def create_app(settings: Settings | None = None, llm=None) -> FastAPI:
                 try:
                     session = open_session(world_dir)
                     app.state.sessions[session.sid] = session
-                except Exception:
+                except Exception:  # noqa: BLE001 - 单个世界存档损坏不该拖垮整个启动扫描
                     continue
 
         if llm is not None:
@@ -70,6 +71,11 @@ def create_app(settings: Settings | None = None, llm=None) -> FastAPI:
     app.include_router(sessions_router)
     app.include_router(turn_router)
     app.include_router(director_router)
+
+    # 请求级访问控制（P1-4）：非本机访问 /api/* 需要 Bearer 令牌。
+    # 用纯 ASGI 中间件（非 BaseHTTPMiddleware），避免给回合 SSE 加一层缓冲——
+    # 判定口径与豁免范围见 app/api/security.py 的模块 docstring。
+    app.add_middleware(TokenAuthMiddleware, settings=settings)
 
     # Serve a built frontend if present; the repo can be run API-only otherwise.
     _web_dist = Path(__file__).resolve().parent.parent / "web" / "dist"
