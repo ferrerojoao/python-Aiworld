@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 
 from fastapi.testclient import TestClient
@@ -36,6 +37,16 @@ def test_create_session_and_turn_sse(tmp_path):
         r = client.post(f"/api/sessions/{sid}/turn", json={"input": "去网吧找朱明"})
         assert r.status_code == 200
         assert "event: candidate" in r.text
+
+        # 顺序不变量：stage 速报必须先到，终态事件（candidate/error）只能压轴，
+        # 且其后不得再有任何事件。TestClient 会把整条流缓冲下来，所以「实时性」
+        # 验不了，但「阶段先于结果、终态即收尾」这半条能验，且不 flaky。
+        events = re.findall(r"^event: (\w+)", r.text, flags=re.MULTILINE)
+        assert events, r.text
+        assert events.count("stage") >= 1, f"必须至少有 1 条阶段速报：{events}"
+        assert events[-1] == "candidate", f"终态事件必须是 candidate 且压轴：{events}"
+        assert "candidate" not in events[:-1], f"candidate 只应出现一次：{events}"
+        assert "error" not in events, f"成功轮不应出现 error 事件：{events}"
 
         pending = client.get(f"/api/sessions/{sid}/candidates/pending").json()["candidates"]
         assert len(pending) == 1
