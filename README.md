@@ -71,18 +71,52 @@ AIWORLD_MODEL_CHEAP=qwen2.5:7b
 ./.venv/Scripts/python.exe scripts/smoke_turn_real.py "推门进去"
 ```
 
+## 对外暴露（局域网 / 反向代理）
+
+默认绑 `127.0.0.1`，只有本机能用。要让同网段的手机 / 平板访问，**先配一个访问令牌**：
+
+```bash
+# .env
+AIWORLD_HOST=0.0.0.0
+AIWORLD_AUTH_TOKEN=换成一串你自己的长随机串
+AIWORLD_REQUIRE_AUTH_FOR_NON_LOCAL=true     # 默认就是 true
+```
+
+然后在那台设备的浏览器里打开（令牌只需给一次，之后记在 `localStorage` 里）：
+
+```
+http://<本机IP>:8765/?token=你的令牌
+```
+
+判定规则（实现见 `app/api/security.py`）：
+
+- **只护数据面**：`/api/*` 需要 `Authorization: Bearer <token>`。静态面（`index.html` / `app.js` / `style.css`）必须裸奔——浏览器取 `<script src>` 时带不了请求头。新增数据接口务必放在 `/api` 下，否则不受保护。
+- **只护非本机**：回环地址一律放行，本机单人用不用配令牌。
+- **失败关闭**：要求鉴权却没配令牌时，非本机请求一律 401（不是放行）。启动期另有 `check_host_security()` 拦"绑非回环 + 空令牌"。
+- `AIWORLD_REQUIRE_AUTH_FOR_NON_LOCAL=false` 可整体关掉鉴权（**C 方案**：绑全网卡 + 防火墙限源网段，明确接受无鉴权）。关掉时行为与加固前完全一致。
+- 401 的 `detail` 里直接写了怎么修（缺令牌 / 令牌不对 / 服务端没配令牌），排障先读它。
+
+> ⚠️ 令牌走的是**明文 HTTP**。只在可信局域网里这么用；要跨公网请套一层 HTTPS 反代或隧道。
+
 ## 测试
 
 ```bash
-# 后端（pytest 228 个用例，全 FakeLLM 离线跑，不需要任何 API key）
+# 后端（pytest 267 个用例，全 FakeLLM 离线跑，不需要任何 API key）
 ./.venv/Scripts/python.exe -m pytest -q
+
+# 后端 + 覆盖率（闸门 fail_under = 90，写在 pyproject.toml 的 [tool.coverage.report]）
+./.venv/Scripts/python.exe -m pytest -q --cov=app --cov-report=term-missing
+
+# 静态检查（规则集与 ignore 都在 pyproject.toml 的 [tool.ruff]，CI 不再另写一份）
+./.venv/Scripts/python.exe -m ruff check
 
 # 前端（jsdom 里跑真实的 index.html + app.js）
 cd web && npm ci && npm test
 ```
 
 - 后端 `addopts` 已在 `pyproject.toml` 里设好（`-p no:cacheprovider --basetemp=bt_all`），临时目录权限受限的机器也能跑。
-- CI 会在 push / PR 时自动跑这两套（`.github/workflows/ci.yml`）。
+- CI 会在 push / PR 时自动跑三件事：`ruff check` → `pytest --cov` → 前端 `npm test`（`.github/workflows/ci.yml`）。
+- **依赖只声明在 `pyproject.toml`**（运行时在 `[project.dependencies]`，测试/静态检查在 `[dev]` extra）。`requirements.txt` 已删除——两份清单必然分叉，那是"看着能用"的假真相源。
 - **改了 `web/dist/` 下的前端资源，要跑一次 `scripts/bump_frontend_version.py`**：
   `index.html` 里的 `?v=` 是**文件内容哈希**，不是手改的序号（手改会忘，忘了就出"改了没变"）。
   `tests/test_frontend_version.py` 守着这条不变量，忘了跑 pytest 会直接红。
@@ -171,5 +205,5 @@ docs/           设计文档（REQ / GDD / TDD）
 - 真 LLM 接入需要配置 `AIWORLD_LLM_BASE_URL` 等环境变量（见 `.env.example`）。
 - **场景**可以由模型自动注册（只落名字，描述需回工作台补）；**NPC 人物卡仍必须由人来建**（世界起草 / 世界工作台 / 直接改 `npcs/*.json`）。
 - 🔴 `AIWORLD_AUTH_TOKEN` 目前是空壳：**没有请求级鉴权中间件**。绑 `0.0.0.0` 会暴露给整个网段，别把服务直接开到公网。
-- 前端是原生 HTML/JS 单页（`web/dist`），核心交互已具备；`web/tests/` 有 3 条 jsdom 冒烟测试（守住"无世界"与「秘」标签判据这两个真出过的 bug），覆盖面仍然很薄。
+- 前端是原生 HTML/JS 单页（`web/dist`），核心交互已具备；`web/tests/` 有 5 条 jsdom 冒烟测试（守住真出过的 bug——"无世界"启动、工作台空态、「秘」标签判据——以及访问令牌的 `?token=` 吸收与注入），覆盖面仍然很薄。
 - `?v=` 不是手改的序号，而是**文件内容哈希**（`scripts/bump_frontend_version.py` 写入）；改了 `web/dist/` 下的资源记得跑它。

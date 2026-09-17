@@ -20,7 +20,7 @@
 | 提示词装配 | 字符串内联在 `core/workorder.py`（无模板引擎）+ Pydantic（结构化输出） | 工作单是"按账本现算"的动态文档，内联比模板文件更贴近数据源；Jinja2 曾是依赖，现已不用 |
 | 世界设定装配 | 两级：世界概要常驻 system（永不裁剪）+ 世界书候选行（id+摘要）随导演工作单、点名才展开全文（标签匹配零 LLM） | 设定常驻不失守；详细条目按需展开省 token、导演不被要求通读 |
 | 测试 | pytest + 注入 FakeLLM（录制响应） | 离线可跑、可回归；核心断言=回合事务与信息边界 |
-| 包管理 | pip + venv（`requirements.txt`） | 单机单项目，够用 |
+| 包管理 | pip + venv；依赖**只声明在 `pyproject.toml`**（`[dev]` extra 装 pytest / pytest-cov / httpx / ruff） | 单机单项目，够用；`requirements.txt` 已删——双源必然不同步 |
 
 依赖方向（单向）：`api / runtime → workers → core`；`world` 只读内容包；`core` 不 import 任何内容包。
 
@@ -30,14 +30,15 @@
 
 ```
 aiworld/
-├── pyproject.toml / requirements.txt / .env.example / README.md
+├── pyproject.toml / .env.example / README.md
 ├── app/
 │   ├── main.py                  # FastAPI 装配、静态托管、启动
 │   ├── config.py                # pydantic-settings：端口 / 模型档位 / 温度 / 预算
 │   ├── api/
 │   │   ├── routes_sessions.py   # 世界与存档 CRUD / 状态 / 事件日志 / 预设与设置覆盖
 │   │   ├── routes_turn.py       # POST turn（SSE）+ 候选区 adopt/reroll/discard
-│   │   └── routes_director.py   # 导演窗口（OOC 旁路）
+│   │   ├── routes_director.py   # 导演窗口（OOC 旁路）
+│   │   └── security.py          # ★ 请求级鉴权：纯 ASGI 中间件，护 /api/* 非本机访问（P1-4）
 │   ├── core/
 │   │   ├── llm.py               # OpenAI 兼容网关 + FakeLLM（§9）
 │   │   ├── store.py             # JSONL 追加 / save.json 原子写 / 新 id
@@ -608,7 +609,7 @@ Candidate（候选快照，落盘到 candidates/；采纳时由 Transaction 落�
 - 输出 `{ status: pass|fixed, prose, issues: [{desc}] }`。
 - **可跳过（2026-09-08）**：`Settings.qc_enabled`（系统设置面板复选框 / env `QC_ENABLED`，默认开）。关闭后 `run_turn` 与 `reroll` 跳过质检调用，编剧初稿直接进候选——省一次 LLM 调用与等待，代价是文风/泄漏/禁用词无人把关。
 - **引擎不做矛盾仲裁（2026-09-05 拍板）**：剧情走向与既定设定的一致性归玩家自决——质检不设矛盾分级、不挂队列、不提示（玩家看不出矛盾说明其不重要）。
-- **预留增强（2026-09-05 记录，暂不实施）**：① 决策忠实性——Actor 决策块进质检参照，编剧二稿不得违背决策；② 秘密禁区——幕后注与 personal_secrets 作为"绝不可进正文"清单交质检比对。
+- **预留增强（2026-09-05 记录）**：① 决策忠实性——Actor 决策块进质检参照，编剧二稿不得违背决策（**仍未做**）；② 秘密禁区——幕后注与 personal_secrets 作为"绝不可进正文"清单交质检比对（**✅ 已落地**，见下条与 §5.6 上文第 3 条。2026-09-17 核实：`app/workers/qc.py:37-45,95` 把主角 `personal_secrets`「只有玩家自己知道…任何 NPC 说出或提及都算泄漏，必须脱敏」与 `private_note`「连玩家也不知道…只有编剧心里有数」都写进了参照区，`tests/test_turn.py` 有断言。此前这条写成"暂不实施"是**文档滞后于实现**，勿再据此排期）。
 - 质检无幕后注输入（防质检自身泄漏与代答）——秘密禁区原文例外：仅作比对参照，与成品分轨。
 
 ### 5.7 世界审计（workers/auditor.py）——采纳时提交后结算
@@ -816,6 +817,8 @@ POST /api/sessions/{sid}/turn  {"input": "…"}
      event: error        data: {"trace_id", "message"}
 ```
 
+> **实时性不变量（P1-5，2026-09-17 补）**：`stage` 必须**在候选算完之前**送达浏览器——前端那段「正在连接…」的阶段提示全靠它，攒到最后一次性发等于没有。这条在 `TestClient` 上**结构性地验不了**（整条流会被缓冲；httpx 的 `ASGITransport` 同理），所以由 `tests/test_sse_realtime.py` 起一个**真 uvicorn**（真 socket + chunked）、用 httpx 逐块读并记录每个事件的到达时刻来守，判据 = 首个 `stage` 到 `candidate` 的时间差 > 0.8s（第一次 LLM 调用被假造延迟 1.5s）。判别力已用变异测试证明：把 `/turn` 改成"先跑完再一次性返回"，三个事件全挤在同一毫秒（差值 0.0006s），断言立刻变红。
+>
 > 若该回合只有一份未决候选，`POST /turn` 会先自动采纳该候选（等价于显式 `adopt`），再开始处理新输入；若有多份候选，玩家必须先选择采纳哪一份，引擎不自动选择——此时 `POST /turn` 应返回“需要先选择候选”（如 409/提示），或由前端阻止提交直到玩家 adopt / discard。
 >
 > 候选区操作（普通 POST，非流式）：
@@ -864,8 +867,8 @@ POST /api/sessions/{sid}/director
 ```
 AIWORLD_HOST=127.0.0.1
 AIWORLD_PORT=8765
-AUTH_TOKEN=                     # ⚠️ 占位：**没有任何请求级鉴权**，设了也不会校验任何请求（见 §14）
-REQUIRE_AUTH_FOR_NON_LOCAL=true # 非回环 + token 空 → 拒绝启动（把"无鉴权暴露"变成显式选择）
+AUTH_TOKEN=                     # 非本机访问 /api/* 的 Bearer 令牌（空 = 仅本机可用）
+REQUIRE_AUTH_FOR_NON_LOCAL=true # true=非本机必须带令牌；false=整体关掉鉴权（C 方案）
 LLM_BASE_URL=…  LLM_API_KEY=…   # OpenAI 兼容任意网关
 MODEL_MAIN=…   # 主模型：导演 / Actor / 说书人默认；未配单项时回退到这里
 MODEL_CHEAP=…  # 辅助模型：质检 / 审计默认；未配单项时回退到这里
@@ -908,8 +911,10 @@ KNOWN_SET_LIMIT=5       # 每个 NPC 已知集几条（0 = 给全部）
 |---|---|
 | 单元 | loader 校验（缺字段/越界/key 重复）；route 规则预结算词表（只剩移动意图，`tests/test_move_rules.py`）；movement 目的地解析（别名 / 找 NPC / 未命中交审计）；access 改判（名单直给落账 + by_knower 索引同步）；记忆拼接模板；模板底稿渲染；LLM 网关 JSON 容错（畸形 JSON / 缺字段 / 重试失败 / 文本降级解析） |
 | 集成（FakeLLM 录制响应，不联网） | **回合事务**：显式采纳指定候选 = 提交 / 放弃 = 回滚无痕（账本文件 hash 不变）；**多候选并存**：重掷/抽卡新增候选且不删旧版，采纳一份后清理该回合全部候选；**唯一候选自动采纳**：下一次输入自动采纳并进入新回合；**候选暂存恢复**：pending 文件重启后按 turn 分组可见、损坏文件跳过且不影响账本；**信息边界**：Actor 工作单不含他人私密、幕后注不进说书人/质检输入；质检拦域外知识 → 脱敏；改判私密后切片自动变化；混合句一次成稿；审计目标完成判定；**审计失败记 audit_last_error（同步模式，无补跑场景）** |
+| SSE 实时性（真 uvicorn） | `tests/test_sse_realtime.py`：真 socket + httpx 逐块读，记录每个事件到达时刻，断言阶段速报确实**先到**（差值 > 0.8s）。TestClient / `ASGITransport` 都会缓冲整条流，这半条不变量只有真服务能守（P1-5） |
 | 冒烟（真 LLM，可选） | `scripts/`：`smoke_turn_real.py`（跑一轮 + 采纳，打印候选正文 / 结算留痕 / 时钟前后）、`smoke_state_real.py`（角色状态增删改）、`smoke_llm.py`（连通性）。手动跑，不入 CI（要真 key、要花钱）。<br>2026-09-17 清理：11 个脚本已删（7 个 `diag_*` + `e2e_check.py` / `verify_sse.py` / `demo.py` / `migrate_chinese_ids.py`）——多数指向早已消失的 `content/qinghsi` 与 `saves/` 旧布局（签名改过之后从未跟上），属"跑不起来的历史残骸"；其中两条有真价值的断言已**提升为 pytest**（`complete_json` 的反馈重试 → `tests/test_llm.py`；SSE 阶段先于结果的顺序 → `tests/test_api.py`），不再依赖手工脚本兜底 |
-| 前端 | `web/tests/`：jsdom 跑真实 `index.html + app.js`（3 条冒烟，各对应一个真出过的 bug——"无世界"启动 / 工作台空态 / 「秘」标签判据 `public === false`），CI 的 `frontend` job 跑。⚠️ jsdom **不能**给 `<select>` 类 bug 下结论（不实现 dirty value flag），那类仍靠人工走查 |
+| 前端 | `web/tests/`：jsdom 跑真实 `index.html + app.js`（5 条冒烟，各对应一个真出过的 bug 或一条对外行为——"无世界"启动 / 工作台空态 / 「秘」标签判据 `public === false` / `?token=` 吸收与注入 / 无令牌时不发空 `Authorization` 头），CI 的 `frontend` job 跑。⚠️ jsdom **不能**给 `<select>` 类 bug 下结论（不实现 dirty value flag），那类仍靠人工走查 |
+| 鉴权（P1-4，2026-09-17） | `tests/test_auth.py` 两层：**纯函数**层把 `auth_rejection` 的判定矩阵钉死（数据面 vs 静态面 / 本机 vs 非本机 / 有令牌 vs 空令牌 / 开关 on-off，共 11 组），并覆盖"缺令牌的 401 正文必须写明怎么修"与"非 ASCII 令牌不许抛 `TypeError`"；**HTTP** 层用 `TestClient(client=(ip, port))` 冒充网段内机器，验 401 / 200 / `WWW-Authenticate` / 回环豁免 / C 方案（关掉鉴权）不回退，并专门跑一轮**完整 SSE 回合**确认中间件没弄坏流式交付（纯 ASGI 而非 `BaseHTTPMiddleware` 的验收点）。变异验证：拔掉 `add_middleware` → 3 条集成用例变红 |
 | 内容包校验 | `python -m app.world.loader content/<world>`（root 是位置参数，**不是** `--check`）。**裸跑不再猜世界名**：列出 `content_root`（`Settings.content_root`，`CONTENT_ROOT` 可覆盖）下真实存在的世界并退 2——原先默认 `content/qinghsi`（旧名，已不存在），裸跑只会得到一句让人误以为"世界坏了"的报错（2026-09-17 修）。同一条 `check_world` 也已暴露为 `GET /api/worlds/{id}/check`（2026-09-13） |
 | 造世界 | `tests/test_draft.py`：空白种子包过闸 / 草稿转换（表单值优先、主角卡撞名保住、`start_scene` 越界纠回、空草稿退化）/ `validate_assets` 报语义问题 / 起草器一次修正（`calls == 2` 且问题清单回灌）。`tests/test_api.py` 另覆盖四条新 API、"新世界立刻能开一局"、**两级保存闸门**（软警告 200+problems / 硬拦 400 且主角卡无损）与**单一真相**（工作台 PUT 直写世界目录，世界列表体检同步变红；全量备份导出/导入往返） |
 
@@ -929,13 +934,14 @@ KNOWN_SET_LIMIT=5       # 每个 NPC 已知集几条（0 = 给全部）
 | 上下文膨胀 | 分片预算 + 模板底稿省 token + 记忆现拼截断 + M8 上下文收敛（装配收敛到当前场景可感知 + 对话对象 + 关键历史状态） |
 | 事件流膨胀（远期） | 全内存线性扫可撑几万条；二期 = 语义索引 + compact 预研（对内容包与存档结构零侵入） |
 | 审计产物迟到 | v1 采纳时同步结算，无迟到；若未来改异步，必须加写锁/单写者队列，并保留 run_id 幂等补跑 |
-| 隐私/安全 | 默认仅绑 `127.0.0.1`。⚠️ **`AUTH_TOKEN` 是占位——全仓没有任何请求级鉴权**（`create_app()` 不加 middleware，token 只在启动检查里被读一次），一旦绑非回环，网段内任何人可读写全部世界数据并消耗你的 LLM 额度：唯一的边界是**防火墙限源网段**（2026-09-16 实测）。`REQUIRE_AUTH_FOR_NON_LOCAL` 的作用只是把"无鉴权暴露"变成一次**显式**的启动选择（非回环 + 空 token → 拒绝启动）。要真鉴权需先补一个 Bearer 中间件 |
+| SSE 阶段速报迟到（整条流被缓冲） | 前端「正在连接…」的阶段提示全指望它，攒到最后一次性发等于没有。TestClient 结构上验不了，故 `tests/test_sse_realtime.py` 起真 uvicorn + httpx 逐块读，断言"首个 stage 到 candidate 的时间差 > 0.8s"（变异测试证明：缓冲版差值 0.0006s，必红）。中间件一律用**纯 ASGI**、不用 `BaseHTTPMiddleware`——后者会给流式响应包一层，正是这条不变量最怕的东西 |
+| 隐私/安全 | 默认仅绑 `127.0.0.1`。**请求级鉴权已落地**（P1-4，2026-09-17）：`app/api/security.py` 的纯 ASGI 中间件 `TokenAuthMiddleware` 在 `/api/*` 上要求 `Authorization: Bearer <AUTH_TOKEN>`，判定三条 = **只护数据面**（静态面必须裸奔，浏览器取 `<script src>` 带不了头）/ **只护非本机**（回环 + TestClient 放行）/ **失败关闭**（要求鉴权但没配令牌 → 401，不是放行）。用纯 ASGI 而非 `BaseHTTPMiddleware`：后者会给回合 SSE 包一层，有额外缓冲/取消语义风险。启动期 `check_host_security()` 另拦"绑非回环 + 空令牌"。前端用 `?token=` 打开一次即存进 `localStorage`（`authHeaders()` 统一注入，覆盖 `api()` 与 3 处裸 `fetch`）。⚠️ 仍是**明文 HTTP**，只适用于可信局域网；`REQUIRE_AUTH_FOR_NON_LOCAL=false` 可整体关掉（C 方案：绑全网卡 + 防火墙限源网段） |
 
 ---
 
 ## 15. 里程碑（全部已完成，此处保留为历史记录）
 
-> 下面的表是当初的排期，S0–S7 均已落地。**当前回归基线 = `pytest`（平铺 `test_*.py`，229 passed）+ `cd web && npm test`（jsdom 前端冒烟 3 条）**；真 LLM 冒烟不在这里，在 `scripts/`（`smoke_turn_real.py` / `smoke_state_real.py` / `smoke_llm.py`）。
+> 下面的表是当初的排期，S0–S7 均已落地。**当前回归基线 = `pytest`（平铺 `test_*.py`，267 passed，覆盖率 92% 且闸门 90%）+ `cd web && npm test`（jsdom 前端冒烟 5 条）**；静态检查是 `python -m ruff check`（规则集在 `pyproject.toml`）。真 LLM 冒烟不在这里，在 `scripts/`（`smoke_turn_real.py` / `smoke_state_real.py` / `smoke_llm.py`）。
 
 | 阶段 | 技术任务 | 验收 |
 |---|---|---|
