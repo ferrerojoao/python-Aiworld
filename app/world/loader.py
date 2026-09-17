@@ -169,9 +169,38 @@ def save_world_assets(root: str | Path, data: dict) -> None:
 
 
 if __name__ == "__main__":  # pragma: no cover
+    """命令行体检：``python -m app.world.loader <世界目录>``。
+
+    不给参数时不再猜一个世界名（原先写死 ``content/qinghsi``，那是个早已不存在的旧名，
+    于是裸跑只会得到一句让人误以为"世界坏了"的 "world load failed"），而是报出用法并
+    列出 ``content_root`` 下真实存在的世界——新克隆的仓库里 content/ 是空的，这里能
+    直接告诉使用者"空的，先建一个"。``content_root`` 取自 ``Settings``（唯一权威，
+    ``CONTENT_ROOT`` 环境变量可覆盖），别再在 CLI 里另写一个路径。
+    """
     import sys
 
-    root = sys.argv[1] if len(sys.argv) > 1 else "content/qinghsi"
+    from app.config import get_settings
+
+    if len(sys.argv) < 2:
+        content_root = get_settings().content_root
+        worlds = (
+            sorted(p.name for p in content_root.iterdir() if (p / "world.json").is_file())
+            if content_root.is_dir()
+            else []
+        )
+        print(f"用法：python -m app.world.loader {content_root}/<世界名>")
+        if worlds:
+            print(f"{content_root}/ 下有 {len(worlds)} 个世界：")
+            for name in worlds:
+                print(f"  - {name}")
+        else:
+            print(
+                f"{content_root}/ 下没有世界（新克隆的仓库这里是空的）。"
+                "先在前端「世界工作台 → 新建世界」建一个，或把资产包导入进来。"
+            )
+        sys.exit(2)
+
+    root = Path(sys.argv[1])
     problems = check_world(root)
     if problems:
         print("校验失败：")

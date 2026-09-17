@@ -74,7 +74,7 @@ aiworld/
 │   └── index.html / app.js / style.css
 ├── content/<world>/             # ★ 内容包 = 存档（资产与运行态同层，见 §2.1）；整目录 gitignore，可缺失
 ├── data/                        # 运行期配置：presets.json / settings.json（gitignore）
-├── scripts/                     # 诊断与冒烟脚本（diag_* / smoke_* / e2e_check.py）
+├── scripts/                     # 冒烟与工具脚本（smoke_* / build_portable_package.py / bump_frontend_version.py）
 └── tests/（平铺的 test_*.py + fixtures/）
 ```
 
@@ -908,9 +908,9 @@ KNOWN_SET_LIMIT=5       # 每个 NPC 已知集几条（0 = 给全部）
 |---|---|
 | 单元 | loader 校验（缺字段/越界/key 重复）；route 规则预结算词表（只剩移动意图，`tests/test_move_rules.py`）；movement 目的地解析（别名 / 找 NPC / 未命中交审计）；access 改判（名单直给落账 + by_knower 索引同步）；记忆拼接模板；模板底稿渲染；LLM 网关 JSON 容错（畸形 JSON / 缺字段 / 重试失败 / 文本降级解析） |
 | 集成（FakeLLM 录制响应，不联网） | **回合事务**：显式采纳指定候选 = 提交 / 放弃 = 回滚无痕（账本文件 hash 不变）；**多候选并存**：重掷/抽卡新增候选且不删旧版，采纳一份后清理该回合全部候选；**唯一候选自动采纳**：下一次输入自动采纳并进入新回合；**候选暂存恢复**：pending 文件重启后按 turn 分组可见、损坏文件跳过且不影响账本；**信息边界**：Actor 工作单不含他人私密、幕后注不进说书人/质检输入；质检拦域外知识 → 脱敏；改判私密后切片自动变化；混合句一次成稿；审计目标完成判定；**审计失败记 audit_last_error（同步模式，无补跑场景）** |
-| 冒烟（真 LLM，可选） | `scripts/`：`smoke_turn_real.py` / `smoke_llm.py` / `e2e_check.py` / `verify_sse.py`，以及 `diag_*` 系列诊断探针（手动跑，不入 CI） |
-| 前端 | 无自动化：jsdom 可复现 DOM 逻辑（须把 app.js 与驱动脚本拼成**同一次** eval），但**不能**给 `<select>` 类 bug 下结论——jsdom 不实现 dirty value flag；其余靠 UI 人工走查 |
-| 内容包校验 | `python -m app.world.loader content/<world>`（root 是位置参数，**不是** `--check`；裸跑默认 `content/qinghsi`——旧世界名，已不存在，务必显式传路径）。同一条 `check_world` 也已暴露为 `GET /api/worlds/{id}/check`（2026-09-13） |
+| 冒烟（真 LLM，可选） | `scripts/`：`smoke_turn_real.py`（跑一轮 + 采纳，打印候选正文 / 结算留痕 / 时钟前后）、`smoke_state_real.py`（角色状态增删改）、`smoke_llm.py`（连通性）。手动跑，不入 CI（要真 key、要花钱）。<br>2026-09-17 清理：11 个脚本已删（7 个 `diag_*` + `e2e_check.py` / `verify_sse.py` / `demo.py` / `migrate_chinese_ids.py`）——多数指向早已消失的 `content/qinghsi` 与 `saves/` 旧布局（签名改过之后从未跟上），属"跑不起来的历史残骸"；其中两条有真价值的断言已**提升为 pytest**（`complete_json` 的反馈重试 → `tests/test_llm.py`；SSE 阶段先于结果的顺序 → `tests/test_api.py`），不再依赖手工脚本兜底 |
+| 前端 | `web/tests/`：jsdom 跑真实 `index.html + app.js`（3 条冒烟，各对应一个真出过的 bug——"无世界"启动 / 工作台空态 / 「秘」标签判据 `public === false`），CI 的 `frontend` job 跑。⚠️ jsdom **不能**给 `<select>` 类 bug 下结论（不实现 dirty value flag），那类仍靠人工走查 |
+| 内容包校验 | `python -m app.world.loader content/<world>`（root 是位置参数，**不是** `--check`）。**裸跑不再猜世界名**：列出 `content_root`（`Settings.content_root`，`CONTENT_ROOT` 可覆盖）下真实存在的世界并退 2——原先默认 `content/qinghsi`（旧名，已不存在），裸跑只会得到一句让人误以为"世界坏了"的报错（2026-09-17 修）。同一条 `check_world` 也已暴露为 `GET /api/worlds/{id}/check`（2026-09-13） |
 | 造世界 | `tests/test_draft.py`：空白种子包过闸 / 草稿转换（表单值优先、主角卡撞名保住、`start_scene` 越界纠回、空草稿退化）/ `validate_assets` 报语义问题 / 起草器一次修正（`calls == 2` 且问题清单回灌）。`tests/test_api.py` 另覆盖四条新 API、"新世界立刻能开一局"、**两级保存闸门**（软警告 200+problems / 硬拦 400 且主角卡无损）与**单一真相**（工作台 PUT 直写世界目录，世界列表体检同步变红；全量备份导出/导入往返） |
 
 ---
@@ -935,7 +935,7 @@ KNOWN_SET_LIMIT=5       # 每个 NPC 已知集几条（0 = 给全部）
 
 ## 15. 里程碑（全部已完成，此处保留为历史记录）
 
-> 下面的表是当初的排期，S0–S7 均已落地。**当前回归基线 = `pytest`（平铺 test_*.py，183 passed）**；真 LLM 冒烟不在这里，在 `scripts/`（`diag_*` / `smoke_*` / `e2e_check.py`）。
+> 下面的表是当初的排期，S0–S7 均已落地。**当前回归基线 = `pytest`（平铺 `test_*.py`，229 passed）+ `cd web && npm test`（jsdom 前端冒烟 3 条）**；真 LLM 冒烟不在这里，在 `scripts/`（`smoke_turn_real.py` / `smoke_state_real.py` / `smoke_llm.py`）。
 
 | 阶段 | 技术任务 | 验收 |
 |---|---|---|
