@@ -77,3 +77,33 @@ test("「秘」标签：public=false 才标，undefined（老存档）不标", a
   assert.match(result.left, /老存档里的条目/);
   assert.match(result.left, /人尽皆知/);
 });
+
+test("?token=xxx：存进 localStorage + 从地址栏抹掉 + 之后每个 /api 调用都带 Bearer", async () => {
+  const { calls, result } = await bootApp({
+    url: "http://localhost:8765/?token=s3cret#top",
+    routes: [settingsOnly, ["/api/worlds", () => ({ worlds: [] })]],
+    probe: `return {
+      stored: localStorage.getItem("aiworld_token"),
+      href: window.location.href,
+    };`,
+  });
+
+  assert.equal(result.stored, "s3cret", "令牌应该落进 localStorage，刷新后还在");
+  assert.ok(!result.href.includes("token="), `地址栏应把 token 抹掉（别留在历史里）：${result.href}`);
+
+  const apiCalls = calls.filter((c) => c.url.startsWith("/api"));
+  assert.ok(apiCalls.length > 0, "启动阶段应该有 /api 调用");
+  const missing = apiCalls.filter((c) => c.headers.Authorization !== "Bearer s3cret");
+  assert.deepEqual(missing, [], `这些请求没带上令牌：${JSON.stringify(missing)}`);
+});
+
+test("没有令牌时不发 Authorization 头（本机单人使用不该多送一个空头）", async () => {
+  const { calls, result } = await bootApp({
+    routes: [settingsOnly, ["/api/worlds", () => ({ worlds: [] })]],
+    probe: `return authHeaders({ "Content-Type": "application/json" });`,
+  });
+
+  assert.equal(result.Authorization, undefined);
+  const withAuth = calls.filter((c) => c.headers.Authorization !== undefined);
+  assert.deepEqual(withAuth, [], `没配令牌时不该出现 Authorization：${JSON.stringify(withAuth)}`);
+});

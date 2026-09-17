@@ -19,9 +19,47 @@ const state = {
   goals: [],
 };
 
+// 访问令牌：非本机访问 /api/* 时后端要求 Authorization: Bearer <token>。
+// 令牌来源 = localStorage["aiworld_token"]；用 ?token=xxx 打开一次页面即可灌入，
+// 随后立刻从地址栏抹掉（免得留在浏览器历史 / 截图 / 别人的聊天记录里）。
+const TOKEN_KEY = "aiworld_token";
+
+function authToken() {
+  try {
+    return localStorage.getItem(TOKEN_KEY) || "";
+  } catch (err) {
+    return "";
+  }
+}
+
+// 没有令牌就**不加**这个头：本机单人使用时后端根本不看它，多送一个空头只会
+// 让人误以为配了令牌。
+function authHeaders(extra = {}) {
+  const token = authToken();
+  return token ? { ...extra, Authorization: `Bearer ${token}` } : { ...extra };
+}
+
+function absorbTokenFromUrl() {
+  let url;
+  try {
+    url = new URL(window.location.href);
+  } catch (err) {
+    return;
+  }
+  const token = url.searchParams.get("token");
+  if (!token) return;
+  try {
+    localStorage.setItem(TOKEN_KEY, token);
+  } catch (err) {
+    /* 无痕模式或禁用存储：令牌只在本次会话有效，继续走 */
+  }
+  url.searchParams.delete("token");
+  window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+}
+
 async function api(path, options = {}) {
   const res = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     ...options,
   });
   if (!res.ok) {
@@ -664,7 +702,7 @@ async function sendInput(text) {
 
   const res = await fetch(`/api/sessions/${state.sid}/turn`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body),
   });
   if (!res.ok || !res.body) {
@@ -2317,7 +2355,7 @@ async function importWorld(file) {
   const content = await readFileAsBase64(file);
   const res = await fetch(`/api/sessions/${state.sid}/world/import`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ filename: file.name, content }),
   });
   if (!res.ok) {
@@ -2337,7 +2375,7 @@ async function importSave(file) {
   const content = await readFileAsBase64(file);
   const res = await fetch(`/api/saves/import`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ filename: file.name, content }),
   });
   if (!res.ok) {
@@ -2411,6 +2449,7 @@ async function pickWorld() {
 }
 
 async function init() {
+  absorbTokenFromUrl();
   // 设置加载独立于游戏会话：会话初始化失败不再连坐设置页。
   try {
     await loadSettings();

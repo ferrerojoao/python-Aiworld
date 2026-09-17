@@ -46,10 +46,16 @@ export function jsonResponse(data, status = 200) {
  *   probe： 在 app.js 之后、同一次 eval 里执行的代码，**必须 return** 一个可在
  *          Node 侧断言的普通值（字符串/数字/数组/对象）。可以是异步的。
  *   waitMs：等 `init()` 那一串异步请求落地的时间（桩都是立即 resolve，80ms 足够）。
+ *   url：   载入 jsdom 的地址。要用 `?token=` 触发令牌吸收时改这里。
  */
-export async function bootApp({ routes = [], probe = "return null", waitMs = 80 } = {}) {
+export async function bootApp({
+  routes = [],
+  probe = "return null",
+  waitMs = 80,
+  url = "http://localhost:8765/",
+} = {}) {
   const dom = new JSDOM(readDist("index.html"), {
-    url: "http://localhost:8765/",
+    url,
     runScripts: "outside-only",
     pretendToBeVisual: true,
   });
@@ -57,7 +63,8 @@ export async function bootApp({ routes = [], probe = "return null", waitMs = 80 
   const calls = [];
   dom.window.fetch = async (url, opts = {}) => {
     const u = String(url);
-    calls.push({ url: u, method: (opts && opts.method) || "GET" });
+    // headers 也记下来：令牌注入这种"看不见的行为"只能从请求侧验证。
+    calls.push({ url: u, method: (opts && opts.method) || "GET", headers: (opts && opts.headers) || {} });
     for (const [pattern, handler] of routes) {
       const hit = typeof pattern === "string" ? u.startsWith(pattern) : pattern.test(u);
       if (!hit) continue;
