@@ -369,15 +369,24 @@ function stRow(name, text, right, cls) {
   return row;
 }
 
+// 右侧动作区：一串同排的小标签（`st-tag`）。做成独立函数是因为「一行可能同时带
+// 两个标签」（如「已到期」+「秘」），单独 append 会各建一个 .st-act，间距就对不齐。
+function stActBox(tags) {
+  const box = document.createElement("span");
+  box.className = "st-act";
+  for (const t of [].concat(tags || [])) {
+    if (t) box.appendChild(stTag(t));
+  }
+  return box;
+}
+
 // 撤销控件：点 × → 原地变成「确认 / 取消」（不弹窗）。撤销是破坏性动作，但它留痕、
 // 且状态还能重新获得，一道轻确认就够；反过来若点完行直接消失，玩家会怀疑自己是不是
 // 点错了、撤掉的到底是哪条。
-// ``leadTag``：可选的前置标签（如「已修订」），与 × 同放进右侧动作区——修订过的行
-// 既要说明它被动过，也仍要能撤销（改错了同样得能反悔）。
-function stRevoke(stateId, leadTag) {
-  const box = document.createElement("span");
-  box.className = "st-act";
-  if (leadTag) box.appendChild(stTag(leadTag));
+// ``leadTags``：可选的前置标签（「已修订」/「秘」，字符串或数组），与 × 同放进右侧
+// 动作区——修订过的行既要说明它被动过，也仍要能撤销（改错了同样得能反悔）。
+function stRevoke(stateId, leadTags) {
+  const box = stActBox(leadTags);
   const x = document.createElement("span");
   x.className = "st-x";
   x.textContent = "×";
@@ -414,6 +423,11 @@ function stRevoke(stateId, leadTag) {
 // 本回合变化（左侧栏）：只列**最近一次采纳**带来的增删。新增的给撤销入口；
 // 已结束 / 已到期的条目已经不在存档里了，灰字标注即可（撤不掉也不需要撤）；
 // skipped 是内部诊断（审计报歪了 / 找不到 id），不露给玩家。
+//
+// 每一行都带上 ``public``（2026-09-16 加）：左栏据此挂「秘」——状态面板上那颗
+// 标签说明的是"NPC 看不见这条"，而玩家刚新增完一条时人就在左栏，看不到标签就会
+// 疑惑 NPC 为什么不接话。**文案与状态面板逐字一致**，同一个概念不换说法。
+// 老存档里没有这个字段 → `undefined` → 不挂，宁可少标也不误标。
 function stateChangeRows(change) {
   const revoked = new Set((change.revoked || []).map((r) => r.id));
   const revised = new Map((change.revised || []).map((r) => [r.id, r]));
@@ -421,11 +435,13 @@ function stateChangeRows(change) {
   for (const it of change.added || []) {
     const r = revised.get(it.id);
     // 本回合新增又被修订：`added` 里存的是**当时快照的文字**，直接用会在屏幕上报旧字。
+    // 可见性同理取修订后的值——玩家刚把它改回公开，还挂「秘」就是在骗他。
     rows.push({
       npc_id: it.npc_id,
       id: it.id,
       text: r ? r.text : it.text,
       old_text: r ? r.old_text : "",
+      public: r ? r.public : it.public,
       kind: "added",
       revised: !!r,
       revoked: revoked.has(it.id),
@@ -441,6 +457,7 @@ function stateChangeRows(change) {
       id: r.id,
       text: r.text,
       old_text: r.old_text,
+      public: r.public,
       kind: "revised",
     });
   }
@@ -475,10 +492,18 @@ function renderStateChange(data) {
   at.textContent = `${stampClock(change.at)} 采纳后`;
   box.appendChild(at);
   for (const row of rows) {
+    // 「秘」与状态标签同排（顺序 = 状态标签 → 秘，与状态面板一致）：这条状态旁人
+    // 看不出来。`=== false` 而不是 `!row.public`——老存档里没有这个字段时是
+    // `undefined`，用 `!` 会把"不知道"标成"秘"。
+    const secret = row.public === false ? "秘" : "";
     if (row.kind === "added" && !row.revoked) {
       // 修订过的仍可撤销（改错了同样要能反悔），所以标签与 × 一起给。
       box.appendChild(
-        stRow(row.npc_id, stRowText(row), stRevoke(row.id, row.revised ? "已修订" : ""))
+        stRow(
+          row.npc_id,
+          stRowText(row),
+          stRevoke(row.id, [row.revised ? "已修订" : "", secret])
+        )
       );
       continue;
     }
@@ -490,7 +515,7 @@ function renderStateChange(data) {
         : row.kind === "revised"
           ? "已修订"
           : "已结束";
-    box.appendChild(stRow(row.npc_id, stRowText(row), stTag(tag), "grey"));
+    box.appendChild(stRow(row.npc_id, stRowText(row), stActBox([tag, secret]), "grey"));
   }
 }
 
@@ -548,11 +573,13 @@ function renderStatePanel(data) {
       const text = it.until ? `${it.text}（至 ${String(it.until).slice(0, 10)}）` : it.text;
       const right = document.createElement("span");
       right.className = "st-act";
-      // public=false = 这条状态外人看不出来（"其实色盲"没人知道，"左腿瘸了"人尽皆知）
+      // public=false = 这条状态旁人看不出来（"其实色盲"没人知道，"左腿瘸了"人尽皆知）
       // ——面板上标出来，省得玩家疑惑 NPC 为什么没反应。
+      // 词统一用「秘」：编剧工单、导演清单、这里、左栏「本回合变化」四处同词
+      // （2026-09-16 拍板，早先的"外人看不出 / 旁人看不出"两种说法已废弃）。
       // 注意：状态只写**现状**，成因（"为什么"）在它来源的那条事件里，不在状态上。
       if (tag) right.appendChild(stTag(tag));
-      if (!it.public) right.appendChild(stTag("外人看不出"));
+      if (!it.public) right.appendChild(stTag("秘"));
       right.appendChild(stRevoke(it.id));
       group.appendChild(stRow("", text, right, grey ? "grey" : ""));
     }
@@ -1033,8 +1060,19 @@ function applyTheme(theme) {
 
 /* ---------- 世界工作台 ---------- */
 
-function openWorldModal() {
+async function openWorldModal() {
   $("#world-modal").classList.add("open");
+  if (!state.sid) {
+    // 无世界（content/ 为空或被清空）：工作台没有可编辑对象——别去拉
+    // /api/sessions/null/world（那是一次静默失败）。直接把「切换世界」
+    // 面板打开并展开新建表单，让"没有世界"这一条路通向能操作的入口。
+    state.worldPanelOpen = true;
+    $("#wb-world-panel").classList.add("open");
+    await loadWorldList();
+    const body = $("#wb-new-world-body");
+    if (body && body.hidden) $("#wb-new-world-toggle").click();
+    return;
+  }
   closeWorldPanel();
   // 已载入过就原样展示（未保存改动保留）；否则才拉取。
   if (!state.worldData) {
@@ -1398,6 +1436,7 @@ async function updateWorldContext() {
 }
 
 async function loadWorldBrowser() {
+  if (!state.sid) return; // 无世界时没有可浏览的对象（与其余 loader 同款守卫）
   const data = await api(`/api/sessions/${state.sid}/world`);
   state.worldData = data;
   renderWorldTabs(data);
@@ -2398,6 +2437,7 @@ async function init() {
     }
   } else {
     addMessage("npc", "还没有世界：点右上角「世界工作台」→「切换世界」→ 新建一个。");
+    $("#world-name").textContent = "（无世界）";
   }
 
   $("#input-form").addEventListener("submit", async (e) => {

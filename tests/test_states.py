@@ -453,6 +453,38 @@ def test_director_states_block_lists_everything_with_ids(session) -> None:
         assert f"[{it['id']}] {it['text']}" in out
 
 
+def test_director_states_block_marks_secret_like_the_panel(session) -> None:
+    """导演清单里的「秘」与编剧工单、状态面板**同词**（2026-09-16 统一）。
+
+    为什么导演清单必须有：导演要按玩家原话去改 ``public``，而玩家说的词来自面板
+    那颗「秘」标签——清单里不标，导演就只能瞎猜现值（改别的字段时同样如此：他
+    得知道这条是私密的，才知道"要不要顺便改"）。
+
+    三种形态一起钉住：纯秘 / 秘 + 期限（并存形态）/ 秘 + 已到期；公开条目**不挂**。
+    """
+    npc = _an_npc(session)
+    _place(session, npc)
+    _seed(session, npc, "其实色盲")  # 秘（public 默认 False）
+    _seed(session, npc, "左臂骨裂", until="2001-07-20T08:00:00")  # 秘 + 期限并存
+    _seed(session, npc, "左腿瘸了", public=True)  # 旁人看得见 → 不挂
+    _expire(session, npc, "那天中了毒")
+    out = _director_order(session)
+
+    assert "其实色盲（秘）" in out
+    assert "左臂骨裂（秘，至 2001-07-20）" in out
+    assert "左腿瘸了（" not in out  # 公开的没有任何括注
+    assert "那天中了毒（秘，已到期）" in out
+
+    # 与面板同源：清单里挂「秘」的**状态行**条数 = 面板上 public=False 的条数。
+    # （只数 `  [st_` 开头的行，免得把系统提示里别处出现的「秘」算进来。）
+    rows = [ln for ln in out.splitlines() if ln.startswith("  [st_")]
+    entry = next(v for v in _view(session) if v["name"] == npc)
+    secret_n = sum(
+        1 for it in entry["visible"] + entry["expired"] if not it["public"]
+    )
+    assert len([ln for ln in rows if "（秘" in ln]) == secret_n == 3
+
+
 def test_director_order_drops_the_duplicate_state_lines(session) -> None:
     """导演工单里状态只出现一处：名片行不再重复渲染（两份口径会比现场打架）。
 

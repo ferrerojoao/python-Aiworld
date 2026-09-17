@@ -1365,6 +1365,9 @@ def test_director_state_revise_edits_in_place(tmp_path):
         assert row["id"] == item["id"]
         assert row["old_text"] == "左腿摔伤，走路瘸"
         assert row["text"] == "右腿摔伤，走路瘸"
+        # 可见性跟着留痕走（2026-09-16）：左栏「本回合变化」据它挂「秘」，而左栏读的
+        # 就是这个接口——字段漏在这层，前端拿到的永远是 undefined（静默不标）。
+        assert row["public"] is True
         assert [a["text"] for a in change["added"] if a["id"] == item["id"]] == [
             "左腿摔伤，走路瘸"
         ]

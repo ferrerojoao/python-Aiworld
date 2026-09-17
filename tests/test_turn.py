@@ -1328,6 +1328,47 @@ def test_audit_supplied_until_lands_and_expires(session, settings):
     assert session.ledger.save.last_state_change["expired"][0]["text"] == "病倒"
 
 
+def test_state_change_buckets_all_carry_public_for_the_left_column(session, settings):
+    """六个桶的条目都带 ``public``（2026-09-16）：左栏「本回合变化」据此挂「秘」。
+
+    为什么不能让前端自己去面板里查：左栏列的是**这次刚动的**条目，而其中"已结束 /
+    已撤销 / 已到期"的那几条在 ``state_view`` 里已经查不到了（撤掉的从存档里没了、
+    到期的被过滤进 expired 桶、被审计移除的直接不在），留痕里这一份是唯一数据源。
+    所以字段必须跟着桶走，而不是只在 added 上挂一个。
+
+    只钉"有字段"，不钉"谁来标"——前端 ``public === false`` 的判据与渲染由 jsdom
+    实测覆盖（pytest 里没有浏览器，``===`` 与 ``!`` 的差别正是那里最容易写错的）。
+    """
+    # ① added / ③ removed（审计两路，同一回合）
+    gone = _seed_state(session, "刘星", "左臂骨裂")
+    _state_turn(
+        session,
+        settings,
+        _base_audit(
+            state_add=[{"npc_id": "刘星", "text": "普通刀剑伤不了他", "public": True}],
+            state_remove=[gone.id],
+        ),
+    )
+    change = session.ledger.save.last_state_change
+    assert change["added"][0]["public"] is True
+    assert change["removed"][0]["public"] is False  # _seed_state 默认不公开
+
+    # ① 到期清算（规则侧）
+    _seed_state(session, "刘星", "病倒", until="2026-07-13T08:00:00")  # 早于当前时钟
+    _state_turn(session, settings, _base_audit())
+    assert session.ledger.save.last_state_change["expired"][0]["public"] is False
+
+    # 玩家三路：add / revise / revoke 也记在同一份留痕里
+    runner = _runner(session, FakeLLM({"*": {}}), settings)
+    item = runner.transaction.add_state("朱明", "其实色盲")
+    assert session.ledger.save.last_state_change["added"][-1]["public"] is False
+    runner.transaction.revise_state(item.id, public=True)
+    # 修订后记的是**修订后**的可见性——左栏要标的是"这条现在是不是秘"。
+    assert session.ledger.save.last_state_change["revised"][-1]["public"] is True
+    assert runner.transaction.revoke_state(item.id) is True
+    assert session.ledger.save.last_state_change["revoked"][-1]["public"] is True
+
+
 def test_player_can_add_a_state(session, settings):
     """导演窗口手动加状态：落条目 + 记账事件 + 进 last_state_change.added。
 
@@ -1349,8 +1390,16 @@ def test_player_can_add_a_state(session, settings):
     assert ev["summary"] == "朱明获得状态：左腿摔伤，走路瘸（玩家设定）"
     assert ev["participants"] == ["朱明"] and ev["body"] == "" and ev["location"] is None
 
+    # added 里带 public：左侧栏据它挂「秘」（2026-09-16）——玩家刚新增完一条，
+    # 人就在左栏，那里看不到「秘」就会疑惑 NPC 为什么不接话。
     assert session.ledger.save.last_state_change["added"] == [
-        {"npc_id": "朱明", "id": item.id, "text": item.text, "event_id": item.source_event}
+        {
+            "npc_id": "朱明",
+            "id": item.id,
+            "text": item.text,
+            "event_id": item.source_event,
+            "public": False,
+        }
     ]
     # 撤销入口就绪：刚加的这条能一键反悔。
     assert _revoke(session, settings, item.id) is True

@@ -489,6 +489,7 @@ class Transaction:
                         "id": item.id,
                         "text": item.text,
                         "event_id": event_id,
+                        "public": item.public,
                     }
                 )
 
@@ -505,6 +506,9 @@ class Transaction:
         **审计失败（``audit_out is None``）→ 状态一动不动**：不能因为审计炸了就
         丢玩家的状态；但到期清算仍照跑（那是规则，不依赖审计）。
         """
+        # 每个桶的条目都带 ``public``（2026-09-16 加）：前端「本回合变化」据此挂
+        # 「秘」——左栏与状态面板必须**同词**（同一个概念换一种说法，玩家就得重新
+        # 猜一遍这两个是不是一回事）。缺字段时前端按"不挂"处理，不会误标。
         change: dict = {
             "turn_id": candidate.turn_id,
             "at": clock,
@@ -567,7 +571,13 @@ class Transaction:
                 event_id, npc_id, clock, f"{npc_id}获得状态：{item.text}"
             )
             change["added"].append(
-                {"npc_id": npc_id, "id": item.id, "text": item.text, "event_id": event_id}
+                {
+                    "npc_id": npc_id,
+                    "id": item.id,
+                    "text": item.text,
+                    "event_id": event_id,
+                    "public": item.public,
+                }
             )
 
         for raw in audit_out.state_remove or []:
@@ -599,7 +609,13 @@ class Transaction:
                 event_id, npc_id, clock, f"{npc_id}状态结束：{item.text}"
             )
             change["removed"].append(
-                {"npc_id": npc_id, "id": item.id, "text": item.text, "event_id": event_id}
+                {
+                    "npc_id": npc_id,
+                    "id": item.id,
+                    "text": item.text,
+                    "event_id": event_id,
+                    "public": item.public,
+                }
             )
 
         self.ledger.save.last_state_change = change
@@ -654,7 +670,13 @@ class Transaction:
         change = self.ledger.save.last_state_change
         if isinstance(change, dict):
             change.setdefault("added", []).append(
-                {"npc_id": npc_id, "id": item.id, "text": item.text, "event_id": event_id}
+                {
+                    "npc_id": npc_id,
+                    "id": item.id,
+                    "text": item.text,
+                    "event_id": event_id,
+                    "public": item.public,
+                }
             )
         self.ledger.flush_events()
         self.ledger.persist_save()
@@ -693,6 +715,7 @@ class Transaction:
                     "id": item.id,
                     "text": item.text,
                     "event_id": event_id,
+                    "public": item.public,
                 }
             )
         # 与采纳一样"先流水后存档"：存档是提交标记，崩在中间也不会丢记账事件。
@@ -762,8 +785,10 @@ class Transaction:
         if public is not None:
             new_public = bool(public)
             if new_public != item.public:
-                before = "旁人看得见" if item.public else "旁人看不出"
-                after = "旁人看得见" if new_public else "旁人看不出"
+                # 记账文案与界面标签同词：界面挂「秘」、事件流写「旁人看不出」，就是
+                # 逼玩家自己把两种说法对上号。此处「公开 / 秘」即面板那两颗标签。
+                before = "公开" if item.public else "秘"
+                after = "公开" if new_public else "秘"
                 changes.append(f"可见性「{before}」→「{after}」")
                 item.public = new_public
 
@@ -787,6 +812,8 @@ class Transaction:
                     "text": item.text,
                     "old_text": old_text,
                     "event_id": event_id,
+                    # 修订后的可见性（不是修订前的）：左栏要挂的是"这条现在是不是秘"。
+                    "public": item.public,
                 }
             )
         # 与采纳一样"先流水后存档"：存档是提交标记，崩在中间也不会丢记账事件。

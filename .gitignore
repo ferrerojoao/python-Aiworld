@@ -7,6 +7,9 @@ __pycache__/
 .venv/
 venv/
 .env
+# content/ = 运行态世界与存档（一个世界就是一份存档），整目录不进版本库。
+# 于是新克隆的仓库 / 便携包里都没有 content/；主程序会在建世界时自动创建它
+# （回归测试见 tests/test_empty_content.py）。
 /content/
 web/node_modules/
 web/dist/.vite/

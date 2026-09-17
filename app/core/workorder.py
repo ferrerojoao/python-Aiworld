@@ -276,6 +276,11 @@ def director_states_block(ledger: Ledger, present_ids: list[str]) -> list[str]:
     只给"能注入的几条"就等于让导演无从下手。
 
     已失效的条目也列出来（标「已到期」）——它们还能被撤掉，撤掉才算真清干净。
+
+    行尾的括注与编剧工单**同词**（``秘`` / ``至 …`` / ``已到期``，2026-09-16 统一）：
+    导演要按玩家的原话去改字段，而玩家说的词来自面板那颗「秘」标签——三处（编剧
+    工单、导演清单、状态面板）用同一个词，改一个字段就只需要一次对照。缺了「秘」
+    这一项，导演看不到某条是私密的，改 ``public`` 时只能瞎猜现值。
     """
     lines: list[str] = []
     for entry in state_view(ledger, present_ids, full=True):
@@ -287,12 +292,18 @@ def director_states_block(ledger: Ledger, present_ids: list[str]) -> list[str]:
         head = f"[{entry['name']}]" + (f"（{'、'.join(marks)}）" if marks else "")
         rows: list[str] = []
         for it in entry["visible"]:
-            tail = "（已到期）" if it["expired_at"] else (
-                f"（至 {it['until'][:10]}）" if it["until"] else ""
-            )
+            notes: list[str] = []
+            if not it["public"]:
+                notes.append("秘")
+            if it["expired_at"]:
+                notes.append("已到期")
+            elif it["until"]:
+                notes.append(f"至 {it['until'][:10]}")
+            tail = f"（{'，'.join(notes)}）" if notes else ""
             rows.append(f"  [{it['id']}] {it['text']}{tail}")
         for it in entry["expired"]:
-            rows.append(f"  [{it['id']}] {it['text']}（已到期）")
+            notes = ["已到期"] if it["public"] else ["秘", "已到期"]
+            rows.append(f"  [{it['id']}] {it['text']}（{'，'.join(notes)}）")
         if rows:
             lines.append(head)
             lines.extend(rows)
@@ -1034,10 +1045,10 @@ def build_director_chat_system(
         f"- 状态新增 state_add：加一条长期事实 → payload {{npc_id, text, until?, public?}}；"
         f"text ≤ {STATE_TEXT_MAX} 字，只写「他此刻是什么」不写成因；"
         "until 只在玩家给了明确期限时填（「三天」→ 当前时间 +3 天的 ISO 时刻）；"
-        "public = 旁人看不看得见，默认 false",
+        "public = 旁人看不看得见（false 就是上方清单里标着「秘」的那条），默认 false",
         "- 状态撤销 state_revoke：→ payload {state_id}（上方清单里的方括号 id，逐字照抄）；"
         "找不到 id 时退而给 {npc_id, text}（与清单逐字一致）",
-        f"- 状态修订 state_revise：**改**一条已有状态的字段（写错的字 / 期限 / 可见性）"
+        f"- 状态修订 state_revise：**改**一条已有状态的字段（写错的字 / 期限 / 是不是「秘」）"
         f"→ payload {{state_id, 要改的字段}}。**只给要改的字段，其余键不要出现**"
         f"（写了 public: false 就等于把它改成 false）；until 给空串＝清掉期限；"
         f"文字仍受 ≤ {STATE_TEXT_MAX} 字与同角色不重复的约束；已到期的条目改不了"
