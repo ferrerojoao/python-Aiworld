@@ -8,7 +8,7 @@ if not exist ".venv\Scripts\python.exe" (
     echo.
     echo Create it first:
     echo     python -m venv .venv
-    echo     .venv\Scripts\python.exe -m pip install -r requirements.txt
+    echo     .venv\Scripts\python.exe -m pip install -e ".[dev]"
     echo.
     pause
     exit /b 1
