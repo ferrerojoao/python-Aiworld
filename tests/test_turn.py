@@ -1571,18 +1571,37 @@ def test_revoke_is_not_repeatable(session, settings):
 
 
 def test_revoked_state_leaves_the_writer_order(session, settings):
-    """撤销的实质效果：编剧此后不再认为他有（提示词里那一行消失）。"""
+    """撤销的实质效果：编剧此后不再认为他有（**状态行**里那一行消失）。
+
+    范围刻意只钉状态行。撤销本身会在事件流里留一条记账事件
+    （``source:"state"``，summary = "刘星状态撤销：…（玩家撤销）"），
+    它的 summary 按设计**就是**要被读到的——与退场留痕同一条纪律
+    （"静默退场会让'他不在了'无史实可引"）。此前这条断言用的是整个工作单，
+    能过只是因为记账事件恰好落在「最近剧情（原文）」窗口内、``body=""`` 渲染成
+    空行——**位置依赖的巧合**；2026-09-18 修「空 body 不占原文名额」后，
+    记账事件改成走摘要行，正文就重新出现了。所以这里同时钉两半：
+    状态行里消失（不再认为他有）+ 事件流里留着可追溯的账。
+    """
     from app.core.workorder import build_work_order
 
     item = _seed_state(session, "刘星", "普通刀剑伤不了他")
     session.ledger.persist_save()
-    assert "普通刀剑伤不了他" in build_work_order(
-        "writer", session.world, session.ledger, session.ledger.current_scene()
-    )
+
+    def order() -> str:
+        return build_work_order(
+            "writer", session.world, session.ledger, session.ledger.current_scene()
+        )
+
+    def state_lines(text: str) -> str:
+        return "\n".join(line for line in text.splitlines() if "状态：" in line)
+
+    assert "普通刀剑伤不了他" in state_lines(order())
+
     _revoke(session, settings, item.id)
-    assert "普通刀剑伤不了他" not in build_work_order(
-        "writer", session.world, session.ledger, session.ledger.current_scene()
-    )
+
+    after = order()
+    assert "普通刀剑伤不了他" not in state_lines(after)
+    assert "刘星状态撤销：普通刀剑伤不了他（玩家撤销）" in after  # 账还在，且自带方向
 
 
 def test_revoke_works_without_any_last_state_change(session, settings):

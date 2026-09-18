@@ -6,6 +6,8 @@
  *   2. 无世界时点「世界工作台」→ 曾是 `/api/sessions/null/world`（jsdom 里直接抛错）
  *   3. 「秘」标签的判据是 `public === false`，不是 `!public`
  *      —— 老存档的留痕里没有这个字段（`undefined`），用 `!` 会把"不知道"标成"秘"
+ *   4. 事件日志的公开/私密标签只看接口给的**有效**名单：改判私密之后不能还停在
+ *      【公开】（2026-09-18，改判写进了 access_overrides 但接口吐的是原始事件）
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -106,4 +108,30 @@ test("没有令牌时不发 Authorization 头（本机单人使用不该多送�
   assert.equal(result.Authorization, undefined);
   const withAuth = calls.filter((c) => c.headers.Authorization !== undefined);
   assert.deepEqual(withAuth, [], `没配令牌时不该出现 Authorization：${JSON.stringify(withAuth)}`);
+});
+
+test("事件日志：标签由接口给的有效名单决定（改判私密后不能还显示【公开】）", async () => {
+  // 后端（Ledger.access_view）已经把改判结果并进 known_by 并附带 access_rejudged，
+  // 前端只照渲染、不做二次计算。三条覆盖三种形态：改判后的私密、本来就公开、
+  // 改判成"谁都不知道"（空名单——旧写法会渲染成残缺的「【私密·仅】」）。
+  const { result } = await bootApp({
+    routes: worldRoutes(),
+    probe: `
+      renderEventsTab({ events: [
+        { at: "10:00", summary: "本来该是秘密的事", participants: ["朱明"],
+          known_by: ["刘星"], access_rejudged: true },
+        { at: "09:00", summary: "本来就是公开的事", participants: ["朱明"] },
+        { at: "08:00", summary: "改判成谁都别想知道", known_by: [], access_rejudged: true },
+      ] });
+      return { text: document.querySelector("#world-tab-events").textContent };`,
+  });
+
+  assert.match(result.text, /【私密·仅刘星】（已改判）/, "改判私密必须显示出来：\n" + result.text);
+  assert.match(result.text, /本来就是公开的事[\s\S]*【公开】/, "没改判的公开事件照旧：\n" + result.text);
+  assert.equal(
+    (result.text.match(/【公开】/g) || []).length,
+    1,
+    `【公开】只该出现在那一条公开事件上：\n${result.text}`
+  );
+  assert.match(result.text, /【私密·无知情者】（已改判）/, "空名单是私密且无人知情：\n" + result.text);
 });

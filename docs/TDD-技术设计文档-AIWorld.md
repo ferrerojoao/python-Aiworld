@@ -698,6 +698,10 @@ scope  = 当前场景可感知 ∪ 在场实体 ∪ 对话对象 ∪ 关键历�
 
 技术收益：因为切片是装配时现拼现过滤，known_by 一旦重设，所有 NPC 的记忆切片下一轮自动跟随——**访问状态修正不产生任何缓存失同步**。
 
+**改判必须"看得见"（2026-09-18 修的 bug）**：改判结果存在 `save.access_overrides`（与事件原文分开），而事件日志接口原先直接吐**原始事件字典** → 改判私密之后界面上永远显示【公开】，玩家会以为改判完全没生效（引擎侧其实已经收紧了可见性）。现行契约：`/sessions/{sid}/ledger/events` 与 `/sessions/{sid}/world` 的 `events` 一律走 `Ledger.access_view()`，把有效名单并进 `known_by` 并附 `access_rejudged`（= 当前名单由改判给定；"改回公开"不标）；名录的优先级只在 `Ledger.effective_known_by()` 里写一次，前端不做二次计算。同一条纪律：**可改的字段必须在清单里看得见**。
+
+**事件日志的两条渲染纪律（2026-09-18）**：① **原文名额只发给"有正文"的事件**——状态记账 / `npc_moves` / 退场留痕都是 `body=""` 的 narrative，只走摘要行（否则渲染成空壳行，还把 `event_log_full` 的贵名额从真正文嘴上抢走）；**过滤只在渲染层**，`narratives` 索引本身不动（它同时是 `visible_to` / 已知集第三来源的取数源）。② **事件日志摘要行不带玩家原话**（编剧与导演一致）——`玩家：「…」` 已**整条移除**（`with_player_input` / `input_len` 两个参数一并删除，不留恒 False 的死开关）；本轮输入已作为最后一条 user 消息单独下发，历史各轮的原话再糊进日志既重复又挤占版面。
+
 ---
 
 ## 8. 时钟与空间
@@ -902,6 +906,14 @@ KNOWN_SET_LIMIT=5       # 每个 NPC 已知集几条（0 = 给全部）
   消耗没有那么快。" 实测 shenshan（16 条叙事）：默认 10/3/5 → 7631 字符；
   全部/3/全部 → 8457（+11%）；全部/1/全部 → 4856（−36%）。**放开条数很便宜，
   正文原文才是大头**——`event_log_full` 是真正的成本旋钮。
+- **原文名额只发给有正文的事件**（2026-09-18 修）：状态记账事件、审计 `npc_moves`
+  的移动事件、退场留痕形状都是 `body=""` 的 narrative。它们进 `narratives` 索引是
+  对的（亲历 / 召回要走索引），但按位置一刀切当成"最近剧情原文"渲染，只会吐出一行
+  空壳 `- 时间（在场者：X）：`，而且把最贵的名额从真正的正文嘴上抢走（实测一轮采纳
+  后默认 3 个名额被 2 个空事件占掉）。现在 `event_log_block` 先挑出有正文的事件、
+  只给它们发原文名额，其余（含这些记账事件）一律走摘要行——它们本来就有 `summary`，
+  信息不丢、名额不占。**过滤只在渲染层**：`narratives` 还是 `visible_to` 与已知集
+  第三来源的取数源，索引层不许动。
 
 ---
 
@@ -913,7 +925,7 @@ KNOWN_SET_LIMIT=5       # 每个 NPC 已知集几条（0 = 给全部）
 | 集成（FakeLLM 录制响应，不联网） | **回合事务**：显式采纳指定候选 = 提交 / 放弃 = 回滚无痕（账本文件 hash 不变）；**多候选并存**：重掷/抽卡新增候选且不删旧版，采纳一份后清理该回合全部候选；**唯一候选自动采纳**：下一次输入自动采纳并进入新回合；**候选暂存恢复**：pending 文件重启后按 turn 分组可见、损坏文件跳过且不影响账本；**信息边界**：Actor 工作单不含他人私密、幕后注不进说书人/质检输入；质检拦域外知识 → 脱敏；改判私密后切片自动变化；混合句一次成稿；审计目标完成判定；**审计失败记 audit_last_error（同步模式，无补跑场景）** |
 | SSE 实时性（真 uvicorn） | `tests/test_sse_realtime.py`：真 socket + httpx 逐块读，记录每个事件到达时刻，断言阶段速报确实**先到**（差值 > 0.8s）。TestClient / `ASGITransport` 都会缓冲整条流，这半条不变量只有真服务能守（P1-5） |
 | 冒烟（真 LLM，可选） | `scripts/`：`smoke_turn_real.py`（跑一轮 + 采纳，打印候选正文 / 结算留痕 / 时钟前后）、`smoke_state_real.py`（角色状态增删改）、`smoke_llm.py`（连通性）。手动跑，不入 CI（要真 key、要花钱）。<br>2026-09-17 清理：11 个脚本已删（7 个 `diag_*` + `e2e_check.py` / `verify_sse.py` / `demo.py` / `migrate_chinese_ids.py`）——多数指向早已消失的 `content/qinghsi` 与 `saves/` 旧布局（签名改过之后从未跟上），属"跑不起来的历史残骸"；其中两条有真价值的断言已**提升为 pytest**（`complete_json` 的反馈重试 → `tests/test_llm.py`；SSE 阶段先于结果的顺序 → `tests/test_api.py`），不再依赖手工脚本兜底 |
-| 前端 | `web/tests/`：jsdom 跑真实 `index.html + app.js`（5 条冒烟，各对应一个真出过的 bug 或一条对外行为——"无世界"启动 / 工作台空态 / 「秘」标签判据 `public === false` / `?token=` 吸收与注入 / 无令牌时不发空 `Authorization` 头），CI 的 `frontend` job 跑。⚠️ jsdom **不能**给 `<select>` 类 bug 下结论（不实现 dirty value flag），那类仍靠人工走查 |
+| 前端 | `web/tests/`：jsdom 跑真实 `index.html + app.js`（6 条冒烟，各对应一个真出过的 bug 或一条对外行为——"无世界"启动 / 工作台空态 / 「秘」标签判据 `public === false` / 事件日志的改判可见性（接口给有效名单 + `access_rejudged`）/ `?token=` 吸收与注入 / 无令牌时不发空 `Authorization` 头），CI 的 `frontend` job 跑。⚠️ jsdom **不能**给 `<select>` 类 bug 下结论（不实现 dirty value flag），那类仍靠人工走查 |
 | 鉴权（P1-4，2026-09-17） | `tests/test_auth.py` 两层：**纯函数**层把 `auth_rejection` 的判定矩阵钉死（数据面 vs 静态面 / 本机 vs 非本机 / 有令牌 vs 空令牌 / 开关 on-off，共 11 组），并覆盖"缺令牌的 401 正文必须写明怎么修"与"非 ASCII 令牌不许抛 `TypeError`"；**HTTP** 层用 `TestClient(client=(ip, port))` 冒充网段内机器，验 401 / 200 / `WWW-Authenticate` / 回环豁免 / C 方案（关掉鉴权）不回退，并专门跑一轮**完整 SSE 回合**确认中间件没弄坏流式交付（纯 ASGI 而非 `BaseHTTPMiddleware` 的验收点）。变异验证：拔掉 `add_middleware` → 3 条集成用例变红 |
 | 内容包校验 | `python -m app.world.loader content/<world>`（root 是位置参数，**不是** `--check`）。**裸跑不再猜世界名**：列出 `content_root`（`Settings.content_root`，`CONTENT_ROOT` 可覆盖）下真实存在的世界并退 2——原先默认 `content/qinghsi`（旧名，已不存在），裸跑只会得到一句让人误以为"世界坏了"的报错（2026-09-17 修）。同一条 `check_world` 也已暴露为 `GET /api/worlds/{id}/check`（2026-09-13） |
 | 造世界 | `tests/test_draft.py`：空白种子包过闸 / 草稿转换（表单值优先、主角卡撞名保住、`start_scene` 越界纠回、空草稿退化）/ `validate_assets` 报语义问题 / 起草器一次修正（`calls == 2` 且问题清单回灌）。`tests/test_api.py` 另覆盖四条新 API、"新世界立刻能开一局"、**两级保存闸门**（软警告 200+problems / 硬拦 400 且主角卡无损）与**单一真相**（工作台 PUT 直写世界目录，世界列表体检同步变红；全量备份导出/导入往返） |
@@ -941,7 +953,7 @@ KNOWN_SET_LIMIT=5       # 每个 NPC 已知集几条（0 = 给全部）
 
 ## 15. 里程碑（全部已完成，此处保留为历史记录）
 
-> 下面的表是当初的排期，S0–S7 均已落地。**当前回归基线 = `pytest`（平铺 `test_*.py`，267 passed，覆盖率 92% 且闸门 90%）+ `cd web && npm test`（jsdom 前端冒烟 5 条）**；静态检查是 `python -m ruff check`（规则集在 `pyproject.toml`）。真 LLM 冒烟不在这里，在 `scripts/`（`smoke_turn_real.py` / `smoke_state_real.py` / `smoke_llm.py`）。
+> 下面的表是当初的排期，S0–S7 均已落地。**当前回归基线 = `pytest`（平铺 `test_*.py`，269 passed，覆盖率 92% 且闸门 90%）+ `cd web && npm test`（jsdom 前端冒烟 6 条）**；静态检查是 `python -m ruff check`（规则集在 `pyproject.toml`）。真 LLM 冒烟不在这里，在 `scripts/`（`smoke_turn_real.py` / `smoke_state_real.py` / `smoke_llm.py`）。
 
 | 阶段 | 技术任务 | 验收 |
 |---|---|---|

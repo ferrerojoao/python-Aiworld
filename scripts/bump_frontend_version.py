@@ -23,7 +23,17 @@ REF = re.compile(r'((?:href|src)=")([^"?]+)\?v=([^"]*)(")')
 
 
 def content_hash(path: Path) -> str:
-    return hashlib.sha1(path.read_bytes()).hexdigest()[:8]
+    """被引用文件的**平台无关**内容哈希。**唯一权威**——判据侧不许再抄一份。
+
+    ⚠️ 必须先把 CRLF 归一成 LF 再算。原因是一次真实的 CI 事故（2026-09-18）：
+    本机 ``core.autocrlf=true`` → 工作区 CRLF、git blob 里是 LF；仓库又没有
+    ``.gitattributes``。于是同一个 ``app.js`` 在 Windows 上是 94358 字节的 CRLF、
+    在 Linux CI 上是 94278 字节的 LF —— **两种字节两种哈希**，``?v=`` 只有在算它
+    的那台机器上对得上，CI 必红，而本机 ``--check`` 永远绿。
+
+    行尾不是"内容"：浏览器拿到 LF 版和 CRLF 版跑的是同一份 JS，不该换缓存版本号。
+    """
+    return hashlib.sha1(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()[:8]
 
 
 def bump(check_only: bool = False) -> int:

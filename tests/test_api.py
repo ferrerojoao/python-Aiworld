@@ -1459,3 +1459,68 @@ def test_director_state_revise_edits_in_place(tmp_path):
             ).status_code
             == 200
         )
+
+
+def test_access_rejudge_shows_up_in_event_log(tmp_path):
+    """改判私密之后，事件日志必须显示【私密】——不能还停在【公开】（2026-09-18 修）。
+
+    真 bug：改判把结果写进 ``save.access_overrides``，引擎侧（visible_to /
+    known_set）确实立刻收紧了可见性，但 ``/ledger/events`` 与 ``/world`` 返回的
+    却是**原始事件字典** → 玩家在事件日志里永远看到【公开】，看起来就像改判
+    完全没生效。引擎那一半有 tests/test_ledger.py::test_access_rejudge 保着，
+    所以红的是"看得见"这一半：**可改的字段必须在清单里看得见**。
+
+    判据三件：① 两个消费点都给**有效**名单；② ``access_rejudged`` 让改判这个
+    动作本身也可见、且"改回公开"不标；③ ``events.jsonl`` 原文一字不动。
+    """
+    with _make_client(tmp_path) as client:
+        sid = client.post(
+            "/api/sessions", json={"world_id": "qinghsi", "save_name": "main"}
+        ).json()["sid"]
+        _adopt_round(client, sid)  # 先要有一条落库的叙事事件
+
+        ev = client.get(f"/api/sessions/{sid}/ledger/events").json()["events"][-1]
+        assert ev["known_by"] is None, f"这条事件原本是公开的，改判才有意义：{ev}"
+        assert ev["access_rejudged"] is False
+
+        r = _confirm(
+            client,
+            sid,
+            {"type": "access_rejudge", "payload": {"event_id": ev["id"], "known_by": ["刘星"]}},
+        )
+        assert r.status_code == 200, r.text
+
+        # ① 两个消费点：聊天记录回填走 /ledger/events，工作台「事件日志」标签页走 /world。
+        for path in (f"/api/sessions/{sid}/ledger/events", f"/api/sessions/{sid}/world"):
+            hit = next(e for e in client.get(path).json()["events"] if e["id"] == ev["id"])
+            assert hit["known_by"] == ["刘星"], f"{path} 没有反映改判：{hit}"
+            # ② 标的是"当前名单由改判给定"
+            assert hit["access_rejudged"] is True, path
+
+        # ③ 史实不变：流水里的原文仍是公开的（access_view 交出去的是副本）。
+        raw = [
+            json.loads(line)
+            for line in (tmp_path / "qinghsi" / "events.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip()
+        ]
+        assert next(e for e in raw if e["id"] == ev["id"])["known_by"] is None, (
+            "改判只改访问状态，不许改写事件原文"
+        )
+
+        # 改判公开：清空名单恢复公开，标记随之消失（状态与原值一致，别无谓地标）。
+        assert (
+            _confirm(
+                client,
+                sid,
+                {"type": "access_rejudge", "payload": {"event_id": ev["id"], "known_by": None}},
+            ).status_code
+            == 200
+        )
+        hit = next(
+            e
+            for e in client.get(f"/api/sessions/{sid}/ledger/events").json()["events"]
+            if e["id"] == ev["id"]
+        )
+        assert hit["known_by"] is None and hit["access_rejudged"] is False

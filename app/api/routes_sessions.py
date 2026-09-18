@@ -410,7 +410,9 @@ async def get_state(request: Request, sid: str):
 @router.get("/sessions/{sid}/ledger/events")
 async def list_events(request: Request, sid: str):
     session = _get_session(request, sid)
-    return {"events": session.ledger.narratives}
+    # access_view() 而非 narratives：改判结果必须在这里看得见。直接给原始事件
+    # 会让"改判私密"在界面上永远是【公开】（2026-09-18 修的 bug）。
+    return {"events": session.ledger.access_view()}
 
 
 class PresetBody(BaseModel):
@@ -529,7 +531,8 @@ async def world_browser(request: Request, sid: str):
         "scenes": [scene.model_dump() for scene in world.scenes],
         "npcs": {npc_id: card.model_dump() for npc_id, card in world.npcs.items()},
         "axes": [axis.model_dump() for axis in world.axes],
-        "events": session.ledger.narratives,
+        # 事件日志标签页读的就是这里——同样要走 access_view()，否则改判看不见。
+        "events": session.ledger.access_view(),
     }
 
 

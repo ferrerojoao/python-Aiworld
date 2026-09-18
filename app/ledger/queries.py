@@ -118,7 +118,7 @@ class Ledger:
                     self.by_knower[member] = remaining
                 else:
                     del self.by_knower[member]
-        known_by = self.save.access_overrides.get(ev_id, event.get("known_by"))
+        known_by = self.effective_known_by(event)
         members: set[str] = set()
         if known_by is not None:
             for member in known_by:
@@ -131,6 +131,43 @@ class Ledger:
         event = self.by_id.get(event_id)
         if event is not None and event["kind"] == "narrative":
             self._reindex_knowers(event)
+
+    # ------------------------------------------------------------------
+    # 访问状态（改判）：唯一的权威表达式
+    # ------------------------------------------------------------------
+    def effective_known_by(self, event: dict[str, Any]) -> list[str] | None:
+        """事件的**有效**知情名单：改判覆盖优先于落库时的原值。
+
+        这是访问控制的**唯一权威**——``visible_to`` / ``known_set`` / ``by_knower``
+        索引 / 事件日志视图全部走它。**别在任何地方再写一遍这个 .get(…, …)**：
+        2026-09-18 的 bug 就是"改判写进了 ``access_overrides``，而事件日志读的是
+        原始 ``known_by``"，于是玩家改判私密后日志上永远是【公开】——引擎侧
+        其实已经收紧了可见性，只是界面上看不见，看起来就像改判完全没生效。
+        ``None`` = 公开（沿用落库时的公开语义），``[]`` = 私密且无人知情。
+        """
+        return self.save.access_overrides.get(event["id"], event.get("known_by"))
+
+    def access_view(self) -> list[dict[str, Any]]:
+        """事件日志的**对外视图**：把改判结果并进 ``known_by``，前端直接读。
+
+        返回的是**副本**——正文与原始 ``known_by`` 是史实，绝不被这里改写
+        （改判改的是"访问状态"这一运行态，与状态撤销同一条纪律）。
+
+        ``access_rejudged`` 让"改判"这个**动作**本身也看得见：否则界面上分不清
+        一条私密事件是当初就私密、还是玩家事后改判的。判据 = **当前生效的名单
+        来自改判**（override 是个名单）；"改回公开"（override 置 ``None``）不标
+        ——那时状态与原本的「公开」完全一致，标上只是噪声。与 ``state_view`` 同源
+        纪律：可改的字段必须在清单里看得见，而"看得见"的版本由引擎侧拼好，
+        前端不做二次计算（那是第二份权威）。
+        """
+        return [
+            {
+                **event,
+                "known_by": self.effective_known_by(event),
+                "access_rejudged": self.save.access_overrides.get(event["id"]) is not None,
+            }
+            for event in self.narratives
+        ]
 
     # ------------------------------------------------------------------
     # Writes
@@ -238,7 +275,7 @@ class Ledger:
         """
         result = []
         for event in self.narratives:
-            known_by = self.save.access_overrides.get(event["id"], event.get("known_by"))
+            known_by = self.effective_known_by(event)
             if known_by is None or viewer in known_by:
                 result.append(event)
         return result
@@ -314,7 +351,7 @@ class Ledger:
             if ev_id in seen:
                 continue
             seen.add(ev_id)
-            known_by = self.save.access_overrides.get(ev_id, ev.get("known_by"))
+            known_by = self.effective_known_by(ev)
             if known_by is not None and npc_id not in known_by:
                 continue
             picked.append(ev)
@@ -322,7 +359,7 @@ class Ledger:
             ev_id = ev["id"]
             if ev_id in seen:
                 continue
-            known_by = self.save.access_overrides.get(ev_id, ev.get("known_by"))
+            known_by = self.effective_known_by(ev)
             if known_by is not None:
                 continue  # 已知集第三来源只收公开事件
             ev_region = self._event_region(ev)

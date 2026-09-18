@@ -101,7 +101,7 @@ http://<本机IP>:8765/?token=你的令牌
 ## 测试
 
 ```bash
-# 后端（pytest 267 个用例，全 FakeLLM 离线跑，不需要任何 API key）
+# 后端（pytest 271 个用例，全 FakeLLM 离线跑，不需要任何 API key）
 ./.venv/Scripts/python.exe -m pytest -q
 
 # 后端 + 覆盖率（闸门 fail_under = 90，写在 pyproject.toml 的 [tool.coverage.report]）
@@ -205,5 +205,5 @@ docs/           设计文档（REQ / GDD / TDD）
 - 真 LLM 接入需要配置 `AIWORLD_LLM_BASE_URL` 等环境变量（见 `.env.example`）。
 - **场景**可以由模型自动注册（只落名字，描述需回工作台补）；**NPC 人物卡仍必须由人来建**（世界起草 / 世界工作台 / 直接改 `npcs/*.json`）。
 - 🔴 `AIWORLD_AUTH_TOKEN` 目前是空壳：**没有请求级鉴权中间件**。绑 `0.0.0.0` 会暴露给整个网段，别把服务直接开到公网。
-- 前端是原生 HTML/JS 单页（`web/dist`），核心交互已具备；`web/tests/` 有 5 条 jsdom 冒烟测试（守住真出过的 bug——"无世界"启动、工作台空态、「秘」标签判据——以及访问令牌的 `?token=` 吸收与注入），覆盖面仍然很薄。
+- 前端是原生 HTML/JS 单页（`web/dist`），核心交互已具备；`web/tests/` 有 6 条 jsdom 冒烟测试（守住真出过的 bug——"无世界"启动、工作台空态、「秘」标签判据、事件日志的改判可见性——以及访问令牌的 `?token=` 吸收与注入），覆盖面仍然很薄。
 - `?v=` 不是手改的序号，而是**文件内容哈希**（`scripts/bump_frontend_version.py` 写入）；改了 `web/dist/` 下的资源记得跑它。

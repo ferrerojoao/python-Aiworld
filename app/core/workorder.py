@@ -431,11 +431,14 @@ def event_log_block(
     limit: int,
     recent_full: int,
     summary_len: int = 60,
-    input_len: int = 30,
     include_ids: bool = False,
 ) -> list[str]:
     """Event log for the writer: older ones as summaries, the newest as
     full prose (so the writer can "continue" straight after them).
+
+    **摘要行不带玩家原话**（2026-09-18）：`玩家：「…」` 已整条移除——本轮的玩家
+    输入本就作为最后一条 user 消息单独下发，历史各轮的原话再糊进日志只会重复并
+    挤占版面。事件本身照旧保存 ``player_input``（史实不变，见 events.py）。
 
     ``limit`` = 取最近几条，**0 = 全部**（2026-09-16 改：旧口径是"0 = 不给"，
     与玩家的直觉相反）。``recent_full`` = 其中最近几条给正文原文（>= 1）。
@@ -469,12 +472,7 @@ def event_log_block(
     def _summary_line(ev: dict) -> str:
         summary = (ev.get("summary") or (ev.get("body") or ""))[:summary_len]
         at = ev.get("at", "")
-        pinput = ev.get("player_input")
-        if pinput:
-            line = f"- {_id_tag(ev)}{at} {_ctx_tag(ev)} 玩家：「{pinput[:input_len]}」 {summary}"
-        else:
-            line = f"- {_id_tag(ev)}{at} {_ctx_tag(ev)} {summary}"
-        return line
+        return f"- {_id_tag(ev)}{at} {_ctx_tag(ev)} {summary}"
 
     # 0 = 全部（旧口径"0 = 不给"已废）：必须显式判断，`[-0:]` 在 Python 里等于
     # `[0:]`（取全部）——正好是想要的结果，但那是巧合，不是可读的意图；
@@ -482,15 +480,25 @@ def event_log_block(
     recent = ledger.narratives if limit <= 0 else ledger.narratives[-limit:]
     if not recent:
         return []
+    # 原文名额只发给**有正文**的事件（2026-09-18 修）：状态记账事件与审计
+    # npc_moves 的移动事件形状都是 `body=""`——它们进 narratives 索引是对的
+    # （亲历、召回要走索引），但当作"最近剧情原文"渲染只会吐出一行空壳
+    # `- 时间（在场者：X）：`，还把最贵的名额（正文原文才是 token 大头）从真正的
+    # 正文嘴上抢走。它们本来就有 summary → 一律按摘要渲染：信息不丢、名额不占。
+    prose = [ev for ev in recent if (ev.get("body") or "").strip()]
+    full_ids = {ev["id"] for ev in prose[-recent_full:]}
     lines = ["事件日志（世界近期发生的事）："]
-    older = recent[:-recent_full] if len(recent) > recent_full else []
-    if older:
+    # 摘要段因此可能含**比原文段更新**的记账事件（同时刻落账），抬头仍叫"更早"
+    # 是按"早于最近剧情那一拍、且不给原文"读的——它同时刻的正文在下一段里。
+    summary_events = [ev for ev in recent if ev["id"] not in full_ids]
+    if summary_events:
         lines.append("更早事件（摘要）：")
-        lines.extend(_summary_line(ev) for ev in older)
-    newest = recent[-recent_full:]
-    lines.append("最近剧情（原文）：")
-    for ev in newest:
-        lines.append(f"- {_id_tag(ev)}{ev.get('at', '')} {_ctx_tag(ev)}：{ev.get('body', '')}")
+        lines.extend(_summary_line(ev) for ev in summary_events)
+    if full_ids:
+        lines.append("最近剧情（原文）：")
+        for ev in recent:
+            if ev["id"] in full_ids:
+                lines.append(f"- {_id_tag(ev)}{ev.get('at', '')} {_ctx_tag(ev)}：{ev.get('body', '')}")
     return lines
 
 
@@ -1219,6 +1227,7 @@ def build_work_order(
         # 剧情目标（写作引导，贴近动笔位置）
         parts += goals_block(ledger)
         # 事件日志（更早摘要在前 → 最近原文在后，收尾紧贴玩家输入以便续写）
+        # 摘要行不带玩家原话（本轮输入另有 user 消息下发）
         parts += event_log_block(
             world,
             ledger,

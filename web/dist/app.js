@@ -1519,11 +1519,20 @@ function formatEventSummary(ev, scenes, npcs) {
   const names = (ev.participants || []).join("、");
   const locTag = location ? ` [${location}]` : "";
   const whoTag = names ? `（在场：${names}）` : "";
-  const privTag = ev.known_by
-    ? `【私密·仅${(ev.known_by || []).join("、")}】`
-    : "【公开】";
+  const privTag = accessTag(ev);
   const summary = ev.summary || (ev.body || "").replace(/\s+/g, " ").slice(0, 40);
   return `${ev.at || ""}${locTag} ${summary}${whoTag} ${privTag}`;
+}
+
+function accessTag(ev) {
+  // 接口给的 known_by 已经是**改判后**的有效名单（引擎侧 Ledger.access_view 拼好的）
+  // ——前端不做二次计算，那是第二份权威。
+  // 「已改判」让这个动作本身也看得见：否则一条【私密】分不清是当初就私密、
+  // 还是玩家事后改判的（2026-09-18：改判私密后日志上一直显示【公开】）。
+  const rejudged = ev.access_rejudged ? "（已改判）" : "";
+  if (!ev.known_by) return `【公开】${rejudged}`;
+  const who = ev.known_by.join("、");
+  return who ? `【私密·仅${who}】${rejudged}` : `【私密·无知情者】${rejudged}`;
 }
 
 /* ---------- 脏检查与保存条 ---------- */
