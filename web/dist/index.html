@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AIWorld</title>
-  <link rel="stylesheet" href="style.css?v=0ce9cda4" />
+  <link rel="stylesheet" href="style.css?v=8c6124a4" />
 </head>
 <body>
   <div id="app">
@@ -15,8 +15,9 @@
       <div id="scene-nav"></div>
       <h2>在场</h2>
       <div id="present-npcs"></div>
-      <!-- 未落卡 · N（NPC 落卡机制，2026-09-19）：N>0 才出现。名单可能含**不在场**
-           的人（玩家离开酒馆后他还挂得住），所以全量与操作在抽屉「落卡」里。 -->
+      <!-- 待落卡 · N（落卡窗口 2.0，2026-09-19）：N = 待落卡的人物数 + 场景数，>0 才出现。
+           名单可能含**不在场**的人（玩家离开酒馆后他还挂得住），所以全量与操作在
+           抽屉「落卡」里。 -->
       <div id="unfiled-entry" hidden></div>
       <h2>剧情目标</h2>
       <ul id="state-goals"></ul>
@@ -84,7 +85,7 @@
       </div>
 
       <div id="tab-unfiled" class="tab-panel">
-        <h3>未落卡的确定人物</h3>
+        <h3>落卡</h3>
         <div id="unfiled-panel"></div>
       </div>
 
@@ -222,6 +223,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2a4fa0b8"></script>
+  <script src="app.js?v=fb46b205"></script>
 </body>
 </html>

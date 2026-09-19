@@ -58,6 +58,27 @@ class EntityRuntime(BaseModel):
     # has_actor / persona 全部在存档的世界实例（world/）人物卡里，运行时只有一个开关
 
 
+class LocationCandidate(BaseModel):
+    """地点候选（落卡窗口 2.0，2026-09-19）：审计建议落卡、但玩家还没拍板的地点。
+
+    与人物侧的 ``unfiled`` 同构：**键是运行态**（在这里，随世界重置清零），
+    **场景是资产**（scenes.json）。此前审计 ``register_scene=true`` 会**直接**
+    往 ``scenes.json`` 写一个场景，而描述只能是占位句 ``SCENE_PLACEHOLDER``
+    （"暂无描述。"）——那句还**每轮都被注入**。资产层凭空多一个没描述的场景、
+    且没人被通知去补，这就是不对称造成的隐患。现在审计只把建议记在这里，
+    等玩家在落卡窗口过目（人物侧早就是"引擎只给键、卡必须玩家落"）。
+
+    ``status``：``pending`` = 待落卡（窗口里列出来）；``dismissed`` = 玩家已定为
+    临时（不再自动入队）。``aliases`` = 历轮审计给的变体名累积——同一个地点换个
+    叫法（"老巷旧楼" / "巷子深处的旧楼"）本该认得出来；不攒就会被当成新地点，
+    队列里排成同义重复的两条。
+    """
+
+    status: str = "pending"  # pending | dismissed
+    aliases: list[str] = Field(default_factory=list)
+    first_seen: str = ""  # 第一次被建议落卡的时钟（ISO）
+
+
 class Goal(BaseModel):
     """剧情目标（M14 主线载体）：导演窗口设立、审计按正文判定完成、
     编剧写作时向目标引导。钩子台账已废弃（2026-09-07）。
@@ -115,3 +136,7 @@ class SaveData(BaseModel):
     # 该名字最终落了卡，就把它从两个字典里移除。
     featured_counts: dict[str, int] = Field(default_factory=dict)
     unfiled: list[str] = Field(default_factory=list)
+    # 地点候选册（落卡窗口 2.0，2026-09-19）：键 = 地点中文名（与场景表同键）。
+    # 审计说"玩家要去 / 回访 / 会复用"时只记在这里，**不再直接写 scenes.json**
+    # ——场景是资产，只有玩家能在落卡窗口拍板。见 ``LocationCandidate``。
+    locations: dict[str, LocationCandidate] = Field(default_factory=dict)

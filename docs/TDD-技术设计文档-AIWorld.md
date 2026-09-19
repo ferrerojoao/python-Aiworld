@@ -280,8 +280,12 @@ content/<world>/
                "created_at": "…", "done_at": null } ],   // M14 剧情目标
   "featured_counts": { "周德海": 1 },             // 未落卡机制（§2.4）：每个名字"与玩家有往来
                                                   //   且有名字"的累计轮数；/reset 清空
-  "unfiled": []                                   // 已授键但世界资产里没有人物卡的名字（未落卡）
+  "unfiled": [],                                  // 已授键但世界资产里没有人物卡的名字（未落卡）
                                                   //   = present_at 的域要并上的那份名单；/reset 清空
+  "locations": { "老巷旧楼": {                    // 地点候选册（§2.4，2026-09-19）：新地点也是"引擎只给候选"
+      "status": "pending",                        //   pending=待落卡（前端列出来）｜dismissed=玩家定为临时
+      "aliases": ["老楼", "那栋旧楼"],            //   累积各种叫法 → 解析域要并上，"去老巷旧楼"才走得通
+      "first_seen": "…" } }                       //   × 不删条目：删了别名就丢，变体名下一轮又被当新地点
 }
 ```
 
@@ -415,7 +419,7 @@ A 尤其像地雷：`until` 是**审计单方面**给的，玩家没有异议渠
 - 手动改动进 `last_state_change.added` / `revoked` / `revised` → 左侧栏「本回合变化」立刻显示、可即时反悔（`last_state_change is None` 时不记，只落记账事件——那种情况左侧栏本来就没有分区可显示）。留痕条目都带 `public`，左栏据它挂「秘」（`revised` 记的是**修订后**的可见性——玩家刚把它改回公开还挂「秘」就是在骗他）。
 - **导演工单必须先看得见才能改**：新增 `workorder.director_states_block()`，内部用 `state_view(full=True)`——**全量**（含不在场 / 超上限 / 已到期）、逐条带 `[st_xxx]`。id 与面板**逐字同源**（玩家说"撤掉朱明那条腿伤"，导演填的就是面板上那个 id；两处各算一遍迟早漂移）。行尾括注与编剧工单同词（`秘` / `至 …` / `已到期`，2026-09-16 统一）：缺了「秘」这一项，导演看不到某条是私密的，改 `public` 时只能瞎猜现值。同时导演侧 `character_block(with_states=False)`：那份"贴着名片"的状态行套 cap、只给在场者，与全量清单口径不同，同场出现会打架——状态在导演工单里只从一处出现。
 
-### 2.4 NPC 落卡：即兴角色 → 有卡角色（REQ 三章「即兴角色三机制」；2026-09-19 设计）
+### 2.4 NPC 落卡 · 地点候选：引擎只给候选，玩家拍板（REQ 三章「即兴角色三机制」+「地点候选」；2026-09-19 设计，同日实现落卡窗口 2.0）
 
 **要解决的问题**：`Transaction.commit` 的 `participants` **不校验人物表** → 未落卡的名字进得了事件流；但 `present_at()` 只遍历 `world.npcs` → **进不了下一轮在场名单 = 当场蒸发**。于是 LLM 顺手捏的人物（"酒保说他叫卢克"）无法沉淀：既不是有卡角色，也留不住。而人物卡**不能自动长**（`NpcCard` 的 persona / private_note / personal_secrets 无法占位；卡还挂 `present_at` / `known_set` / `region` / `has_actor`，让 LLM 造人 = 改写关系网 + 开幻觉入口）。所以中间必须有**第三种态**，并且由**玩家**拍板转正。
 
@@ -444,14 +448,26 @@ A 尤其像地雷：`until` 是**审计单方面**给的，玩家没有异议渠
 
 **键 vs 卡分层**：**键是运行态**（`save.featured_counts` / `save.unfiled`，`/reset` 清零，与状态同一条纪律），**卡是资产**（`npcs/*.json`，工作台不动）。键不等玩家（引擎自动授），**落卡等玩家**。
 
+**地点候选（`save.locations`，2026-09-19）**：键 = 地点中文名（与场景表同键），值 = `LocationCandidate{status, aliases, first_seen}`。**一个 dict 覆盖三件事**：待落卡队列（UI 筛 `status == "pending"`）· 别名累积 · 静音名单（`dismissed`）。三种情形由 `Ledger.note_location_candidate()` 处理：已注册（`world.scenes` 里有）→ no-op；已在册且 `dismissed` → **只追加别名、不改 status**（× 是玩家的裁决，审计无权翻案）；否则 upsert `pending` + 别名累积。写入点是 `Transaction` 采纳时（原 `register_scene` 调用点），**`Ledger.register_scene` 已删除**——写场景表只剩 `POST .../locations/{name}/file` 一条路。
+- **解析域 = 已注册场景 ∪ 候选册**（`_resolve_scene` 纠偏、`rules/movement.py::resolve_destination` 寻路都要）。这不是锦上添花：不做的话玩家还没处理的"老巷旧楼"下一轮会被当成新地点、队列排成同义重复的两条；且"去老巷旧楼"会走不到规则路线 1（确定性寻路），等于把目的地的决定权让给 LLM。场景表优先（已注册的才是唯一真相）。
+- 审计提示词（`build_audit_work_order`）同时列出候选册，按状态分成两行「待落卡的地点」「已定为临时的地点」，让审计**沿用同一个中文名**而不是自造变体；`register_scene` 的措辞改为"**建议**落卡（不立刻生效）"。
+- ⚠️ 落卡**改变听域语义**：未注册地点 = `ADHOC_REGION` 哨兵（公开事件谁都不风闻）→ 落卡后 `region` 留空 = 全域公共区（**所有人**风闻），且 `_event_region` 查表现算 → **追溯生效**。前端必须写出来（`land-warn`），不能藏。
+
 **API**（`routes_sessions.py`）：
 
-- `GET /sessions/{sid}/unfiled/{name}/evidence` —— **只做机械提取**：该名字在 `by_participant` 里的最近 8 条事件原文 + 最后目击 + 位置。**一个字都不生成**（appearance / persona 留给玩家填）。
-- `POST /sessions/{sid}/unfiled/{name}/file` —— 落卡。**走的是资产编辑同一条写路径**：从内存世界拼出资产形状（`_world_assets_payload`）→ 加卡 → `check_assets` 闸门（`ValueError` = 不变量失败 → 400）→ `save_world_assets` → `session.reload_world()`；语义问题随响应带回 `problems`（与 `PUT /sessions/{sid}/world` 同口径：允许半成品态存在，但它必须被看见）。落成后从 `unfiled` 与 `featured_counts` 移除。**不新增第二条写世界的路径**。
+- `GET /sessions/{sid}/unfiled/{name}/evidence` —— 该名字在 `by_participant` 里的最近 8 条事件原文 + 最后目击 + 位置。**只做机械提取，一个字都不生成**。
+- `GET /sessions/{sid}/unfiled/{name}/draft` —— **AI 草稿**：模型从**已采纳正文里关于他自己的事件**总结出 外貌 / 人格（`app/workers/landing.py`，走 `model_cheap`）。**三条约束**：① 输入只有他自己的原文事件（不喂世界书 / 别人的卡 / 底牌）② 提示词硬性"只总结已写出的，写不出留空，不许推断 / 润色 / 补前史来历人际动机" ③ 本端点**不写任何状态**，草稿只是给前端预填，落盘与否由玩家拍板。⚠️ 这是 **2026-09-19 的教义变更**（旧口径"只机械提取、拟稿由玩家完成"已作废），防线从"不许生成"换成"证据约束 + 玩家核对 + 草稿视觉可分"。没有证据时**不调 LLM**，直接返回空字段。
+- `POST /sessions/{sid}/unfiled/{name}/file` —— 落卡。**走的是资产编辑同一条写路径**：从内存世界拼出资产形状（`_world_assets_payload`）→ 加卡 → `check_assets` 闸门（`ValueError` = 不变量失败 → 400）→ `save_world_assets` → `session.reload_world()`；语义问题随响应带回 `problems`（与 `PUT /sessions/{sid}/world` 同口径：允许半成品态存在，但它必须被看见）。落成后从 `unfiled` 与 `featured_counts` 移除。**不新增第二条写世界的路径**。表单只收 `appearance / persona`（`NpcCardBody` 其余字段留空默认）——幕后注 / 自知的隐秘 / `has_actor` **不进落卡表单**：前者定义上不可从正文推导，后者是运行时档位，三者落卡后到工作台配。
 - `POST /sessions/{sid}/unfiled/{name}/discard` —— 放弃（退回即兴角色）。⚠️ **必须同时清零 `featured_counts`**：否则下一轮一出场计数仍 ≥2、立刻重新获键，撤销形同无效（与"同一个结束不能记两次"同源）。
-- `/state` 新增 `unfiled`：`[{name, location, present}]`——`present` 沿用同一份 `present_ids`，`location` 支撑"玩家离开酒馆后他还挂得住"这个全局入口。
+- `GET /sessions/{sid}/locations/{name}/evidence` · `.../draft` · `POST .../file` · `POST .../discard` —— **地点候选**（2026-09-19 新增，与人物侧同构）。此前审计 `register_scene=true` 直接写 `scenes.json`，而描述只能是 `SCENE_PLACEHOLDER`；现在只记候选册，写资产的唯一入口是这里的 `file`（`check_assets` + `save_world_assets`，`Scene.perceivable` 留空 → 占位句）。`/file` 把候选册里攒的别名一并写进 `aliases`；`/discard` 把 `status` 置 `dismissed`（**不是删除**——别名要留给解析域，否则变体名下一轮又被当新地点报一次）。
+- `/state` 新增 `unfiled`：`[{name, location, present}]`——`present` 沿用同一份 `present_ids`，`location` 支撑"玩家离开酒馆后他还挂得住"这个全局入口。以及 `unfiled_scenes`：`[{name, aliases}]`（只含 `status == "pending"`——玩家定为临时的那些不再打扰他）。
 
-**前端**（`web/dist/`）：左栏在场名单里给未落卡者挂「未落卡」标记并可点；其下一行 `未落卡 · N` 入口（N>0 才出现）→ 抽屉新增「落卡」页（**不入「状态」页**：那里有"一条状态都没有的角色一律不返回"的既有规则，未落卡者正好一条状态都没有，会被整条过滤掉）。落卡页列出**全量含不在场者**，逐条「已写出的事实」（折叠加载证据）/「补卡」（表单：外貌 / 人格 / 幕后注 / 自知的隐秘 / 配 Actor，与工作台人物卡同批字段）/「×」（轻确认后放弃）。
+**前端**（`web/dist/`）：左栏在场名单里给未落卡者挂「未落卡」标记并可点；其下一行 `待落卡 · N` 入口（**N = 人物数 + 场景数**，N>0 才出现）→ 抽屉的「落卡」页（**不入「状态」页**：那里有"一条状态都没有的角色一律不返回"的既有规则，未落卡者正好一条状态都没有，会被整条过滤掉）。落卡页 = **人物 / 场景两段并列**，每段内每条**收起态只有一行**（展开三角 + 名称 + 状态标签 + ×）：
+- 展开（`landingBody`）才发请求：先拉 `draft` 预填字段，**预填的字段挂「AI 草稿 · 请核对」标记**（`land-draft-badge`）——草稿必须与作者手写的字段一眼可分，否则事后再也分不清哪句是从正文总结的（这正是旧教义要防的事）。
+- 人物两栏（外貌 / 人格）；场景一栏（描述）+ **只读**名称（键）+ 一行听域后果警告。
+- 「已写出的事实」**默认折叠**、点了才拉（`unfiled-evidence`），它是草稿的对账凭据。
+- 「确定落卡」POST 到的就是上面那两个端点；「×」原地轻确认（`st-confirm`）后 discard。
+- **折叠即省调用**：没展开的条目一个 `/draft` 请求都不发（前端用例里有一条专门钉这个）。
 
 **这个中间态为什么必须自洽**：他此刻该被看见（进在场名单、进提示词、挂得住），但引擎不能替他编档案；他要能被操作（补卡），所以需要一个**全局**入口——左栏是"此刻有谁"的地方，全量与操作放抽屉，与项目既有的「左栏 = 此刻 / 抽屉 = 全量」分工一致。
 
@@ -767,9 +783,9 @@ scope  = 当前场景可感知 ∪ 在场实体 ∪ 对话对象 ∪ 关键历�
 ### 8.2 M17 场景双轨（rules/scenes.py）
 
 - 预置 = 内容包 `scenes.json` 节点（名字/别名/可感知区/region）。别名表在启动时建索引；**邻接图已退役**（2026-09-10，见 §8.5）。
-- 现场补建（转正）：走进包外地点 → 引擎把节点写入世界目录的 `scenes.json`（单一真相源），之后可复用可被提及；一次性布景（register_scene=false）只记事件条目的 `location_name` 显示名、不进导航集。初态由来源定：玩家声明/审计判定可复用 → 当场注册；导演排戏默认临时；编剧写景顺笔 → 装饰性文字不入图。
-- **落表内容只有名字（2026-09-16）**：`register_scene(id, *aliases)` —— `perceivable` 留占位 `SCENE_PLACEHOLDER`（"暂无描述。"），**引擎不代笔**：审计的 12 个输出字段全是提取式（从正文里挑既有事实），而"这地方一眼能看到什么"是场景固有属性、正文没写就得编；编出来的描述看着像设定，进世界资产后每轮注入编剧与 QC，作者日后分不清哪句是自己写的。描述由人回工作台补（场景编辑表单已有 `perceivable` 字段）。审计同轮给的 `scene_name` **一并存进 `aliases`**，否则同一地点换个叫法下轮就被当成新地点。纠偏 `_resolve_scene` 现在 **id 与别名都认**（id 优先）。
-- 转正信号（引擎被动核对）：玩家回访/指代（指代消解依赖已注册）→ 剧情目标指向 → 导演/NPC 复用；任一出现即补注册。导演可预注册。
+- **现场补建（转正）= 只入候选册，落表等玩家（2026-09-19 改判）**：走进包外地点 → 审计给 `location` + `scene_name` + `register_scene=true` → `Ledger.note_location_candidate()` 记进运行态 `save.locations`（`status=pending`），**不碰世界目录**；玩家在抽屉「落卡」页点确定才写 `scenes.json`（`check_assets` + `save_world_assets`，唯一写路径）。一次性布景（`register_scene=false`）只记事件条目的 `location_name` 显示名、不进导航集；玩家点 × = 进 `dismissed` 静音（不再自动入队，别名留着给解析域）。
+- **落表内容只有名字 + 玩家确认的描述（2026-09-19）**：别名在候选册里累积，落卡时一并写进 `Scene.aliases`；`perceivable` 由草稿预填、玩家可改，**留空 → 占位 `SCENE_PLACEHOLDER`（"暂无描述。"）**——审计**不代笔**（它的输出字段全是提取式，而"这地方一眼能看到什么"是固有属性，正文没写就得编；编出来的描述看着像设定，进资产后每轮注入编剧与 QC，作者日后分不清哪句是自己写的）。纠偏 `_resolve_scene` 的解析域 = **场景表 ∪ 候选册**（id 优先）。
+- 转正信号（引擎被动核对）：玩家回访/指代（指代消解依赖解析域已含候选册）→ 剧情目标指向 → 导演/NPC 复用；任一出现即入候选册（`dismissed` 者只追加别名、**不改 status**——× 是玩家的裁决，审计无权翻案）。导演可预注册（走 `POST .../locations/{name}/file`）。
 - 一次性布景：剧情用完即从可导航集退场（事件流仍可回溯）。
 
 ### 8.3 M18 位置与在场者（ledger/queries.py）
@@ -791,10 +807,10 @@ scope  = 当前场景可感知 ∪ 在场实体 ∪ 对话对象 ∪ 关键历�
 ```
 移动意图判定（looks_like_move：剥掉句首时间词后以移动动词起手）
 → 目的地解析 → 场景预结算（rule_bundle.destination）
-→ 到达后的位置事实/在场/场景注册由采纳时的审计与账本推导
+→ 到达后的位置事实/在场由采纳时的审计与账本推导；地点只入候选册（不落表）
 ```
 
-- 目的地解析（`resolve_destination`）实际只有两路：① 地点直命中（场景 id / aliases 子串表）；② 由人推位置（"找朱明" → M1 最近位置事实）。都未命中 → 返回 `None`，location 与场景注册交审计从正文判（未注册的新地点由审计给 `scene_name` + `register_scene`）。
+- 目的地解析（`resolve_destination`）实际只有两路：① 地点直命中（场景 id / aliases / **候选册别名** 子串表）；② 由人推位置（"找朱明" → M1 最近位置事实）。都未命中 → 返回 `None`，location 与场景**候选**交审计从正文判（未注册的新地点由审计给 `scene_name` + `register_scene=true` → **入候选册，不写资产**，2026-09-19）。
 - **移动耗时已归审计估时长**（`delta_minutes`）：邻接图 / 耗时表 2026-09-10 退役，规则不再算路程；"可达性"不再校验。
 - **移动与时间互不干扰**：`第二天去学校` 由规则给出目的地（"去学校"），时间则整条交审计——历史 bug 是单标签 `route` 让跳时吞掉移动预结算，规则侧目的地丢失（该 bug 及其后"两件正交事实"的设计都随 2026-09-16 去规则化成为历史）。
 - **混合句**：规则段只预结算产出 rule_bundle，编剧把移动与对话作为同一场戏一次判定，正文一次成稿。
@@ -847,9 +863,14 @@ PUT    /api/sessions/{sid}/world            # 就地编辑当前世界（单一�
 GET    /api/sessions/{sid}/world/check      # 体检当前世界（世界=存档后与 GET /worlds/{id}/check 同一份文件，保留两个入口只为语义顺口，2026-09-13）
 GET    /api/sessions/{sid}/player           # 主角资料 = 人物表里 is_player 的卡；对外沿用 name 字段（= 卡键）
 PUT    /api/sessions/{sid}/player           # 编辑主角；name 改名 = 换人物表键（旧日志保持原名，2026-09-13）
-GET    /api/sessions/{sid}/unfiled/{name}/evidence   # 落卡提案的证据：该名字在已采纳正文里的原文（只机械提取，不生成字段，2026-09-19；§2.4）
+GET    /api/sessions/{sid}/unfiled/{name}/evidence   # 落卡证据：该名字在已采纳正文里的原文（只机械提取，不生成字段，2026-09-19；§2.4）
+GET    /api/sessions/{sid}/unfiled/{name}/draft      # 落卡 AI 草稿：从**他自己的**原文事件总结 外貌/人格（不写任何状态；无证据则不调 LLM，2026-09-19 教义变更）
 POST   /api/sessions/{sid}/unfiled/{name}/file       # 落卡：加一张人物卡进世界资产（走 check_assets + save_world_assets 同一条写路径），并从 unfiled/featured_counts 移除（2026-09-19）
 POST   /api/sessions/{sid}/unfiled/{name}/discard    # 放弃落卡（退回即兴角色）；同时清零出场计数，否则下一轮立刻重新获键（2026-09-19）
+GET    /api/sessions/{sid}/locations/{name}/evidence # 地点候选证据：发生在这个地点的已采纳正文原文（2026-09-19；§2.4）
+GET    /api/sessions/{sid}/locations/{name}/draft    # 地点落卡 AI 草稿：总结「一眼能感知到」的描述（不写历史/情节，不写任何状态）
+POST   /api/sessions/{sid}/locations/{name}/file     # 场景落卡：把地点候选写进场景表（aliases 一并带上；perceivable 留空 → 占位句）；⚠️ 落卡后该地公开事件进所有人风闻范围
+POST   /api/sessions/{sid}/locations/{name}/discard  # × 定为临时：status=dismissed（不删条目——别名要留给解析域），不再自动入队
 POST   /api/sessions/{sid}/world/save-as    # 复制为新世界（fork：当前世界连演化存成新包，原世界不动）
 POST   /api/sessions/{sid}/director         # 导演窗口（topic=chat 走对话；topic=confirm 执行已确认的幕后事务；主角不可 retire，2026-09-13）
 POST   /api/sessions/{sid}/reset            # 重置剧情：事件/候选/运行态清零、开场重写；世界资产原地保留（工作台的编辑不丢）
@@ -911,8 +932,8 @@ POST /api/sessions/{sid}/director
 | `DirectorPanel` | OOC 窗口：求建议 / 答疑 / 剧情讨论 / 幕后事务（覆写、记忆注入、改判、剧情目标、角色退场）。**世界资产不在窗口内**——人物卡 / Actor 档位 / 转正 / 场景注册一律由世界工作台直接编辑（2026-09-08 导演窗口精简；2026-09-13 复核确认：转正产物是世界资产，按此分界线落工作台） |
 | `WorldBrowser` | **世界工作台**（2026-09-13 重构 + 同日单一真相源改版）：顶栏 = 标题 + 上下文行（世界名 · 目录名）+ 「切换世界 ▾」面板（收起的世界列表 = 存档列表：每项带世界名/时钟进度/当前徽标/待修标记/打开·校验·删除，内含新建世界 L1/L2 表单与「导入为新世界」）；tab 分两组——**世界资产**（概览/世界书/场景/人物/数值轴，**就地编辑**，无全局编辑模式开关）与**本存档**（事件日志只读，改判走导演窗口）；底部 sticky 保存条 = 未保存标记 + 待修数 + 校验/放弃/保存，常态提示「所有改动直接保存到这个世界，即时生效」（tab 切换不丢改动，DOM 常驻 display 切换；关闭弹窗有未保存拦截）。底栏动作三组：备份与复制（导出资产包/复制为新世界）· 全量备份（导出完整备份/导入备份）· 危险区（重置剧情） |
 | `SceneCard` | 当前场景 + 在场 NPC（模板底稿直出；首达/剧情舞台时展示说书人成品） |
-| `StatePanel` | 时钟 / 在场 / 可见轴（二期）/ 目标两级树（大目标带 x/y 章节进度、子目标缩进、已完成划线、未挂靠支线单列）；在场名单里给未落卡者挂「未落卡」标记、其下一行 `未落卡 · N` 入口（N>0 才出现）；candidate 采纳后刷新 |
-| `UnfiledPanel`（抽屉「落卡」页） | 未落卡的确定人物全量名单（**含不在场者**）+ 逐条「已写出的事实」（折叠，机械提取的正文证据）/「补卡」表单 /「×」放弃；键与卡分层，落成后从名单消失（§2.4） |
+| `StatePanel` | 时钟 / 在场 / 可见轴（二期）/ 目标两级树（大目标带 x/y 章节进度、子目标缩进、已完成划线、未挂靠支线单列）；在场名单里给未落卡者挂「未落卡」标记、其下一行 `待落卡 · N` 入口（N = 人物数 + 场景数，N>0 才出现）；candidate 采纳后刷新 |
+| `UnfiledPanel`（抽屉「落卡」页） | **人物 / 场景两段并列**的全量名单（人物**含不在场者**）。每条收起态一行（展开三角 + 名称 + 状态标签 + ×）；展开才拉 `draft` 预填（带「AI 草稿 · 请核对」标记）、「已写出的事实」默认折叠点了才拉、「确定落卡」/「×」；场景条目名称只读并附一行听域后果警告。键/候选与资产分层，落成后从名单消失（§2.4） |
 | `LedgerView` | 事件日志时间线（只读 + 公开/私密/正文分层展示，玩家可点名某条发起改判） |
 | `SettingsPanel` | 全局预设（导演准则 + 说书人预设）+ 系统设置（模型接口 / 注入上限 / 界面与流程 三段分组，2026-09-16 重排） |
 
@@ -977,10 +998,11 @@ KNOWN_SET_LIMIT=5       # 每个 NPC 已知集几条（0 = 给全部）
 | 集成（FakeLLM 录制响应，不联网） | **回合事务**：显式采纳指定候选 = 提交 / 放弃 = 回滚无痕（账本文件 hash 不变）；**多候选并存**：重掷/抽卡新增候选且不删旧版，采纳一份后清理该回合全部候选；**唯一候选自动采纳**：下一次输入自动采纳并进入新回合；**候选暂存恢复**：pending 文件重启后按 turn 分组可见、损坏文件跳过且不影响账本；**信息边界**：Actor 工作单不含他人私密、幕后注不进说书人/质检输入；质检拦域外知识 → 脱敏；改判私密后切片自动变化；混合句一次成稿；审计目标完成判定；**审计失败记 audit_last_error（同步模式，无补跑场景）** |
 | SSE 实时性（真 uvicorn） | `tests/test_sse_realtime.py`：真 socket + httpx 逐块读，记录每个事件到达时刻，断言阶段速报确实**先到**（差值 > 0.8s）。TestClient / `ASGITransport` 都会缓冲整条流，这半条不变量只有真服务能守（P1-5） |
 | 冒烟（真 LLM，可选） | `scripts/`：`smoke_turn_real.py`（跑一轮 + 采纳，打印候选正文 / 结算留痕 / 时钟前后）、`smoke_state_real.py`（角色状态增删改）、`smoke_llm.py`（连通性）。手动跑，不入 CI（要真 key、要花钱）。<br>2026-09-17 清理：11 个脚本已删（7 个 `diag_*` + `e2e_check.py` / `verify_sse.py` / `demo.py` / `migrate_chinese_ids.py`）——多数指向早已消失的 `content/qinghsi` 与 `saves/` 旧布局（签名改过之后从未跟上），属"跑不起来的历史残骸"；其中两条有真价值的断言已**提升为 pytest**（`complete_json` 的反馈重试 → `tests/test_llm.py`；SSE 阶段先于结果的顺序 → `tests/test_api.py`），不再依赖手工脚本兜底 |
-| 前端 | `web/tests/`：jsdom 跑真实 `index.html + app.js`（6 条冒烟，各对应一个真出过的 bug 或一条对外行为——"无世界"启动 / 工作台空态 / 「秘」标签判据 `public === false` / 事件日志的改判可见性（接口给有效名单 + `access_rejudged`）/ `?token=` 吸收与注入 / 无令牌时不发空 `Authorization` 头），CI 的 `frontend` job 跑。⚠️ jsdom **不能**给 `<select>` 类 bug 下结论（不实现 dirty value flag），那类仍靠人工走查 |
+| 前端 | `web/tests/`：jsdom 跑真实 `index.html + app.js`（13 条冒烟，各对应一个真出过的 bug 或一条对外行为——"无世界"启动 / 工作台空态 / 「秘」标签判据 `public === false` / 事件日志的改判可见性（接口给有效名单 + `access_rejudged`）/ `?token=` 吸收与注入 / 无令牌时不发空 `Authorization` 头 / 落卡页 6 条：左栏 `待落卡 · N` 计的是人物+场景两数、抽屉两段并列且**默认全收起**、**没展开就一个 `/draft` 都不发**、展开后草稿预填 + 挂「AI 草稿 · 请核对」标记 + POST 正文恰为 `{appearance, persona}`、证据**折叠到点击才拉**、场景行名称只读 + 听域警告 + POST 打到 `locations`）。CI 的 `frontend` job 跑。⚠️ jsdom **不能**给 `<select>` 类 bug 下结论（不实现 dirty value flag），那类仍靠人工走查 |
 | 鉴权（P1-4，2026-09-17） | `tests/test_auth.py` 两层：**纯函数**层把 `auth_rejection` 的判定矩阵钉死（数据面 vs 静态面 / 本机 vs 非本机 / 有令牌 vs 空令牌 / 开关 on-off，共 11 组），并覆盖"缺令牌的 401 正文必须写明怎么修"与"非 ASCII 令牌不许抛 `TypeError`"；**HTTP** 层用 `TestClient(client=(ip, port))` 冒充网段内机器，验 401 / 200 / `WWW-Authenticate` / 回环豁免 / C 方案（关掉鉴权）不回退，并专门跑一轮**完整 SSE 回合**确认中间件没弄坏流式交付（纯 ASGI 而非 `BaseHTTPMiddleware` 的验收点）。变异验证：拔掉 `add_middleware` → 3 条集成用例变红 |
 | 内容包校验 | `python -m app.world.loader content/<world>`（root 是位置参数，**不是** `--check`）。**裸跑不再猜世界名**：列出 `content_root`（`Settings.content_root`，`CONTENT_ROOT` 可覆盖）下真实存在的世界并退 2——原先默认 `content/qinghsi`（旧名，已不存在），裸跑只会得到一句让人误以为"世界坏了"的报错（2026-09-17 修）。同一条 `check_world` 也已暴露为 `GET /api/worlds/{id}/check`（2026-09-13） |
 | 造世界 | `tests/test_draft.py`：空白种子包过闸 / 草稿转换（表单值优先、主角卡撞名保住、`start_scene` 越界纠回、空草稿退化）/ `validate_assets` 报语义问题 / 起草器一次修正（`calls == 2` 且问题清单回灌）。`tests/test_api.py` 另覆盖四条新 API、"新世界立刻能开一局"、**两级保存闸门**（软警告 200+problems / 硬拦 400 且主角卡无损）与**单一真相**（工作台 PUT 直写世界目录，世界列表体检同步变红；全量备份导出/导入往返） |
+| 落卡（人物 + 地点候选，2026-09-19） | `tests/test_landing_scene.py`（13 条）：审计**永不**写 `scenes.json`（只记候选册）· 审计提示词同时列「待落卡」「已定为临时」两行 · 规则寻路能吃候选册别名（route 1 确定性寻路）· `dismissed` 是**粘滞**的但别名仍可解析（× 之后审计翻不了案）· `/reset` 清候选册**不清**场景表 · `file` 真写资产并清候选册 · 描述留空保留占位句 · 404 面（不存在的地点名）· `discard` 只置 `dismissed` 不删条目 · `evidence_of` 截断到 8 条且只挑有正文的 · **人物草稿只吃他自己的事件**（喂进别人的原文 → 必须不出现在草稿里）· **场景草稿只吃该地点的事件** · 无证据 → **不调 LLM**。`tests/test_turn.py` 两条随教义改判重写（原 `test_audit_registers_reusable_scene` → `test_audit_scene_hint_goes_to_candidate_book`，断言**不在** `world.scenes` 里）。四条守卫均以变异测试验过"有没有牙齿"（拔掉候选册 → 寻路用例变红；`status` 改回 `pending` → × 粘滞用例变红；`evidence_of` 换成全账本 → 草稿越界用例变红） |
 
 ---
 

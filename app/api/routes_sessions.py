@@ -16,10 +16,12 @@ from app.core.presets import save_global_preset
 from app.core.store import write_json_atomic
 from app.core.workorder import state_view
 from app.runtime.session import create_session, open_session
+from app.runtime.trace import TraceRecorder
 from app.workers.drafter import run_world_draft
+from app.workers.landing import draft_npc_card, draft_scene
 from app.world.draft import blank_world_assets, check_assets, validate_assets
 from app.world.loader import check_world, save_world_assets
-from app.world.models import NpcCard
+from app.world.models import SCENE_PLACEHOLDER, NpcCard, Scene
 
 router = APIRouter(prefix="/api")
 
@@ -315,22 +317,151 @@ async def unfiled_evidence(request: Request, sid: str, name: str):
     session = _get_session(request, sid)
     name = _unfiled_name(session, name)
     ev = session.ledger.where_is(name) or {}
-    events = [
-        {
-            "id": e["id"],
-            "at": e.get("at", ""),
-            "location": e.get("location") or "",
-            "summary": e.get("summary", ""),
-            "body": e.get("body", ""),
-        }
-        for e in session.ledger.by_participant.get(name, [])
-    ][-8:]  # 最近 8 条够看清"正文已经写出什么"；更早的看事件日志
+    from app.workers.landing import evidence_of
+
     return {
         "name": name,
         "location": ev.get("location") or "",
         "last_seen": ev.get("at") or "",
+        "events": evidence_of(session.ledger.by_participant.get(name, [])),
+    }
+
+
+@router.get("/sessions/{sid}/unfiled/{name}/draft")
+async def unfiled_npc_draft(request: Request, sid: str, name: str):
+    """落卡**草稿**：LLM 从已采纳正文里总结出 外貌 / 人格。
+
+    ⚠️ 这是**草稿不是事实**（2026-09-19 教义变更）：旧口径是"只机械提取、拟稿由
+    玩家完成"，现在允许 LLM 起草——防线换成"输入只有他自己的原文证据 + 提示词
+    禁止超出正文 + 前端标成「AI 草稿」并与原文并排"。落盘与否仍由玩家拍板
+    （``POST .../file``），本端点**不写任何状态**。
+    """
+    session = _get_session(request, sid)
+    name = _unfiled_name(session, name)
+    trace = TraceRecorder(request.app.state.llm)
+    session.debug_trace = trace.entries
+    draft = await draft_npc_card(
+        trace, session.ledger, name, model=request.app.state.settings.model_cheap
+    )
+    return {"name": name, **draft}
+
+
+# ---------------------------------------------------------------------------
+# 落卡窗口 2.0（2026-09-19）：新场景进同一个窗口
+#
+# 场景此前是**审计单方面静默落卡**的：``register_scene=true`` 就直接写
+# ``scenes.json``，而描述只能是占位句（"暂无描述。"）——那句还每轮都被注入。
+# 资产层凭空多一个没描述的场景、且没人被通知去补。现在审计只记候选册
+# （``save.locations``），写资产的唯一入口在这里，与人物侧同一条纪律：
+# **引擎只给候选，玩家拍板**。
+# ---------------------------------------------------------------------------
+
+
+class SceneCardBody(BaseModel):
+    """场景落卡表单：只收「描述」（可感知区，进 ``Scene.perceivable``）。
+
+    **名称不作为入参**——它是场景键，也是所有历史事件的 ``location``；改名会让
+    它们全部落空（退化成一次性布景）。别名从候选册自动带上，不在这里改。
+    """
+
+    perceivable: str = ""
+
+
+def _pending_scene(session, name: str) -> tuple[str, object]:
+    """取一个待落卡地点（不存在 / 已处理过 → 404）。"""
+    name = (name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="需要一个地点名")
+    item = session.ledger.save.locations.get(name)
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"「{name}」不在待落卡名单里")
+    return name, item
+
+
+@router.get("/sessions/{sid}/locations/{name}/evidence")
+async def scene_evidence(request: Request, sid: str, name: str):
+    """待落卡地点的证据：已采纳正文里发生在这里的原文（只机械提取，不生成）。"""
+    from app.workers.landing import evidence_of
+
+    session = _get_session(request, sid)
+    name, item = _pending_scene(session, name)
+    events = evidence_of(session.ledger.by_location.get(name, []))
+    return {
+        "name": name,
+        "aliases": list(item.aliases),
+        "last_seen": events[-1]["at"] if events else "",
         "events": events,
     }
+
+
+@router.get("/sessions/{sid}/locations/{name}/draft")
+async def scene_landing_draft(request: Request, sid: str, name: str):
+    """场景落卡**草稿**：LLM 总结出「一眼能感知到」的描述。只返回，不落盘。"""
+    session = _get_session(request, sid)
+    name, _item = _pending_scene(session, name)
+    trace = TraceRecorder(request.app.state.llm)
+    session.debug_trace = trace.entries
+    draft = await draft_scene(
+        trace, session.ledger, name, model=request.app.state.settings.model_cheap
+    )
+    return {"name": name, **draft}
+
+
+@router.post("/sessions/{sid}/locations/{name}/file")
+async def file_landing_scene(request: Request, sid: str, name: str, body: SceneCardBody):
+    """场景落卡：把待落卡地点变成场景表里的正式场景。
+
+    走**与资产编辑同一条写路径**（``check_assets`` + ``save_world_assets``），
+    不新增第二条真相源。描述留空 → 用占位句 ``SCENE_PLACEHOLDER``；与旧的自动
+    注册行为一致，区别是这次是**玩家看着空栏点的确定**，不是引擎偷偷写的。
+
+    别名（候选册里攒的变体名）一并写进 ``aliases``：同一个地点换个叫法，下一轮
+    才认得出来（否则"巷子深处的旧楼"会被当成新地点再排一条）。
+
+    ⚠️ ``region`` 一律留空 = 全域公共区：**落卡之后这里的公开事件会进所有人的
+    风闻范围**（落卡前是 adhoc 哨兵 = 谁都不风闻），而且**追溯生效**（
+    ``_event_region`` 查表现算）。这是落卡的实质后果，前端必须写出来。
+    """
+    session = _get_session(request, sid)
+    name, item = _pending_scene(session, name)
+    if any(s.id == name for s in session.world.scenes):
+        raise HTTPException(status_code=400, detail=f"场景表里已有「{name}」")
+    payload = _world_assets_payload(session)
+    payload["scenes"] = [
+        *payload["scenes"],
+        Scene(
+            id=name,
+            aliases=[name, *item.aliases],
+            perceivable=(body.perceivable or "").strip() or SCENE_PLACEHOLDER,
+        ).model_dump(mode="json"),
+    ]
+    try:
+        problems = check_assets(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    save_world_assets(session.world_dir, payload)
+    session.reload_world()
+    session.ledger.save.locations.pop(name, None)
+    session.ledger.persist_save()
+    return {"ok": True, "name": name, "problems": problems}
+
+
+@router.post("/sessions/{sid}/locations/{name}/discard")
+async def discard_landing_scene(request: Request, sid: str, name: str):
+    """× 定为临时：这个地点不再自动入队。
+
+    ⚠️ 与人物侧的 × **不对称，而且必须如此**：人物的键靠"累计 2 轮往来"重新挣
+    回来（那是真实信号，不是唠叨）；场景的 ``register_scene`` 是个 boolean，
+    **每访问一次就重发一次**——不静音的话玩家每次回到那个地方都要被问一遍
+    （M14 类失败：入口惹人烦 → 玩家绕开）。别名仍留在册里，解析域照旧认得它。
+
+    要改成正式场景：世界工作台的场景表是另一条路。
+    """
+    session = _get_session(request, sid)
+    name, item = _pending_scene(session, name)
+    item.status = "dismissed"
+    session.ledger.persist_save()
+    return {"ok": True, "name": name}
 
 
 @router.post("/sessions/{sid}/unfiled/{name}/file")
@@ -530,6 +661,14 @@ async def get_state(request: Request, sid: str):
                 "present": name in present_ids,
             }
             for name in session.ledger.save.unfiled
+        ],
+        # 待落卡的**地点**（落卡窗口 2.0，2026-09-19）：审计建议落卡但玩家还没
+        # 拍板的地方。dismissed（玩家定为临时）不进这里——它们不会再打扰玩家。
+        # 与人物侧的区别只在 × 的语义（见 `discard_landing_scene`）。
+        "unfiled_scenes": [
+            {"name": name, "aliases": list(item.aliases)}
+            for name, item in session.ledger.save.locations.items()
+            if item.status == "pending"
         ],
         "goals": goals,
         "preset": request.app.state.global_preset.model_dump(),
@@ -876,6 +1015,9 @@ async def reset_session(request: Request, sid: str):
     # 人物卡是资产、留在工作台不动（2026-09-19）。
     save.featured_counts = {}
     save.unfiled = []
+    # 地点候选册同理：审计的建议是本局的运行态，随世界重置清零；场景是资产、
+    # 留在工作台不动（落卡窗口 2.0，2026-09-19）。
+    save.locations = {}
     session.ledger.events = []
     session.ledger.narratives = []
     session.ledger.by_id = {}

@@ -17,9 +17,12 @@ const state = {
   worldPanelOpen: false,
   worldDraft: null,
   goals: [],
-  // 未落卡的确定人物（NPC 落卡机制，2026-09-19）：有键无卡——引擎已认他是"人"，
-  // 但世界资产里还没有他的档案。缓存下来是为了左栏在场名单能打「未落卡」标。
+  // 落卡窗口 2.0（2026-09-19）：待落卡的**人物**与**场景**。
+  // 人物 = 有键无卡（引擎已认他是"人"，但资产里还没有档案），缓存下来是为了
+  // 左栏在场名单能打「未落卡」标；场景 = 审计建议落卡但玩家还没拍板的地方
+  // （此前是审计直接静默写 scenes.json 的）。
   unfiled: [],
+  unfiledScenes: [],
 };
 
 // 访问令牌：非本机访问 /api/* 时后端要求 Authorization: Bearer <token>。
@@ -661,8 +664,17 @@ function unfiledByName(data) {
   return map;
 }
 
+// 落卡窗口 2.0（2026-09-19）：待落卡的**人物**与**场景**在同一个窗口里逐条处理。
+//
+// 两类东西同一条纪律：引擎只给候选（人物的"键" / 地点的"建议"），**资产必须玩家落**。
+// 场景此前是审计单方面静默写进 scenes.json 的——描述只能是占位句（"暂无描述。"），
+// 而那句每轮都被注入；这个窗口就是那个缺口的补法。
+//
+// 折叠纪律（省调用）：收起态只有一行（名称 + 展开 + ×）；展开才去拉「AI 草稿」，
+// 「已写出的事实」**默认折叠**、点了才拉。没展开的条目一个请求都不发。
 function renderUnfiled(data) {
   state.unfiled = data.unfiled || [];
+  state.unfiledScenes = data.unfiled_scenes || [];
   renderUnfiledEntry();
   renderUnfiledPanel();
 }
@@ -671,7 +683,8 @@ function renderUnfiledEntry() {
   const box = $("#unfiled-entry");
   if (!box) return;
   box.innerHTML = "";
-  if (!state.unfiled.length) {
+  const total = state.unfiled.length + state.unfiledScenes.length;
+  if (!total) {
     box.hidden = true;
     return;
   }
@@ -679,8 +692,8 @@ function renderUnfiledEntry() {
   const row = document.createElement("button");
   row.type = "button";
   row.className = "rail-item rail-temp";
-  row.textContent = `未落卡 · ${state.unfiled.length}`;
-  row.title = "有名字、也跟你有过往来，但引擎还没有他们的档案——点开补卡";
+  row.textContent = `待落卡 · ${total}`;
+  row.title = "有名字的人、或是你还会再去的地点——引擎都还没有它们的档案。点开逐条落卡";
   row.onclick = () => openDrawer("unfiled");
   box.appendChild(row);
 }
@@ -689,74 +702,226 @@ function renderUnfiledPanel() {
   const box = $("#unfiled-panel");
   if (!box) return;
   box.innerHTML = "";
-  if (!state.unfiled.length) {
-    box.innerHTML = '<div class="empty">没有待补档的角色。</div>';
+  const npcs = state.unfiled;
+  const scenes = state.unfiledScenes;
+  if (!npcs.length && !scenes.length) {
+    box.innerHTML = '<div class="empty">没有待落卡的东西。</div>';
     return;
   }
   const hint = document.createElement("div");
   hint.className = "st-note";
   hint.textContent =
-    "这些人和你说过话、也报过名字，但引擎还没有他们的档案。补一张卡，他们才算真正进了这个世界——在此之前他们只是临时角色，编剧被禁止替他们编来历。";
+    "引擎只把候选摆在这里，落不落由你决定。展开会向模型要一份「AI 草稿」——草稿" +
+    "**只从已写出的事实里总结**，写不到的就留空（留空 = 还没写到，不是没有）；" +
+    "核对过、改过，点确定才落地。";
   box.appendChild(hint);
-  for (const item of state.unfiled) box.appendChild(unfiledGroup(item));
+  if (npcs.length) box.appendChild(landingSection("人物", npcs, "npc"));
+  if (scenes.length) box.appendChild(landingSection("场景", scenes, "scene"));
 }
 
-function unfiledGroup(item) {
+function landingSection(title, items, kind) {
+  const sec = document.createElement("div");
+  sec.className = "land-section";
+  const head = document.createElement("div");
+  head.className = "land-section-head";
+  head.textContent = `${title} · ${items.length}`;
+  sec.appendChild(head);
+  for (const item of items) sec.appendChild(landingRow(item, kind));
+  return sec;
+}
+
+function landingUrl(item, kind, tail) {
+  const base = kind === "npc" ? "unfiled" : "locations";
+  return `/api/sessions/${state.sid}/${base}/${encodeURIComponent(item.name)}/${tail}`;
+}
+
+function landingRow(item, kind) {
   const group = document.createElement("div");
   group.className = "st-group";
 
   const head = document.createElement("div");
   head.className = "st-group-head";
-  head.textContent = item.name;
-  head.appendChild(
-    stTag(item.present ? "在场" : item.location ? `在${item.location}` : "去向不明")
-  );
-  group.appendChild(head);
-
-  // 已写出的事实（折叠）：把已采纳正文里关于他的原文摊开。**引擎不代笔**——这里
-  // 只提取，一个字都不生成；外貌 / 人格那些栏位留给作者填（替人编来历会让编造
-  // 内容伪装成事实，从此再也分不清）。
-  const evidence = document.createElement("div");
-  evidence.className = "unfiled-evidence";
-  evidence.hidden = true;
-  group.appendChild(evidence);
-
-  const actions = document.createElement("div");
-  actions.className = "unfiled-actions";
-  group.appendChild(actions);
-
   const toggle = document.createElement("button");
   toggle.type = "button";
-  toggle.textContent = "已写出的事实";
-  toggle.onclick = async () => {
-    if (!evidence.hidden) {
-      evidence.hidden = true;
+  toggle.className = "land-toggle";
+  toggle.textContent = "▸";
+  head.appendChild(toggle);
+  const name = document.createElement("span");
+  name.className = "land-name";
+  name.textContent = item.name;
+  head.appendChild(name);
+  if (kind === "npc") {
+    head.appendChild(
+      stTag(item.present ? "在场" : item.location ? `在${item.location}` : "去向不明")
+    );
+  } else if ((item.aliases || []).length) {
+    head.appendChild(stTag(`变体：${item.aliases.join("、")}`));
+  }
+  head.appendChild(landingDiscard(item, kind));
+  group.appendChild(head);
+
+  const body = document.createElement("div");
+  body.className = "land-body";
+  body.hidden = true;
+  group.appendChild(body);
+
+  let loaded = false;
+  toggle.onclick = () => {
+    if (!body.hidden) {
+      body.hidden = true;
+      toggle.textContent = "▸";
       return;
     }
-    evidence.hidden = false;
-    evidence.textContent = "读取中…";
-    try {
-      const res = await api(
-        `/api/sessions/${state.sid}/unfiled/${encodeURIComponent(item.name)}/evidence`
-      );
-      renderEvidence(evidence, res);
-    } catch (e) {
-      evidence.textContent = `读取失败：${e.message}`;
+    body.hidden = false;
+    toggle.textContent = "▾";
+    if (!loaded) {
+      loaded = true;
+      landingBody(body, item, kind);
     }
   };
-
-  const file = document.createElement("button");
-  file.type = "button";
-  file.textContent = "补卡";
-  file.onclick = () => {
-    actions.hidden = true;
-    group.appendChild(unfiledForm(item, group, actions));
-  };
-
-  actions.appendChild(toggle);
-  actions.appendChild(file);
-  actions.appendChild(unfiledDiscard(item));
   return group;
+}
+
+// 展开态 = 最小字段（人物两栏 / 场景一栏 + 只读名称）+ 默认折叠的原文证据 + 确定。
+// 人物只留**能从正文推导**的两栏：幕后注 / 自知的隐秘定义上就是"无人知道的真相"，
+// 正文根本没写，所以不可能被总结——它们落卡后到世界工作台填。
+function landingBody(body, item, kind) {
+  const note = document.createElement("div");
+  note.className = "st-note";
+  note.textContent =
+    kind === "npc"
+      ? "只填正文已经写出的；没写到的留空——空栏是「还没写到」，不是「没有」。"
+      : "描述只写“一眼能感知到的”：形制、光线、气味、声音、陈设。别写这里发生过什么（它会被当成环境设定每轮注入）。";
+  body.appendChild(note);
+
+  const inputs = {};
+  const badges = {};
+  if (kind === "scene") {
+    const l = document.createElement("label");
+    l.textContent = "名称（是场景键，改不了——所有历史事件都记着它）";
+    const ro = document.createElement("input");
+    ro.className = "land-readonly";
+    ro.value = item.name;
+    ro.readOnly = true;
+    body.appendChild(l);
+    body.appendChild(ro);
+  }
+  const fields =
+    kind === "npc"
+      ? [["appearance", "外貌", 2], ["persona", "人格", 2]]
+      : [["perceivable", "描述", 3]];
+  for (const [key, label, rows] of fields) {
+    const l = document.createElement("label");
+    l.appendChild(document.createTextNode(label + " "));
+    const badge = document.createElement("span");
+    badge.className = "land-draft-badge";
+    badge.textContent = "AI 草稿 · 请核对";
+    badge.hidden = true;
+    l.appendChild(badge);
+    const ta = document.createElement("textarea");
+    ta.rows = rows;
+    inputs[key] = ta;
+    badges[key] = badge;
+    body.appendChild(l);
+    body.appendChild(ta);
+  }
+
+  if (kind === "scene") {
+    const warn = document.createElement("div");
+    warn.className = "st-note land-warn";
+    warn.textContent =
+      "落卡之后，这里的公开事件会进入**所有人**的风闻范围（现在不会）。要设听域请落卡后到世界工作台改。";
+    body.appendChild(warn);
+  }
+
+  // 「已写出的事实」默认折叠：它是草稿的对账凭据，点了才拉。
+  const evToggle = document.createElement("button");
+  evToggle.type = "button";
+  evToggle.className = "land-ev-toggle";
+  evToggle.textContent = "▸ 已写出的事实";
+  const evBox = document.createElement("div");
+  evBox.className = "unfiled-evidence";
+  evBox.hidden = true;
+  let evLoaded = false;
+  evToggle.onclick = async () => {
+    if (!evBox.hidden) {
+      evBox.hidden = true;
+      evToggle.textContent = "▸ 已写出的事实";
+      return;
+    }
+    evBox.hidden = false;
+    evToggle.textContent = "▾ 已写出的事实";
+    if (evLoaded) return;
+    evLoaded = true;
+    evBox.textContent = "读取中…";
+    try {
+      renderEvidence(evBox, await api(landingUrl(item, kind, "evidence")));
+    } catch (e) {
+      evBox.textContent = `读取失败：${e.message}`;
+    }
+  };
+  body.appendChild(evToggle);
+  body.appendChild(evBox);
+
+  const status = document.createElement("div");
+  status.className = "st-note";
+  body.appendChild(status);
+
+  const ok = document.createElement("button");
+  ok.type = "button";
+  ok.className = "land-file";
+  ok.textContent = "确定落卡";
+  ok.onclick = async () => {
+    ok.disabled = true;
+    try {
+      const payload = {};
+      for (const [key, ta] of Object.entries(inputs)) payload[key] = ta.value;
+      const res = await api(landingUrl(item, kind, "file"), {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      await refreshState();
+      // 体检问题（start_scene 越界之类）与这次落卡无关时也会报出来——允许"半成品态"
+      // 存在，但它必须是**被看见的**，所以如实转告，不拦。
+      const problems = res.problems || [];
+      const what =
+        kind === "npc"
+          ? `「${item.name}」已落卡——从此刻起他是这个世界有档案的一员。`
+          : `「${item.name}」已落卡——它成了世界的正式场景，公开事件从此会被风闻。`;
+      addMessage(
+        "npc",
+        problems.length ? `⚠ ${what}但引擎体检查到：${problems.join("；")}` : `✓ ${what}`
+      );
+    } catch (e) {
+      ok.disabled = false;
+      status.textContent = `落卡失败：${e.message}`;
+    }
+  };
+  body.appendChild(ok);
+
+  // 草稿按需生成：展开了才问模型（收起 / 没展开的条目不花这次钱）。
+  loadLandingDraft(inputs, badges, item, kind, status);
+}
+
+async function loadLandingDraft(inputs, badges, item, kind, status) {
+  status.textContent = "正在从已写出的事实里总结草稿…";
+  try {
+    const res = await api(landingUrl(item, kind, "draft"));
+    const count = res.evidence_count || 0;
+    if (!count) {
+      status.textContent = "还没有与它相关的已采纳正文——草稿留空，请自己填。";
+      return;
+    }
+    for (const [key, ta] of Object.entries(inputs)) {
+      if (res[key]) {
+        ta.value = res[key];
+        badges[key].hidden = false;
+      }
+    }
+    status.textContent = `草稿只总结自最近 ${count} 条已采纳正文，请逐句核对。`;
+  } catch (e) {
+    status.textContent = `草稿生成失败：${e.message}（自己填也一样）`;
+  }
 }
 
 function renderEvidence(box, res) {
@@ -764,13 +929,16 @@ function renderEvidence(box, res) {
   const meta = document.createElement("div");
   meta.className = "st-note";
   const seen = res.last_seen ? stampClock(res.last_seen) : "-";
-  meta.textContent = `最后目击：${seen}${res.location ? `（${res.location}）` : ""}`;
+  // 人物证据有地点（他最后在哪儿），场景证据没有——场景自己就是那个地点。
+  meta.textContent = res.location
+    ? `最后目击：${seen}（${res.location}）`
+    : `最近一次：${seen}`;
   box.appendChild(meta);
   const events = res.events || [];
   if (!events.length) {
     const none = document.createElement("div");
     none.className = "st-note";
-    none.textContent = "（还没有与他相关的已采纳正文）";
+    none.textContent = "（还没有与它相关的已采纳正文）";
     box.appendChild(none);
     return;
   }
@@ -788,13 +956,20 @@ function renderEvidence(box, res) {
   }
 }
 
-// 放弃补卡（×）：他退回去当即兴角色。后端会**同时清零出场计数**——否则他下一轮
-// 一出场，计数仍 ≥2，立刻重新获键，撤销形同无效。
-function unfiledDiscard(item) {
+// 放弃 / 定为临时（×）。两类语义**故意不对称**：
+//   人物：退回即兴角色，**同时清零出场计数**——否则他下一轮一出场，计数仍 ≥2，
+//         立刻重新获键，撤销形同无效（与"同一个结束不能记两次"同源）。
+//   场景：进静音名单，**不再自动入队**。审计的 register_scene 是个 boolean、
+//         每访问一次就重发一次，不静音的话玩家每次回到那儿都要被问一遍。
+//         要改成正式场景，世界工作台的场景表是另一条路。
+function landingDiscard(item, kind) {
   const x = document.createElement("span");
   x.className = "st-x";
   x.textContent = "×";
-  x.title = "放弃补卡：他退回去当即兴角色（出场计数一并清零）";
+  x.title =
+    kind === "npc"
+      ? "放弃落卡：他退回去当即兴角色（出场计数一并清零）"
+      : "定为临时：不再自动入队。要改成正式场景请去世界工作台";
   x.onclick = () => {
     const ask = document.createElement("span");
     ask.className = "st-confirm";
@@ -805,10 +980,7 @@ function unfiledDiscard(item) {
     yes.onclick = async () => {
       yes.disabled = true;
       try {
-        await api(
-          `/api/sessions/${state.sid}/unfiled/${encodeURIComponent(item.name)}/discard`,
-          { method: "POST" }
-        );
+        await api(landingUrl(item, kind, "discard"), { method: "POST" });
         await refreshState();
       } catch (e) {
         ask.textContent = `失败：${e.message}`;
@@ -822,92 +994,6 @@ function unfiledDiscard(item) {
     x.replaceWith(ask);
   };
   return x;
-}
-
-function unfiledForm(item, group, actions) {
-  const form = document.createElement("div");
-  form.className = "unfiled-form";
-
-  const note = document.createElement("div");
-  note.className = "st-note";
-  note.textContent = "只填正文已经写出的；没写到的留空——空栏是「还没写到」，不是「没有」。";
-  form.appendChild(note);
-
-  const inputs = {};
-  for (const [key, label, rows] of [
-    ["appearance", "外貌", 2],
-    ["persona", "人格", 2],
-    ["private_note", "作者底牌（无人知道的真相，仅编剧可读）", 2],
-    ["personal_secrets", "自知的隐秘（只进他自己的 Actor 切片）", 2],
-  ]) {
-    const l = document.createElement("label");
-    l.textContent = label;
-    const ta = document.createElement("textarea");
-    ta.rows = rows;
-    inputs[key] = ta;
-    form.appendChild(l);
-    form.appendChild(ta);
-  }
-
-  const actorLabel = document.createElement("label");
-  actorLabel.className = "unfiled-check";
-  const actor = document.createElement("input");
-  actor.type = "checkbox";
-  actorLabel.appendChild(actor);
-  actorLabel.appendChild(document.createTextNode("配 Actor（深抉择才派活）"));
-  form.appendChild(actorLabel);
-
-  const status = document.createElement("div");
-  status.className = "st-note";
-  form.appendChild(status);
-
-  const row = document.createElement("div");
-  row.className = "unfiled-actions";
-  const ok = document.createElement("button");
-  ok.type = "button";
-  ok.textContent = "确认落卡";
-  ok.onclick = async () => {
-    ok.disabled = true;
-    try {
-      const res = await api(
-        `/api/sessions/${state.sid}/unfiled/${encodeURIComponent(item.name)}/file`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            appearance: inputs.appearance.value,
-            persona: inputs.persona.value,
-            private_note: inputs.private_note.value,
-            personal_secrets: inputs.personal_secrets.value,
-            has_actor: actor.checked,
-          }),
-        }
-      );
-      await refreshState();
-      // 体检问题（start_scene 越界之类）与这张卡无关时也会报出来——允许"半成品态"
-      // 存在，但它必须是**被看见的**，所以如实转告，不拦。
-      const problems = res.problems || [];
-      addMessage(
-        "npc",
-        problems.length
-          ? `⚠ 「${item.name}」已落卡，但引擎体检查到：${problems.join("；")}`
-          : `✓ 「${item.name}」已落卡——从此刻起他是这个世界有档案的一员。`
-      );
-    } catch (e) {
-      ok.disabled = false;
-      status.textContent = `落卡失败：${e.message}`;
-    }
-  };
-  const cancel = document.createElement("button");
-  cancel.type = "button";
-  cancel.textContent = "取消";
-  cancel.onclick = () => {
-    form.remove();
-    actions.hidden = false;
-  };
-  row.appendChild(ok);
-  row.appendChild(cancel);
-  form.appendChild(row);
-  return form;
 }
 
 async function syncPendingFromServer() {

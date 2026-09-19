@@ -18,6 +18,11 @@ def resolve_destination(text: str, world: WorldContent, ledger: Ledger) -> str |
     for scene in world.scenes:
         for alias in [scene.id, *scene.aliases]:  # 场景键 = 中文名
             alias_map[alias.lower()] = scene.id
+    # 地点候选册（落卡窗口 2.0，2026-09-19）：待落卡 / 已定为临时的地方也要认得
+    # 出来。不做这一步，"去老巷旧楼"在玩家落卡之前走不到**路线 1**（确定性寻路），
+    # 只能退化成路线 3 交给审计——等于把目的地的决定权让给 LLM。已注册场景优先。
+    for call, canonical in ledger.location_aliases().items():
+        alias_map.setdefault(call.lower(), canonical)
 
     for alias, scene_id in alias_map.items():
         if alias and alias in text.lower():

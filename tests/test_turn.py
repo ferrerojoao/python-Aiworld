@@ -11,7 +11,6 @@ from app.ledger.save import EntityRuntime, StateItem
 from app.rules.lorebook import merge_active_lore
 from app.runtime.session import open_session
 from app.runtime.turn import NeedChooseCandidate, TurnRunner
-from app.world.models import SCENE_PLACEHOLDER
 
 
 class PrefixKeyLLM(FakeLLM):
@@ -330,9 +329,13 @@ def test_audit_settles_side_effects_and_one_shot_scene(session, settings):
     assert session.ledger.save.player_scene == "weicao_deep"
 
 
-def test_audit_registers_reusable_scene(session, settings):
-    """A scene the player declares reusable gets registered (M17 转正)。
-    键=中文名后，审计直接给出中文 id，register_scene 按该键落表。"""
+def test_audit_scene_hint_goes_to_candidate_book(session, settings, world_root):
+    """审计的「建议落卡」**只进候选册**，不再单方面写世界资产（落卡窗口 2.0）。
+
+    此前 ``register_scene=True`` 就直接 ``scenes.json`` 落表，而描述只能是占位句
+    ——资产层凭空多一个没描述的场景、且没人被通知去补。现在场景与人物同一条纪律：
+    引擎只给候选（键），**卡必须玩家落**。
+    """
     audit_out = {
         "location": "街角奶茶店",
         "scene_name": "街角奶茶店",
@@ -357,16 +360,21 @@ def test_audit_registers_reusable_scene(session, settings):
     candidate = asyncio.run(runner.run_turn("去街角那家奶茶店"))
     asyncio.run(runner.adopt(candidate.candidate_id))
 
-    assert any(s.id == "街角奶茶店" for s in session.world.scenes)
+    # ① 资产层没有多出东西（这是本轮的回归点）
+    assert not any(s.id == "街角奶茶店" for s in session.world.scenes)
+    on_disk = json.loads((world_root / "scenes.json").read_text(encoding="utf-8"))
+    assert not any(s["id"] == "街角奶茶店" for s in on_disk)
+    # ② 进了候选册，等玩家在窗口拍板
+    assert session.ledger.pending_locations() == ["街角奶茶店"]
+    # ③ 事件位置照旧（候选册只是"还没转正"，不影响正文与在场推导）
     assert session.ledger.save.player_scene == "街角奶茶店"
 
 
-def test_registered_scene_keeps_the_audit_alias(session, settings, world_root):
-    """注册新场景时，审计同轮给的变体名要一并进 aliases（2026-09-16）。
+def test_scene_candidate_keeps_aliases_and_resolves(session, settings, world_root):
+    """候选册要攒审计给的变体名，并且解析域必须认得它（2026-09-16 的老毛病）。
 
-    ``register_scene`` 原先只拿 ``location``，``scene_name`` 直接被丢掉——
-    "老巷旧楼"落表后，"巷子深处的旧楼"这个审计知道的叫法就没人记得，
-    以后要么认不出、要么被当成新地点重复注册。
+    ``_resolve_scene`` 原先只认已注册场景；现在域里并上候选册——否则玩家还没处理
+    的"村东苇塘"下一轮就会被当成新地点，队列里排成同义重复的两条。
     """
     audit_out = {
         "location": "村东苇塘",
@@ -392,18 +400,30 @@ def test_registered_scene_keeps_the_audit_alias(session, settings, world_root):
     candidate = asyncio.run(runner.run_turn("去村东的苇塘"))
     asyncio.run(runner.adopt(candidate.candidate_id))
 
-    scene = next((s for s in session.world.scenes if s.id == "村东苇塘"), None)
-    assert scene is not None
-    # id 自己算一个别名，审计给的变体名跟在后面；同名的重复项不收。
-    assert scene.aliases == ["村东苇塘", "苇塘"]
+    assert not any(s.id == "村东苇塘" for s in session.world.scenes)
+    assert session.ledger.save.locations["村东苇塘"].aliases == ["苇塘"]
+    # 别名反查得回正名 → 同一地点不会被排成两条
+    assert session.ledger.location_aliases()["苇塘"] == "村东苇塘"
 
-    # 落盘一致（世界资产 = 磁盘真相）：新场景只带名字，描述是占位。
-    on_disk = {
-        s["id"]: s
-        for s in json.loads((world_root / "scenes.json").read_text(encoding="utf-8"))
-    }
-    assert on_disk["村东苇塘"]["aliases"] == ["村东苇塘", "苇塘"]
-    assert on_disk["村东苇塘"]["perceivable"] == SCENE_PLACEHOLDER
+    # 下一轮：审计只给变体名当 location，**且玩家输入刻意不含任何地名**——
+    # 否则规则侧 resolve_destination 先救了，测不到 _resolve_scene 这一层。
+    llm = PrefixKeyLLM(
+        {
+            "玩家输入：": {
+                "prose": "你又回到苇塘边站了会儿。",
+                "summary": "刘星回到苇塘。",
+                "actor_questions": [],
+            },
+            "正文：": {"status": "pass", "prose": "你又回到苇塘边站了会儿。", "issues": []},
+            "已采纳正文": dict(audit_out, location="苇塘", scene_name=""),
+        }
+    )
+    runner = _runner(session, llm, settings)
+    candidate2 = asyncio.run(runner.run_turn("再坐一会儿"))
+    asyncio.run(runner.adopt(candidate2.candidate_id))
+
+    assert list(session.ledger.save.locations) == ["村东苇塘"]  # 没多出"苇塘"
+    assert session.ledger.save.player_scene == "村东苇塘"
 
 
 def test_audit_alias_of_registered_scene_is_not_reregistered(session, settings):

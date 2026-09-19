@@ -1074,7 +1074,7 @@ def build_director_chat_system(
         f"文字仍受 ≤ {STATE_TEXT_MAX} 字与同角色不重复的约束；已到期的条目改不了"
         "（它已经宣布结束了，要复活得撤销后重加）。只是改错别字就用它，"
         "别用「撤销 + 新增」——那会把「什么时候起就是这样的」重置成现在",
-        "（人物卡、Actor 档位、转正/场景注册走世界工作台，不走这里。）",
+        "（人物卡 / Actor 档位走世界工作台；新角色与新场景的落卡走左栏「待落卡」窗口，不走这里。）",
         "纪律：action 是一份提案，玩家确认后才生效。"
         "state_add / state_revoke / state_revise 只在玩家明确要求时提——他在改自己的世界，"
         "不必拿「这算不算长期事实」拦他。",
@@ -1106,6 +1106,19 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
     present_ids = ledger.present_at(scene_id)
     names = list(present_ids)
     scene_list = "、".join(s.id for s in world.scenes)
+    # 地点候选册（落卡窗口 2.0，2026-09-19）：待落卡 / 已定为临时的地方也要报给
+    # 审计，让它**沿用同一个中文名**而不是自造变体——否则同一个地点会在候选册里
+    # 越攒越多条，玩家得一条条处理同义重复。它们还没进场景表，按状态分开标。
+    location_lines: list[str] = []
+    for label, names in (
+        ("待落卡", ledger.pending_locations()),
+        ("已定为临时", [n for n, item in ledger.save.locations.items() if item.status != "pending"]),
+    ):
+        if names:
+            location_lines.append(
+                f"{label}的地点（还没进场景表；提到它们时**沿用这些中文名**，别自造变体叫法）："
+                + "、".join(names)
+            )
     state_lines = [
         "- state_add：只收**长期事实**（体质 / 伤残 / 病症 / 能力 / 身份处境）。"
         "自检：**过几天、几十轮回头看，这条还成立吗？**戏散就没了 → 不写。",
@@ -1155,8 +1168,9 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
             "只说\"走了\"没说去哪 → 不给（位置不变）。只记 NPC"
             "（玩家移动由 location 覆盖），多数回合为空。",
             "- 场景已在场景表 → 用其中文名；进入新地点 → location 与 scene_name 都给同一个中文名。"
-            "register_scene：玩家要去 / 回访 / 会复用 → true；剧情顺笔的一次性舞台（如今晚的草地）"
-            "→ false（不进导航，显示名仍可用）。",
+            "register_scene 是**建议落卡**（不立刻生效）：玩家要去 / 回访 / 会复用 → true"
+            "（该地点进候选册，等玩家在落卡窗口拍板）；剧情顺笔的一次性舞台（如今晚的草地）"
+            "→ false（不进任何表，显示名仍可用）。",
             "- private：判据是\"外人会不会知道这事发生过\"，不单看地点。私下交底 / 咬耳朵 / "
             "无人看见的交易 / 隐蔽处行事 → true；当众冲突、公开对话 → false。",
             "- clock_to（**优先**）：只要**玩家输入或正文给出了任何明确时刻或日界**"
@@ -1179,6 +1193,7 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
             # 要靠 id 精确定位（Step 2）。
             *states_block(ledger, present_ids, include_ids=True),
             "已注册场景（location 用这些中文名，新地点也照此给中文名）：" + (scene_list or "（无）"),
+            *location_lines,
             "活动目标：",
             *audit_goals_lines(ledger),
             *world.meta.summary,

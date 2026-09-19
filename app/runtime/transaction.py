@@ -275,28 +275,41 @@ class Transaction:
         known_by = participants if private else None
 
         def _resolve_scene(loc: str, *aliases: str) -> str:
-            """场景键纠偏：**id 或别名**命中注册场景就用它；否则按中文名/别名反查
-            （审计偶尔自造变体名；scene_name 通常恰是注册场景名，可机械救回）。
+            """场景键纠偏：**id 或别名**命中已知地点就用它；否则按中文名/别名反查
+            （审计偶尔自造变体名；scene_name 通常恰是场景名，可机械救回）。
             都未命中 → 原样（一次性布景）。
 
             loc 自己也认别名（2026-09-16 补）：原先第一步只查 ``s.id``，别名仅
             作为第二参数被反查——审计**只给一个叫法**且那是个别名时（qingshi2 实测
             里 ``location_name`` 就是空的），"鱼市"的别名"码头鱼市"会凭空多注册
             一个同义场景。id 仍优先于别名。
+
+            **解析域 = 已注册场景 ∪ 地点候选册**（落卡窗口 2.0，2026-09-19）：
+            待落卡 / 已定为临时的地方也要认得出来。不做这一步，玩家还没处理的
+            "老巷旧楼"下一轮就会被当成新地点，队列里排成同义重复的两条。
+            场景表优先——已注册的才是唯一真相。
             """
+            by_id = {s.id: s.id for s in self.ledger.world.scenes}
+            by_alias: dict[str, str] = {}
+            for scene in self.ledger.world.scenes:
+                for name in scene.aliases:
+                    by_alias.setdefault(name, scene.id)
+            for call, canonical in self.ledger.location_aliases().items():
+                if call in by_id or call in by_alias:
+                    continue
+                by_alias.setdefault(call, canonical)
             if loc:
-                for s in self.ledger.world.scenes:
-                    if loc == s.id:
-                        return s.id
-                for s in self.ledger.world.scenes:
-                    if loc in s.aliases:
-                        return s.id
+                if loc in by_id:
+                    return by_id[loc]
+                if loc in by_alias:
+                    return by_alias[loc]
             for alias in aliases:
                 if not alias:
                     continue
-                for s in self.ledger.world.scenes:
-                    if alias == s.id or alias in s.aliases:
-                        return s.id
+                if alias in by_id:
+                    return by_id[alias]
+                if alias in by_alias:
+                    return by_alias[alias]
             return loc
 
         audit_alias = audit_out.scene_name if audit_out else ""
@@ -324,10 +337,14 @@ class Transaction:
             if scene_alias:
                 narrative["location_name"] = scene_alias
             if audit_out and audit_out.register_scene and location:
-                # 审计给的变体名（scene_alias）一并存进 aliases：同一个地点换个叫法
-                # 下轮才救得回来（否则"老巷旧楼"落表后，"巷子深处的旧楼"会被当成
-                # 新地点再注册一个）。2026-09-16。
-                self.ledger.register_scene(location, scene_alias or "")
+                # 审计只**建议**落卡（落卡窗口 2.0，2026-09-19）。场景是**资产**，
+                # 不再由审计单方面写进 scenes.json——那会凭空多出一个描述只能是
+                # 占位句（"暂无描述。"）的场景，而那句每轮都被注入，没人被通知去补。
+                # 现在只记候选册，等玩家在落卡窗口过目（与人物侧"引擎只给键、
+                # 卡必须玩家落"同构）。变体名（scene_alias）一并攒下：同一个地点换个
+                # 叫法下轮才救得回来（否则"老巷旧楼"落表后，"巷子深处的旧楼"会被
+                # 当成新地点再排一条）。2026-09-16 起攒别名，2026-09-19 改为入册。
+                self.ledger.note_location_candidate(location, scene_alias or "")
         self.ledger.append(narrative, flush=False)
         self.ledger.save.player_scene = location
 

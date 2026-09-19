@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.store import append_event, read_events, read_json, write_json_atomic
-from app.ledger.save import SaveData
+from app.ledger.save import LocationCandidate, SaveData
 from app.world.models import WorldContent
 
 ADHOC_REGION = "adhoc"  # 一次性布景的归属哨兵：不进任何听域的风闻通道
@@ -250,32 +250,57 @@ class Ledger:
     def cache_stats_snapshot(self) -> dict[str, int]:
         return dict(self.cache_stats)
 
-    def register_scene(self, scene_id: str, *aliases: str) -> bool:
-        """Register a reusable scene node in the world (M17 转正，仅玩家声明的
-        可复用地点；一次性布景不注册). 场景键 = 中文名：id 即显示名。
+    def note_location_candidate(self, scene_id: str, *aliases: str) -> bool:
+        """记一条"建议落卡"的地点候选（落卡窗口 2.0，2026-09-19）。
 
-        ``aliases`` 是审计同轮给的变体名（``AuditOutput.scene_name``）。存进去是
-        为了**下一轮能被 ``_resolve_scene`` 救回**——同一个地点换个叫法（"老巷旧楼"
-        / "巷子深处的旧楼"）本该认得出来；不存就会当成新地点再注册一个（2026-09-16）。
+        审计判定"玩家要去 / 回访 / 会复用"时调这里，**不再直接写 ``scenes.json``**
+        ——场景是资产，只有玩家能在落卡窗口拍板。写资产的唯一入口是
+        ``POST /sessions/{sid}/landing/scene/{name}/file``（它走
+        ``check_assets`` + ``save_world_assets`` 那条资产写路径）。
+
+        三种情形：
+        - 已注册（``world.scenes`` 里有）→ 什么都不做。玩家可能先前在窗口里拒绝过、
+          后来又在工作台手动加了，此时不该再打扰他。
+        - 已在册且 ``dismissed`` → **只追加别名，不改 status**。× 是玩家的裁决，
+          审计无权翻案；但别名还得攒（否则变体名下一轮又被当新地点报一次）。
+        - 否则 upsert：``status=pending``，别名累积。
+
+        ``aliases`` 是历轮审计给的变体名（``AuditOutput.scene_name``）。累积不是
+        锦上添花：解析域（``_resolve_scene`` / ``resolve_destination``）只认已注册
+        场景 ∪ 本册，缺了它"巷子深处的旧楼"会与"老巷旧楼"排成两条。
         """
         scene_id = (scene_id or "").strip()
         if not scene_id or any(s.id == scene_id for s in self.world.scenes):
             return False
-        from app.core.store import write_json_atomic
-        from app.world.models import SCENE_PLACEHOLDER, Scene
-
-        # id 自己算一个别名；空串与重复名不收——审计把 location 与 scene_name
-        # 填成同一个中文名是常态（提示词就是这么要求的），不是异常。
-        names = [scene_id]
+        item = self.save.locations.get(scene_id)
+        if item is None:
+            item = LocationCandidate(first_seen=self.save.clock or "")
+            self.save.locations[scene_id] = item
+        # id 自己不必进别名表（它已经是键）；空串与重复名不收——审计把 location
+        # 与 scene_name 填成同一个中文名是常态（提示词就是这么要求的），不是异常。
         for alias in aliases:
             alias = (alias or "").strip()
-            if alias and alias not in names:
-                names.append(alias)
-
-        scene = Scene(id=scene_id, aliases=names, perceivable=SCENE_PLACEHOLDER)
-        self.world.scenes.append(scene)
-        write_json_atomic(self.save_dir / "scenes.json", [s.model_dump() for s in self.world.scenes])
+            if alias and alias != scene_id and alias not in item.aliases:
+                item.aliases.append(alias)
         return True
+
+    def location_aliases(self) -> dict[str, str]:
+        """候选册的「叫法 → 正名」映射（含每个条目的正名自己）。
+
+        给解析域用：``_resolve_scene``（纠偏）与 ``resolve_destination``（寻路）
+        都必须认得**还没落卡**的地点，否则玩家在窗口处理之前，"去老巷旧楼"既走
+        不到确定性寻路，同一个地点还会在队列里排成同义重复的两条。
+        """
+        out: dict[str, str] = {}
+        for name, item in self.save.locations.items():
+            out[name] = name
+            for alias in item.aliases:
+                out.setdefault(alias, name)
+        return out
+
+    def pending_locations(self) -> list[str]:
+        """待落卡的地点（窗口列出来的那些，按首次出现排序稳定）。"""
+        return [n for n, item in self.save.locations.items() if item.status == "pending"]
 
     def visible_to(self, viewer: str) -> list[dict[str, Any]]:
         """Narrative events visible to a viewer.

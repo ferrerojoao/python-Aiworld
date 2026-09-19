@@ -158,8 +158,10 @@ cd web && npm ci && npm test
 - `GET`/`PUT /api/sessions/{sid}/player` — 主角设定
 - `POST /api/sessions/{sid}/states/{state_id}/revoke` — 撤销一条角色状态
 - `GET /api/sessions/{sid}/unfiled/{name}/evidence` — 落卡证据（该角色在已采纳正文里的原文，只机械提取）
+- `GET /api/sessions/{sid}/unfiled/{name}/draft` — 落卡 AI 草稿（模型从**他自己的**原文总结 外貌/人格，走便宜模型；无证据不调 LLM）
 - `POST /api/sessions/{sid}/unfiled/{name}/file` — 落卡：给"未落卡的确定人物"补一张人物卡
 - `POST /api/sessions/{sid}/unfiled/{name}/discard` — 放弃落卡（退回即兴角色，出场计数一并清零）
+- `GET`/`POST /api/sessions/{sid}/locations/{name}/evidence|draft|file|discard` — 地点候选册的落卡四件事（新地点先入候选册，落表是唯一写 `scenes.json` 的路径）
 - `PUT /api/sessions/{sid}/presets` — 更新写作预设（实际落全局 `data/presets.json`）
 
 **世界工作台（会话内编辑）**
