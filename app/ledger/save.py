@@ -106,3 +106,12 @@ class SaveData(BaseModel):
     # 所以"编剧为什么认为我免疫刀剑"必须查得出来。**只留最近一次**——完整历史在
     # 事件流的记账事件里（每条状态变更都落一条，用 source_event 对得上）。
     last_state_change: dict | None = None
+    # 未落卡的确定人物（NPC 落卡机制，2026-09-19）：
+    # featured_counts = 每个名字累计"与玩家有往来且有名字"的回合数；
+    # unfiled = 已累计到阈值（≥2）因而被引擎授"键"、但世界资产里还没有他的人物卡
+    # 的名字。**键是运行态**（在这里，随世界重置清零），**卡是资产**（npcs/*.json），
+    # 两者分层：有键无卡 = 未落卡，有键有卡 = 有卡角色。
+    # featured_counts 对一个名字单调递增（累计，不要求连续）；被玩家撤销落卡或
+    # 该名字最终落了卡，就把它从两个字典里移除。
+    featured_counts: dict[str, int] = Field(default_factory=dict)
+    unfiled: list[str] = Field(default_factory=list)

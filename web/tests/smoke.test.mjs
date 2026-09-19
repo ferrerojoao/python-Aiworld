@@ -135,3 +135,100 @@ test("事件日志：标签由接口给的有效名单决定（改判私密后�
   );
   assert.match(result.text, /【私密·无知情者】（已改判）/, "空名单是私密且无人知情：\n" + result.text);
 });
+
+/* ---------- NPC 落卡（2026-09-19）：未落卡的确定人物 ---------- */
+
+const unfiledState = {
+  present_names: ["刘星", "卢克"],
+  unfiled: [
+    { name: "卢克", location: "测试场景", present: true },
+    { name: "米娅", location: "酒馆", present: false },
+    { name: "阿七", location: "", present: false },
+  ],
+};
+
+test("在场名单里分得清「有卡 / 未落卡」，并给一行入口报数", async () => {
+  const { result } = await bootApp({
+    routes: worldRoutes({ state: unfiledState }),
+    probe: `return {
+      rail: document.querySelector("#present-npcs").textContent,
+      entry: document.querySelector("#unfiled-entry").textContent,
+      hidden: document.querySelector("#unfiled-entry").hidden,
+    };`,
+  });
+
+  assert.match(result.rail, /卢克/, "未落卡者也是在场的「人」，要在名单里");
+  assert.match(result.rail, /未落卡/, "在场名单必须看得出谁还没有档案");
+  assert.equal(result.entry, "未落卡 · 3", "入口要报全量（含不在场的人）");
+  assert.equal(result.hidden, false);
+});
+
+test("没有待补档的人时入口整行不出现（空行只是噪音）", async () => {
+  const { result } = await bootApp({
+    routes: worldRoutes({ state: { present_names: ["刘星"], unfiled: [] } }),
+    probe: `return { hidden: document.querySelector("#unfiled-entry").hidden };`,
+  });
+
+  assert.equal(result.hidden, true);
+});
+
+test("抽屉「落卡」：列出含不在场者的全量名单", async () => {
+  const { result } = await bootApp({
+    routes: worldRoutes({ state: unfiledState }),
+    probe: `
+      ${clickJs("#unfiled-entry .rail-item")}
+      await new Promise((r) => setTimeout(r, 40));
+      return {
+        open: document.querySelector("#drawer").classList.contains("open"),
+        active: document.querySelector("#tab-unfiled").classList.contains("active"),
+        text: document.querySelector("#unfiled-panel").textContent,
+      };`,
+  });
+
+  assert.equal(result.open, true, "点入口应该打开抽屉");
+  assert.equal(result.active, true, "并且停在「落卡」页");
+  // 不在场的人也在——玩家离开酒馆后他还挂得住，这里是他唯一的入口。
+  assert.match(result.text, /卢克/);
+  assert.match(result.text, /在场/);
+  assert.match(result.text, /米娅/);
+  assert.match(result.text, /在酒馆/);
+  assert.match(result.text, /去向不明/);
+});
+
+test("补卡表单：原样把字段 POST 到 /file，并把体检问题说出来", async () => {
+  let posted = null;
+  const { result } = await bootApp({
+    routes: [
+      ...worldRoutes({ state: unfiledState }),
+      [
+        /\/unfiled\/.*\/file$/,
+        (u, opts) => {
+          posted = { url: u, body: JSON.parse(opts.body) };
+          return { ok: true, name: "卢克", problems: ["start_scene 不在场景表里"] };
+        },
+      ],
+    ],
+    probe: `
+      ${clickJs("#unfiled-entry .rail-item")}
+      await new Promise((r) => setTimeout(r, 30));
+      const fileBtn = [...document.querySelectorAll("#unfiled-panel button")]
+        .find((b) => b.textContent === "补卡");
+      fileBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      const boxes = document.querySelectorAll(".unfiled-form textarea");
+      boxes[0].value = "灰袍，左手有旧疤";
+      boxes[1].value = "话少";
+      const ok = [...document.querySelectorAll(".unfiled-form button")]
+        .find((b) => b.textContent === "确认落卡");
+      ok.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 60));
+      return { messages: document.querySelector("#messages").textContent };`,
+  });
+
+  assert.ok(posted, "「确认落卡」必须真的发请求");
+  assert.equal(posted.body.appearance, "灰袍，左手有旧疤");
+  assert.equal(posted.body.persona, "话少");
+  assert.equal(posted.body.has_actor, false);
+  // 体检问题与本张卡无关时也会报出来——允许半成品态存在，但它必须被看见。
+  assert.match(result.messages, /已落卡/);
+  assert.match(result.messages, /start_scene 不在场景表里/);
+});

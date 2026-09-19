@@ -1,0 +1,6 @@
+# 前端产物是"字节敏感"的：scripts/bump_frontend_version.py 的 ?v= 取文件内容哈希。
+# 工作区行尾若随 checkout 环境在 CRLF/LF 间摆动，同一份 JS 会算出两个哈希——
+# 本机 --check 绿、CI 红（2026-09-18 实际发生过，CI test 红了一整段）。
+# 锁成 LF，让字节确定，与 CI 检出结果一致。
+web/dist/**   text eol=lf
+.gitattributes text eol=lf

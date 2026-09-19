@@ -84,6 +84,11 @@ STATE_TEXT_MAX = 20  # 单条状态的字数上限（审计提议侧同时用它
 # 实际会诱导出"左小腿骨裂，走路一瘸一拐，跑不动"这种堆叠；20 字只够一个分句，
 # 配合"不写括号补注"的纪律把成因与补充全都挡在外面。
 STATE_ADD_PER_CHAR = 1  # 同一角色单回合最多新增几条（防"给同一个人一口气编一串"）
+# NPC 落卡机制（2026-09-19）：未落卡的确定人物（有键无卡）进提示词时的上限。
+# 他们**有名字但无档案**，提示词要显式说清这条边界（否则编剧会顺手给他编一段
+# 来历，下次交互就变成"事实"，与未来的正式人物卡打架）。人多了会挤占版面，
+# 所以同样按上限截断 + 显式说明"另有 N 个未列出"。
+UNFILED_CARD_CAP = 3
 # 截断按**录入顺序**（重要的往上放），与 rules.lorebook 归属条目的口径一致——
 # 不按时间排：重要的状态未必是最新的（"天生盲眼"比"今天擦伤膝盖"重要得多）。
 # 被截断时**必须显式说明**（"另有 N 条未列出"）：静默消失会让玩家困惑
@@ -403,6 +408,7 @@ def character_block(
         if player_state:
             lines.append(player_state)
     npc_lines = []
+    temp_ids: list[str] = []
     for pid in present_ids:
         if pid == player_name:
             continue  # 主角另有独立段，不重复列
@@ -417,10 +423,22 @@ def character_block(
                 if npc_state:
                     npc_lines.append(npc_state)
         else:
-            npc_lines.append(f"[{pid}]")
+            # 有键无卡：未落卡的确定人物（NPC 落卡机制，2026-09-19）。引擎认他是
+            # "人"（有名字 + 与玩家有往来），但世界资产里还没有他的档案。
+            temp_ids.append(pid)
     if npc_lines:
         lines.append("在场 NPC：")
         lines.extend(npc_lines)
+    if temp_ids:
+        shown = temp_ids[:UNFILED_CARD_CAP]
+        rest = len(temp_ids) - len(shown)
+        tail = f"（另有 {rest} 个未列出）" if rest else ""
+        lines.append("在场临时角色：" + "、".join(shown) + tail)
+        lines.append(
+            "  临时角色 = **有名字但引擎没有档案**的人：只按正文**已经写出**的事实演"
+            "（名字、身份、说过的话），不要给他补前史、来历、人际、动机或隐藏设定"
+            "——那些一旦写进正文就会被当成既成事实。"
+        )
     return lines
 
 
@@ -1111,7 +1129,8 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
             "你是 AIWorld 的世界审计：从**已采纳**的正文里结算世界副作用，并判定目标 / 退场 / 状态。",
             "只返回 JSON：",
             '{"location": "场景id", "scene_name": "", "register_scene": false,'
-            f' "participants": ["{player_name}", "朱明"], "private": false, "delta_minutes": 0,'
+            f' "participants": ["{player_name}", "朱明"], "featured": ["朱明"],'
+            ' "private": false, "delta_minutes": 0,'
             ' "npc_moves": [{"npc_id": "朱明", "location": "朱明家"}],'
             ' "clock_to": "",'
             ' "completed_goal_ids": ["达成目标id"], "lifecycle": [{"npc_id": "朱明", "status": "retired"}],'
@@ -1120,12 +1139,17 @@ def build_audit_work_order(world: WorldContent, ledger: Ledger, scene_id: str) -
             "判定规则：",
             *state_lines,
             "- location：玩家此刻所在之处；正文明确写他移动（离开 / 去别处 / 回家）才更新，否则保持原场景。",
-            "- participants（与 location 联动，二选一）：",
+            "- participants（与 location 联动，二选一）。"
+            "**口径 = 玩家本人 ∪ 在场的、有名字的角色**——没名字的布景人物"
+            "（酒保 / 伙计 / 摊主 / 路人）**一律不进名单**，戏份多少都一样：",
             "  · **没移动**：以下方在场名单为**默认基线**原样继承；只有正文明确写某人离开（走掉 / 告辞）"
-            "才移除，明确写新人到场且需记入史实才加；代词指代不清时保守保留；"
-            "摊主 / 路人等布景人物不进名单。",
-            "  · **移动了**：留在原地的人不进名单；正文里在**新场景出现并互动**的角色"
+            "才移除，明确写新人到场且需记入史实才加；代词指代不清时保守保留。",
+            "  · **移动了**：留在原地的人不进名单；正文里在**新场景出现且有名字**的角色"
             "（同行 / 被找到 / 搭话）都计入。",
+            "- featured：本轮**与玩家实际有往来、且有名字**的角色——玩家问他话、他答话、"
+            "有名字的第三方向玩家转述都算。只是\"在场景里杵着\"不算；**没名字的不收**"
+            "（没名字就无从落卡）。与 participants 的区别：在场是**位置**（可继承），"
+            "出场是**这一轮真的碰上了**（不可继承，必须由本轮正文产生）。多数回合为空。",
             "- npc_moves：正文明确写出某 NPC **离开去了别处**并写明去向 → 给 "
             "{\"npc_id\": \"中文名\", \"location\": \"去向（新地点给中文名）\"}；"
             "只说\"走了\"没说去哪 → 不给（位置不变）。只记 NPC"

@@ -224,8 +224,19 @@ class Ledger:
         return self.save.player_scene or self.world.start_scene_id()
 
     def present_at(self, scene: str) -> list[str]:
+        """在场者 = 场景里的**有档案或有键**的角色。
+
+        域 = 人物表 ∪ 未落卡的确定人物（``save.unfiled``，有键无卡，2026-09-19）。
+        后者没有人物卡，但引擎已经认定他是个"人"（有名字、与玩家有往来 ≥2 轮），
+        他出现在场景里就该被看见、被注入。**没有名字的即兴角色永远不在这个域里**
+        ——它们从不进 ``participants``，``last_location`` 里也就没有它们。
+        """
+        domain = list(self.world.npcs)
+        for name in self.save.unfiled:
+            if name and name not in self.world.npcs and name not in domain:
+                domain.append(name)
         result = []
-        for subject in self.world.npcs:
+        for subject in domain:
             event = self._probe(subject)
             if event is None:
                 continue

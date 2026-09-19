@@ -80,6 +80,14 @@ class AuditOutput(BaseModel):
     scene_name: str = Field(default="", validation_alias=AliasChoices("scene_name", "地点名", "场景名"))
     register_scene: bool = Field(default=False, validation_alias=AliasChoices("register_scene", "注册场景"))
     participants: list[str] = Field(default_factory=list, validation_alias=AliasChoices("participants", "在场者"))
+    # 出场者：本轮**与玩家有往来、且有名字**的人（玩家开口问他 / 他开口答话 /
+    # 有名字的第三方转述等实质互动都算；只是"布景里杵着"不算）。与 participants
+    # 的区别是本质的：在场是几何位置（可继承），出场是"这一轮真的碰上了"
+    # （不可继承，必须由本轮正文产生）。引擎用它给"未落卡的确定人物"计数授键。
+    featured: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("featured", "出场", "出场者"),
+    )
     private: bool = Field(default=False, validation_alias=AliasChoices("private", "私密"))
     delta_minutes: int = Field(default=0, validation_alias=AliasChoices("delta_minutes", "推进分钟", "时间推进"))
     completed_goal_ids: list[str] = Field(

@@ -19,6 +19,7 @@ from app.runtime.session import create_session, open_session
 from app.workers.drafter import run_world_draft
 from app.world.draft import blank_world_assets, check_assets, validate_assets
 from app.world.loader import check_world, save_world_assets
+from app.world.models import NpcCard
 
 router = APIRouter(prefix="/api")
 
@@ -264,6 +265,125 @@ async def update_session_world(request: Request, sid: str, body: WorldAssetData)
     return {"ok": True, "problems": problems}
 
 
+# ---------------------------------------------------------------------------
+# NPC 落卡（2026-09-19）：未落卡的确定人物 → 一张真正的人物卡
+# ---------------------------------------------------------------------------
+
+class NpcCardBody(BaseModel):
+    """落卡表单：字段全可选，没写的就留空（这位角色的档案里暂时没有这一栏）。"""
+
+    appearance: str = ""
+    persona: str = ""
+    private_note: str = ""
+    personal_secrets: str = ""
+    has_actor: bool = False
+
+
+def _world_assets_payload(session) -> dict:
+    """当前世界实例的资产形状（= ``PUT /sessions/{sid}/world`` 的 payload）。
+
+    落卡改的就是这份资产，所以走**同一条写路径**——不为"补一张卡"另开一个
+    写世界的口子（``draft.py`` 的明文纪律）。
+    """
+    world = session.world
+    return {
+        "overview": world.meta.model_dump(mode="json"),
+        "lorebook": [e.model_dump(mode="json") for e in world.lorebook],
+        "scenes": [s.model_dump(mode="json") for s in world.scenes],
+        "npcs": {nid: c.model_dump(mode="json") for nid, c in world.npcs.items()},
+        "axes": [a.model_dump(mode="json") for a in world.axes],
+    }
+
+
+def _unfiled_name(session, name: str) -> str:
+    name = (name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="需要一个名字")
+    if name not in session.ledger.save.unfiled:
+        raise HTTPException(status_code=404, detail=f"「{name}」不在未落卡名单里")
+    return name
+
+
+@router.get("/sessions/{sid}/unfiled/{name}/evidence")
+async def unfiled_evidence(request: Request, sid: str, name: str):
+    """落卡提案的**证据**：这位角色在已采纳正文里被写出过什么。
+
+    只做**机械提取**（相关事件原文），一个字都不生成——"起草即提取，不编"。
+    appearance / persona 那些栏位留给作者填：引擎替人编来历，正是本项目明确
+    拒绝的那条路（编出来的内容会伪装成事实，从此再也分不清）。
+    """
+    session = _get_session(request, sid)
+    name = _unfiled_name(session, name)
+    ev = session.ledger.where_is(name) or {}
+    events = [
+        {
+            "id": e["id"],
+            "at": e.get("at", ""),
+            "location": e.get("location") or "",
+            "summary": e.get("summary", ""),
+            "body": e.get("body", ""),
+        }
+        for e in session.ledger.by_participant.get(name, [])
+    ][-8:]  # 最近 8 条够看清"正文已经写出什么"；更早的看事件日志
+    return {
+        "name": name,
+        "location": ev.get("location") or "",
+        "last_seen": ev.get("at") or "",
+        "events": events,
+    }
+
+
+@router.post("/sessions/{sid}/unfiled/{name}/file")
+async def file_unfiled_npc(request: Request, sid: str, name: str, body: NpcCardBody):
+    """落卡：把"未落卡的确定人物"变成世界资产里的一张人物卡。
+
+    闸门与写路径都复用资产编辑那一套（``check_assets`` + ``save_world_assets``）,
+    所以落卡不新增第二条真相源。落成之后**键交还给卡**：名字从 ``unfiled`` 与
+    ``featured_counts`` 里移除——他从此是有卡角色，不再需要计数。
+    """
+    session = _get_session(request, sid)
+    name = _unfiled_name(session, name)
+    if name in session.world.npcs:
+        raise HTTPException(status_code=400, detail=f"人物表里已有「{name}」")
+    payload = _world_assets_payload(session)
+    payload["npcs"][name] = NpcCard(
+        id=name,
+        appearance=body.appearance,
+        persona=body.persona,
+        private_note=body.private_note or None,
+        personal_secrets=body.personal_secrets or None,
+        has_actor=body.has_actor,
+    ).model_dump(mode="json")
+    try:
+        problems = check_assets(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    save_world_assets(session.world_dir, payload)
+    session.reload_world()
+    save = session.ledger.save
+    if name in save.unfiled:
+        save.unfiled.remove(name)
+    save.featured_counts.pop(name, None)
+    session.ledger.persist_save()
+    return {"ok": True, "name": name, "problems": problems}
+
+
+@router.post("/sessions/{sid}/unfiled/{name}/discard")
+async def discard_unfiled_npc(request: Request, sid: str, name: str):
+    """放弃落卡（未落卡名单里的 ×）：他退回去当即兴角色。
+
+    ⚠️ **必须同时清零出场计数**——否则他下一轮一出场，计数仍 ≥2，立刻重新获键，
+    撤销形同无效（与"同一个结束不能记两次"同源）。
+    """
+    session = _get_session(request, sid)
+    name = _unfiled_name(session, name)
+    save = session.ledger.save
+    save.unfiled.remove(name)
+    save.featured_counts.pop(name, None)
+    session.ledger.persist_save()
+    return {"ok": True, "name": name}
+
+
 @router.get("/sessions/{sid}/world/check")
 async def check_session_world(request: Request, sid: str):
     """体检当前世界。世界=存档 1:1 后与 ``GET /worlds/{id}/check`` 是同一份
@@ -398,6 +518,19 @@ async def get_state(request: Request, sid: str):
         "recent_scenes": recent,
         "present": present_ids,
         "present_names": present_ids,
+        # 未落卡的确定人物（NPC 落卡机制，2026-09-19）：有键无卡——引擎已经
+        # 认他是"人"（有名字 + 与玩家有往来 ≥2 轮），但世界资产里还没有他的
+        # 人物档案。`present` 判定沿用同一份 present_ids，所以左栏可以直接用
+        # 它对在场者打「未落卡」标记；`location` 支撑"我离开酒馆后他还挂在哪"
+        # 这个全局入口（玩家不点落卡就继续走，他的名字不能就此消失）。
+        "unfiled": [
+            {
+                "name": name,
+                "location": (session.ledger.where_is(name) or {}).get("location") or "",
+                "present": name in present_ids,
+            }
+            for name in session.ledger.save.unfiled
+        ],
         "goals": goals,
         "preset": request.app.state.global_preset.model_dump(),
         "pending": [
@@ -739,6 +872,10 @@ async def reset_session(request: Request, sid: str):
     # 全对不上）——留着只会误导顶栏时钟的 hover，一并清掉（2026-09-14）。
     save.last_settlement = None
     save.last_state_change = None
+    # 未落卡者与其出场计数是**本局的运行态**（键），随世界重置清零——
+    # 人物卡是资产、留在工作台不动（2026-09-19）。
+    save.featured_counts = {}
+    save.unfiled = []
     session.ledger.events = []
     session.ledger.narratives = []
     session.ledger.by_id = {}

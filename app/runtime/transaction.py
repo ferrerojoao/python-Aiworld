@@ -15,6 +15,12 @@ from app.ledger.save import EntityRuntime, StateItem
 # 不截断会静默漂移。24 小时——睡觉（480）过半，"睡两天"这类要被截到一天。
 AUDIT_DELTA_CAP_MINUTES = 1440
 
+# NPC 落卡机制（2026-09-19）：一个**有名字**的角色与玩家有往来累计到这么多轮，
+# 引擎就认他为"确定人物"并授**键**（进 save.unfiled，等玩家落卡）。
+# 键是运行态、卡是资产；没名字的即兴角色永远不计数（审计侧就不收没名字的出场）。
+# 2 的来源：一轮擦肩而过说明不了什么，"问了名字还接着互动"才算数（与玩家敲定）。
+UNFILED_KEY_THRESHOLD = 2
+
 
 def _parse_clock(value: str | None) -> dt.datetime | None:
     """宽松解析存档时钟；解析失败返回 None（由调用方决定拒绝还是兜底）。
@@ -397,6 +403,10 @@ class Transaction:
                         flush=False,
                     )
 
+        # NPC 落卡机制（2026-09-19）：累计出场、授键。放在目标/退场结算之后——
+        # 退场者不该再被授键，所以要先让 lifecycle 落地。
+        self._apply_featured(audit_out, player)
+
         # 角色状态（REQ 〇章；Step 2，2026-09-14）：到期清算 + 审计提议的增删。
         # 与时间结算一样是"采纳这一刻"的一次性动作，整批结果留痕在
         # save.last_state_change（长期事实误加的代价高，必须查得出原因）。
@@ -420,6 +430,46 @@ class Transaction:
 
     def discard_turn(self, turn_id: str) -> None:
         self.candidates.delete_turn(turn_id)
+
+    # ------------------------------------------------------------------
+    # NPC 落卡机制（2026-09-19）
+    # ------------------------------------------------------------------
+
+    def _apply_featured(self, audit_out, player: str) -> None:
+        """累计"出场"轮数；到阈值即授**键**（进 ``save.unfiled``）。
+
+        边界（与玩家敲定，唯一口径）：**有名字 + 与玩家有往来累计 ≥2 轮** →
+        确定人物。没名字的即兴角色（酒保 / 伙计）审计侧就不收，这里天然不计数
+        ——"没名字就无从落卡"，所以它们永远只是即兴角色。
+
+        键与卡分层：**键是运行态**（这里，随世界重置清零），**卡是资产**
+        （``npcs/*.json``）。有键无卡 = 未落卡，等玩家确认落卡。
+
+        计数**累计**（不要求连续），一旦授键就保持——直到落卡（``land_card``
+        把名字从两处移除）或玩家撤销。已落卡（人物表里有卡）或已退场的不再进
+        ``unfiled``：前者已有档案，后者不该再被授键。
+        """
+        if audit_out is None:
+            return
+        save = self.ledger.save
+        for name in audit_out.featured or []:
+            name = str(name or "").strip()
+            if not name or name == player:
+                continue  # 主角自己不算"出场角色"
+            if name in self.ledger.world.npcs:
+                save.featured_counts.pop(name, None)
+                if name in save.unfiled:  # 中途补了卡 → 键作废
+                    save.unfiled.remove(name)
+                continue
+            entity = save.entities.get(name)
+            if entity and entity.lifecycle == "retired":
+                save.featured_counts.pop(name, None)
+                if name in save.unfiled:
+                    save.unfiled.remove(name)
+                continue
+            save.featured_counts[name] = save.featured_counts.get(name, 0) + 1
+            if save.featured_counts[name] >= UNFILED_KEY_THRESHOLD and name not in save.unfiled:
+                save.unfiled.append(name)
 
     # ------------------------------------------------------------------
     # 角色状态 · 长期事实（REQ 〇章；Step 2，2026-09-14）

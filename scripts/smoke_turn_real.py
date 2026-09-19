@@ -62,6 +62,13 @@ async def main() -> None:
         goals = session.ledger.save.goals
         print()
         print("审计后事件数:", len(session.ledger.narratives))
+        # 在场 / 出场口径（2026-09-19）：participants 是审计给的在场名单（不该出现
+        # 没名字的布景人物），featured 是"本轮与玩家有往来且有名字"的人——它累计
+        # 到 UNFILED_KEY_THRESHOLD 轮就授键，进 save.unfiled（有键无卡 = 未落卡）。
+        ev = session.ledger.narratives[-1]
+        print("采纳事件 participants:", ev.get("participants"))
+        print("出场计数 featured_counts:", session.ledger.save.featured_counts)
+        print("未落卡（有键无卡）:", session.ledger.save.unfiled)
         print("剧情目标:", [(g.text[:30], g.status) for g in goals] or "（空）")
         print("clock after:", session.ledger.save.clock)
         print("结算留痕:", session.ledger.save.last_settlement)

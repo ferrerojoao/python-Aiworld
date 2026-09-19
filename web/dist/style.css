@@ -1533,6 +1533,87 @@ body.light .rail-item.current {
   margin-top: 4px;
 }
 
+/* ---------- 未落卡的确定人物（NPC 落卡机制，2026-09-19） ---------- */
+
+/* 左栏的「未落卡」行与在场名单上的标记：他已经是"人"（有名字、挂得住），但引擎
+   还没有他的档案——所以这一行是**可点的**（点开补卡），与在场名单默认不可点区分。
+   选择器带上 #present-npcs 才压得过 "#present-npcs .rail-item { cursor: default }"。 */
+#present-npcs .rail-item.rail-temp,
+#unfiled-entry .rail-item {
+  cursor: pointer;
+}
+
+#unfiled-entry .rail-item,
+#present-npcs .rail-temp {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--warn);
+}
+
+#unfiled-entry .rail-item:hover,
+#present-npcs .rail-temp:hover {
+  background: var(--hover);
+}
+
+/* 抽屉「落卡」：全量名单（含不在场者），逐条可补卡 / 放弃。 */
+.unfiled-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.unfiled-actions button {
+  padding: 3px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+.unfiled-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.unfiled-form label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+.unfiled-form textarea {
+  width: 100%;
+  resize: vertical;
+  font-size: 13px;
+}
+
+.unfiled-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.unfiled-evidence {
+  border-left: 2px solid var(--border);
+  padding-left: 8px;
+  margin: 4px 0 8px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.unfiled-ev {
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 6px;
+  overflow-wrap: anywhere;
+}
+
+.unfiled-ev-at {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 /* ---------- 移动端 ---------- */
 @media (max-width: 720px) {
   #app {
