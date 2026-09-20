@@ -57,7 +57,8 @@ async def run_world_draft(
     world_id: str,
     name: str = "",
     player_name: str = "",
-    model: str = "fake",
+    model: str = "",
+    worker: str = "story",
     temperature: float = 1.0,
 ) -> tuple[WorldDraft, dict, list[str]]:
     """一句前提 → (草稿, 资产形状, 校验问题)。
@@ -69,7 +70,7 @@ async def run_world_draft(
         {"role": "user", "content": _user_prompt(premise, name, player_name)},
     ]
     data = await llm.complete_json(
-        messages, WorldDraft, model=model, temperature=temperature
+        messages, WorldDraft, model=model, temperature=temperature, worker=worker
     )
     draft = WorldDraft.model_validate(data)
     assets = draft_to_assets(draft, world_id, name=name, player_name=player_name)
@@ -90,7 +91,7 @@ async def run_world_draft(
         },
     ]
     data = await llm.complete_json(
-        retry_messages, WorldDraft, model=model, temperature=temperature
+        retry_messages, WorldDraft, model=model, temperature=temperature, worker=worker
     )
     draft = WorldDraft.model_validate(data)
     assets = draft_to_assets(draft, world_id, name=name, player_name=player_name)

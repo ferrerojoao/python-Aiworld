@@ -51,11 +51,16 @@ class _SlowFirstCallLLM(FakeLLM):
         self._delay = delay
         self.call_count = 0
 
-    async def complete_json(self, messages, schema, *, model="fake", temperature=0.2):
+    async def complete_json(self, messages, schema, *, model="fake", temperature=0.2, worker=""):
+        # worker（角色 → 主 / 辅出口）必须原样转发：TraceRecorder 现在总会带上它，
+        # 本类 override 少了这个参数就会 TypeError，而报错形态是"回合失败"、
+        # 不是"签名不对"——2026-09-20 拆出口时实测踩到。
         self.call_count += 1
         if self.call_count == 1:
             await asyncio.sleep(self._delay)
-        return await super().complete_json(messages, schema, model=model, temperature=temperature)
+        return await super().complete_json(
+            messages, schema, model=model, temperature=temperature, worker=worker
+        )
 
 
 def _free_port() -> int:

@@ -17,7 +17,7 @@ from app.config import (
     get_settings,
     load_settings_overrides,
 )
-from app.core.llm import LLMGateway
+from app.core.llm import LLMRouter
 from app.core.presets import load_global_preset
 from app.runtime.session import GameSession, open_session
 from app.runtime.turn import TurnRunner
@@ -53,13 +53,9 @@ def create_app(settings: Settings | None = None, llm=None) -> FastAPI:
         if llm is not None:
             app.state.llm = llm
         else:
-            app.state.llm = LLMGateway(
-                base_url=settings.llm_base_url,
-                api_key=settings.llm_api_key,
-                max_concurrency=4,
-                timeout=settings.llm_timeout_seconds,
-                reasoning_effort=settings.reasoning_effort,
-            )
+            # 主 / 辅两个出口（2026-09-20）：辅侧没配 base_url 时只会建一个网关，
+            # 与拆分之前完全一致。装配口径见 app/core/llm.LLMRouter。
+            app.state.llm = LLMRouter(settings)
 
         def factory(session: GameSession) -> TurnRunner:
             return TurnRunner(session, app.state.llm, settings, preset=app.state.global_preset)

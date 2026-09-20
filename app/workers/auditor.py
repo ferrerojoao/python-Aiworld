@@ -13,7 +13,8 @@ async def run_audit(
     prose: str,
     player_input: str,
     *,
-    model: str = "fake",
+    model: str = "",
+    worker: str = "audit",
     temperature: float = 0.2,
 ) -> AuditOutput:
     """Audit worker: infers world side effects from an adopted prose and
@@ -37,5 +38,6 @@ async def run_audit(
         AuditOutput,
         model=model,
         temperature=temperature,
+        worker=worker,
     )
     return AuditOutput.model_validate(data)

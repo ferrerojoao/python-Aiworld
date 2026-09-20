@@ -109,16 +109,26 @@
       <div id="tab-settings" class="tab-panel">
         <h3>系统设置</h3>
 
-        <h4>模型接口</h4>
+        <h4>主模型接口（编剧 / 导演 / Actor）</h4>
         <label>API Base URL</label>
         <input id="setting-api-url" type="text" placeholder="http://127.0.0.1:11434/v1" />
         <label>API Key</label>
         <input id="setting-api-key" type="password" placeholder="sk-..." />
-        <label>主模型（编剧 / 导演 / Actor）</label>
+        <label>模型名</label>
         <input id="setting-model-main" type="text" placeholder="qwen2.5:7b" />
-        <label>辅助模型（质检 / 审计 / 分类）</label>
+
+        <h4>辅助模型接口（质检 / 审计 / 分类 / 落卡草稿）</h4>
+        <label>API Base URL</label>
+        <input id="setting-cheap-url" type="text" placeholder="留空 = 跟随主模型接口" />
+        <label>API Key</label>
+        <input id="setting-cheap-key" type="password" placeholder="留空 = 跟随主模型接口" />
+        <label>模型名</label>
         <input id="setting-model-cheap" type="text" placeholder="qwen2.5:7b" />
-        <label>推理等级（自动 = 不指定）</label>
+        <p class="setting-note">
+          两个接口各自一套地址与密钥。Base URL 留空时辅助模型完全跟随主模型那一套（密钥也跟随）；
+          两边可以完全不同——主模型走付费 API、辅助模型走本地 ollama，是最常见的配法。
+        </p>
+        <label>推理等级（自动 = 不指定；两个接口共用）</label>
         <select id="setting-reasoning">
           <option value="auto">自动</option>
           <option value="low">低（low）</option>
@@ -223,6 +233,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=fb46b205"></script>
+  <script src="app.js?v=91d9ce6e"></script>
 </body>
 </html>

@@ -1184,7 +1184,9 @@ function debugEntryCard(entry, seq) {
   const label = entry.label || "未标注调用";
   const ms = Number(entry.duration_ms);
   const durText = durationLabel(ms);
-  const meta = [entry.type, entry.model, `temp ${entry.temperature}`, durText ? `耗时 ${durText}` : ""]
+  // entry.endpoint = 这一笔实际敲的是主出口还是辅出口（后端按角色判定，只给
+  // 主机名、不含 key）。两个接口分开配之后，日志里没这一项就查不出配错的调用。
+  const meta = [entry.type, entry.model, entry.endpoint, `temp ${entry.temperature}`, durText ? `耗时 ${durText}` : ""]
     .filter(Boolean)
     .map(esc)
     .join(" · ");
@@ -1397,6 +1399,8 @@ async function loadSettings() {
   const data = await api(`/api/settings`);
   $("#setting-api-url").value = data.llm_base_url || "";
   $("#setting-api-key").value = data.llm_api_key || "";
+  $("#setting-cheap-url").value = data.cheap_base_url || "";
+  $("#setting-cheap-key").value = data.cheap_api_key || "";
   $("#setting-model-main").value = data.model_main || "";
   $("#setting-model-cheap").value = data.model_cheap || "";
   $("#setting-reasoning").value = data.reasoning_effort || "auto";
@@ -1433,6 +1437,9 @@ async function saveSettings() {
     body: JSON.stringify({
       llm_base_url: $("#setting-api-url").value,
       llm_api_key: $("#setting-api-key").value,
+      // 辅助接口：原样送空串 = 跟随主接口（后端只 strip base url，空即开关）。
+      cheap_base_url: $("#setting-cheap-url").value,
+      cheap_api_key: $("#setting-cheap-key").value,
       model_main: $("#setting-model-main").value,
       model_cheap: $("#setting-model-cheap").value,
       reasoning_effort: $("#setting-reasoning").value,

@@ -72,7 +72,11 @@ def extract_json(text: str) -> dict[str, Any]:
 
 
 class LLMGateway:
-    """OpenAI-compatible chat completions gateway with JSON fallback."""
+    """OpenAI-compatible chat completions gateway with JSON fallback.
+
+    一个实例 = 一个出口（构造时定死 base_url / api_key）。要**两个出口**用
+    ``LLMRouter``，别在这里加第二套地址——网关的价值就是"它只管一个门"。
+    """
 
     def __init__(
         self,
@@ -95,6 +99,9 @@ class LLMGateway:
             timeout=Timeout(connect=10, read=timeout, write=30, pool=10),
             max_retries=0,
         )
+        # 留一份出口地址：LLMRouter 按 (base_url, api_key) 去重、调试卡片也要显示。
+        # 只存 base_url，**不存 api_key**——它可能被展示出去。
+        self.base_url = base_url
         self._sem = asyncio.Semaphore(max_concurrency)
         self.reasoning_effort = reasoning_effort.lower()
         self.usage = {
@@ -127,7 +134,13 @@ class LLMGateway:
         *,
         model: str,
         temperature: float = 0.2,
+        worker: str = "",
     ) -> dict[str, Any]:
+        # worker（角色）只有 LLMRouter 需要用：本类的出口在构造时就定死了。
+        # 收下它是为了让网关 / 路由 / 假 LLM / TraceRecorder 四个实现**签名一致**
+        # ——TraceRecorder 要把参数原样转发给里面那层，签名不一致就得靠 hasattr
+        # 嗅探，那种鸭子类型一改就静默失效。
+        del worker
         last_error: Exception | None = None
         last_raw: str | None = None
         use_response_format = True
@@ -207,7 +220,9 @@ class LLMGateway:
         *,
         model: str,
         temperature: float = 0.7,
+        worker: str = "",
     ) -> str:
+        del worker  # 见 complete_json：出口在构造时定死，这里只为签名一致
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -230,6 +245,92 @@ class LLMGateway:
         return response.choices[0].message.content or ""
 
 
+class LLMRouter:
+    """按**角色**把调用分到主 / 辅两个出口（各自一套 base_url / api_key）。
+
+    为什么按角色分、而不是按模型名分：主辅两侧默认就是同一个模型名
+    （``qwen2.5:7b``），按名字根本分不出该敲哪个门——用户完全可能配
+    "同名模型 + 两个 endpoint"（如 `deepseek-chat` 走官方、同名的走本地 vLLM）。
+    角色是引擎本来就持有的事实（``Settings.resolved_model`` 用的就是它），
+    于是它**同时决定模型名与出口**：一处判定、两个结果，不会各自漂。
+
+    辅侧没配 ``cheap_base_url`` 时只会有一个网关，行为与本类出现之前完全一致
+    （单出口是默认态，不是特例）。
+
+    ⚠️ 网关**懒建**：只在真正被用到时才 ``AsyncOpenAI(...)``。没配辅助出口的
+    部署不会凭空多出一个 client / 连接池。
+    """
+
+    def __init__(self, settings, max_concurrency: int = 4):
+        self._settings = settings
+        self._max_concurrency = max_concurrency
+        # 按 (base_url, api_key) 去重：两侧填了同一套地址就只有一个网关，
+        # 也就只有一份 usage / 一个连接池，不会把同一条链路算两遍。
+        self._gateways: dict[tuple[str, str], LLMGateway] = {}
+
+    def gateway_for(self, worker: str = "") -> LLMGateway:
+        key = self._settings.endpoint_for(worker)
+        gateway = self._gateways.get(key)
+        if gateway is None:
+            gateway = LLMGateway(
+                base_url=key[0],
+                api_key=key[1],
+                max_concurrency=self._max_concurrency,
+                timeout=self._settings.llm_timeout_seconds,
+                reasoning_effort=self._settings.reasoning_effort,
+            )
+            self._gateways[key] = gateway
+        return gateway
+
+    def resolve(self, worker: str) -> tuple[str, str]:
+        """worker → (模型名, 出口标签)。装配点与调试卡片共用这一份判定。"""
+        return self._settings.resolved_model(worker), self._settings.endpoint_label(worker)
+
+    def get_usage(self) -> dict[str, int]:
+        """两个出口的用量**相加**：设置页只有一个"总计"，切开会让人以为漏算。"""
+        total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "calls": 0}
+        for gateway in self._gateways.values():
+            for key, value in gateway.get_usage().items():
+                total[key] = total.get(key, 0) + value
+        return total
+
+    async def complete_json(
+        self,
+        messages: list[dict[str, str]],
+        schema: type[BaseModel],
+        *,
+        model: str = "",
+        temperature: float = 0.2,
+        worker: str = "",
+    ) -> dict[str, Any]:
+        # model 留空 = 由角色推（调用方只报角色，模型名与出口同源）；显式给了
+        # 就以显式为准（测试与个例需要钉死某个模型名）。
+        gateway = self.gateway_for(worker)
+        return await gateway.complete_json(
+            messages,
+            schema,
+            model=model or self._settings.resolved_model(worker),
+            temperature=temperature,
+            worker=worker,
+        )
+
+    async def complete_text(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str = "",
+        temperature: float = 0.7,
+        worker: str = "",
+    ) -> str:
+        gateway = self.gateway_for(worker)
+        return await gateway.complete_text(
+            messages,
+            model=model or self._settings.resolved_model(worker),
+            temperature=temperature,
+            worker=worker,
+        )
+
+
 class FakeLLM:
     """Scripted LLM for offline tests and demos."""
 
@@ -246,8 +347,8 @@ class FakeLLM:
     def get_usage(self) -> dict[str, int]:
         return dict(self.usage)
 
-    async def complete_json(self, messages, schema, *, model="fake", temperature=0.2):
-        self.calls.append({"kind": "json", "messages": messages, "model": model})
+    async def complete_json(self, messages, schema, *, model="fake", temperature=0.2, worker=""):
+        self.calls.append({"kind": "json", "messages": messages, "model": model, "worker": worker})
         self.usage["calls"] += 1
         # Match by a simple key from the last user/system content.
         key = self._key(messages)
@@ -257,8 +358,8 @@ class FakeLLM:
         obj = schema.model_validate(data)
         return obj.model_dump()
 
-    async def complete_text(self, messages, *, model="fake", temperature=0.7):
-        self.calls.append({"kind": "text", "messages": messages, "model": model})
+    async def complete_text(self, messages, *, model="fake", temperature=0.7, worker=""):
+        self.calls.append({"kind": "text", "messages": messages, "model": model, "worker": worker})
         self.usage["calls"] += 1
         key = self._key(messages)
         text = self.responses.get(key)

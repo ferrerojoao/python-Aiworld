@@ -57,6 +57,15 @@ AIWORLD_MODEL_MAIN=qwen2.5:7b
 AIWORLD_MODEL_CHEAP=qwen2.5:7b
 ```
 
+主模型（编剧 / 导演 / Actor）与辅助模型（质检 / 审计 / 分类 / 落卡草稿）**各有一套接口**：加两行就能让辅助模型走另一个网关，不填则完全跟随主模型那一套。
+
+```bash
+AIWORLD_CHEAP_BASE_URL=https://api.deepseek.com/v1
+AIWORLD_CHEAP_API_KEY=sk-...
+```
+
+这两项也能在界面「设置 → 辅助模型接口」里改（会存进 `data/settings.json`，重启不丢）。
+
 然后跑冒烟测试：
 
 ```bash
@@ -180,7 +189,7 @@ cd web && npm ci && npm test
 **全局**
 
 - `GET`/`PUT /api/presets` — 全局写作预设（落 `data/presets.json`）
-- `GET`/`PUT /api/settings` — 系统设置（API/模型/注入上限，落 `data/settings.json`）
+- `GET`/`PUT /api/settings` — 系统设置（主 / 辅助两套模型接口、注入上限、质检开关，落 `data/settings.json`）
 - `GET /api/settings/usage` — Token 统计
 
 ## 目录

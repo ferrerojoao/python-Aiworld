@@ -619,10 +619,13 @@ Candidate（候选快照，落盘到 candidates/；采纳时由 Transaction 落�
 | NPC Actor | 主模型/次档 | 0.8 | 深抉择 +1 | 本人隔离工作单 | 决策块 |
 | 质检员 | 辅助模型 | 0.2 | 每回合 1 | 初稿 + 受限参照区（§5.6） | {status, prose, issues} |
 | 世界审计 | 辅助模型 | 0.2 | 采纳时提交后结算 | 本回合落账事件 + 相关历史 | 结构性结果 |
+| 落卡草稿 | 辅助模型 | 0.3 | 点开待落卡条目时 1 | 该主体自己的已采纳正文（最多 8 条） | 外貌/人格 或 场景描述 |
+
+> **档位 = 角色（worker）**：档位不只决定模型名，还决定**出口**（敲主还是辅那套 base_url，§9）。角色名单只有一份：`config.AUX_WORKERS = {qc, audit, classify, landing}`。
 
 > **合并决策（2026-09-05 拍板）**：导演与说书人合并为单一"编剧" agent——决策和文字一次调用完成，成本与延迟约减半。全知信息直接接触文字笔，泄漏防线转移到质检参照区（§5.6），Actor 深抉择仍走物理隔离（两段式）。原"动机层纪律"随之简化：编剧的幕后判断是瞬时中间产物，不设独立字段承载。
 >
-> **模型数量**：v1 默认只需要 **1~2 个模型**：编剧 / Actor 可共用“主模型”，质检 / 审计可共用“辅助模型”；甚至可以全部指向同一个本地模型。配置里未指定的档位自动回退到默认主模型或默认辅助模型。（原设计的"意图分类 L1"档位从未落地，已从档位表移除。）
+> **模型数量**：v1 默认只需要 **1~2 个模型**：编剧 / Actor 可共用“主模型”，质检 / 审计 / 落卡草稿可共用“辅助模型”；甚至可以全部指向同一个本地模型（那就连出口也共用一套）。配置里未指定的档位自动回退到默认主模型或默认辅助模型。（原设计的"意图分类 L1"档位从未落地，已从档位表移除。）
 
 ### 5.3 编剧（workers/writer.py）
 
@@ -825,20 +828,31 @@ scope  = 当前场景可感知 ∪ 在场实体 ∪ 对话对象 ∪ 关键历�
 ## 9. LLM 网关与模型档位（core/llm.py）
 
 ```python
-class LLMGateway:
-    def __init__(self, cfg): self._sem = asyncio.Semaphore(4)
-    async def complete_json(self, messages, schema, *, model, temperature) -> dict
-    async def complete_text(self, messages, *, model, temperature) -> str
+class LLMGateway:                     # 一个实例 = 一个出口（构造时定死 base_url / key）
+    async def complete_json(self, messages, schema, *, model, temperature, worker="") -> dict
+    async def complete_text(self, messages, *, model, temperature, worker="") -> str
+
+class LLMRouter:                      # 按**角色**把调用分到主 / 辅两个出口（2026-09-20）
+    def gateway_for(self, worker) -> LLMGateway     # 懒建 + 按 (base_url, key) 去重
+    def resolve(self, worker) -> tuple[str, str]    # (模型名, 出口标签)，装配点与调试卡片共用
+    def get_usage(self) -> dict                     # 两个出口**相加**
 ```
 
 - OpenAI 兼容，`base_url/model/key` 按档位可配；`complete_json` 优先走 JSON schema / structured output，Pydantic 校验 + 显式拒空 `{}` + 失败重试 2 次。
+- **两个出口（2026-09-20）**：主模型与辅助模型**各有一套 base_url / api_key**。此前两档共用一个 `AsyncOpenAI`，想"正文用付费 API、辅助用本地 ollama"（或反过来）做不到。
+  - **按角色分，不按模型名分**：主辅两侧默认就是同一个模型名（`qwen2.5:7b`），按名字分不出该敲哪个门——"同名模型 + 两个 endpoint"（官方 vs 本地 vLLM）是完全合理的配法。角色是引擎本来就持有的事实，于是它**同时决定模型名与出口**：一处判定、两个结果，不会各自漂。角色名单只有一份（`config.AUX_WORKERS = {qc, audit, classify, landing}`），`resolved_model` 与 `endpoint_for` 都读它。
+  - **调用点只报角色**：`worker` 从调用点 → 工位函数（每个工位声明自己的默认角色，如 `run_writer(worker="story")`）→ 网关。`model=` 仍可显式给（测试与个例要钉死模型名时），留空则由角色推。四个实现（`LLMGateway` / `LLMRouter` / `FakeLLM` / `TraceRecorder`）**签名必须一致**——`TraceRecorder` 要原样转发参数，签名不一致就得靠 `hasattr` 嗅探，那种鸭子类型一改就静默失效。
+  - **辅侧留空 = 跟随主侧**（`cheap_base_url` 为空即回落，且 base_url 与 api_key **成对**回落）：只填地址不填密钥的用法不存在，分开回落只会造出"新网关 + 旧 key"这种静默生效的半配置。默认态因此仍是单出口，与拆分之前逐字节等价。
+  - **网关懒建**：没配辅助出口的部署不会凭空多一个 client / 连接池；两侧填同一套地址则按 `(base_url, api_key)` 去重成**一个**网关，用量只算一遍。
+  - **出口必须在日志里看得见**：`TraceRecorder` 的 entry 带 `worker` 与 `endpoint`（形如 `辅 · 127.0.0.1:11434`，**只给主机、绝不含 key**），前端调试卡片 meta 行显示出来。两个接口分开配之后，这是唯一能查出"这一笔到底敲了哪个门"的地方——配错时模型会照常回话，只是回的另一个人。
+  - 覆盖情况：**手工实测通过**（用户实测，2026-09-20）；自动化的"路由 + 用量"断言尚未补（当时按用户要求只同步文档）。
 - **结构化输出容错（必做）**：当模型不支持 JSON schema、连续失败或返回非法 JSON 时，降级为“提示词要求 JSON + 正则/起止标记抽取”，再交 Pydantic 校验；仍失败则返回用户可见错误，并记录原始响应供排查。禁止把非法 JSON 静默当作空结果。
 - `enable_thinking=False` 作为配置项（推理模型默认关思维链省 token）。
 - 每调用记结构化日志：`trace_id / turn_id / candidate_id / worker / model / prompt_tokens / completion_tokens / ts`，供成本核查与回合排错。
 - **超时与重试必须可预测（2026-09-11）**：三层乘法（`complete_json` 外层 3 次 × SDK 隐形 3 次 × 120s）会让一次失败拖到十几分钟；且 `except Exception` 全捕获会把 404（模型名写错）也白等重试。规则：① `AsyncOpenAI(max_retries=0)` 关掉 SDK 自带重试——重试策略只由网关单点决定，SDK 的隐形重试是不可预测的乘数；② 分级超时 `Timeout(connect=10, read=LLM_TIMEOUT_SECONDS, write=30, pool=10)`，read 取 `AIWORLD_LLM_TIMEOUT_SECONDS`（默认 **90**，2026-09-11 由 120 下调）；③ 错误分流：超时 / 连接失败 / 429 / 5xx → 退避 **1s、2s** 重试；400 / 401 / 403 / 404 / 422 → 立即抛（不可重试，模型原文随异常带出，不再浪费后续尝试）；④ **结构降级优先于 fatal 判定**：`json_object` / `reasoning_effort` 被网关拒绝时回的也是 400，必须先走降级路径，否则会被误判成不可重试而直接放弃；⑤ 本地解析 / Pydantic 校验失败（`extract_json` 与 `ValidationError` 都是 `ValueError`）不算 HTTP 错误，带原文反馈重试；⑥ 外层尝试上限抽为 `_MAX_ATTEMPTS = 3`（未下调）。
   - **实现坑（必须记住）**：openai SDK 内部 HTTP 库是 **httpx2**（独立包，与 httpx 0.28 是两个库）。传普通 `httpx.Timeout(...)` 构造 `AsyncOpenAI` **不报错**、`client.timeout` 也读得出来，但真正发请求时才抛 `TypeError: unhashable type: 'Timeout'`——只有实跑才炸得出来。必须用 SDK 导出的 `openai.Timeout`（实测 `openai.Timeout is httpx2.Timeout == True`）。
   - **调用耗时入 trace（同日）**：`TraceRecorder` 每条 entry 带 `started_at` / `duration_ms`，用 `try/except/else/finally` 保证失败的那一笔也记录（卡住的调用恰恰最需要看耗时）；前端调试卡片 meta 行显示「耗时 1.2s」，≥30s 打黄色「慢」标签（`--warn` 主题变量，明暗两套）。
-- 模型档位表（config.py + .env 覆盖）：编剧 / Actor / 质检 / 审计四档，各自 model + temperature（§5.2）；未配置档位回退到默认主模型 / 默认辅助模型，通常 1~2 个模型即可。
+- 模型档位表（config.py + .env 覆盖）：编剧 / Actor / 质检 / 审计四档，各自 model + temperature（§5.2）；未配置档位回退到默认主模型 / 默认辅助模型，通常 1~2 个模型即可。**出口**（敲哪个 base_url）与模型名分开配：辅侧一套独立地址（见上「两个出口」）。
 - **v1 无向量检索**：召回/切片全部结构化查询 + 线性扫（几万条内 <10ms）。二期升级 = 事件流叠语义索引（embedding 落盘、启动重建），对内容包与存档结构零侵入；中文预留 bge 系接口。
 
 ---
@@ -878,7 +892,7 @@ GET    /api/sessions/{sid}/world/export     # 导出资产包 = 纯世界资产�
 POST   /api/sessions/{sid}/world/import     # **导入为新世界**：zip 带 world.json → 落 content/<id>/（重名自动加时间戳），不改当前世界（2026-09-13）
 GET    /api/sessions/{sid}/export           # 导出完整备份（世界资产 + save.json + events.jsonl，候选除外；换机/复盘）
 POST   /api/saves/import                    # 导入完整备份 → 落 content/<world_id>/ 本身；该世界已有存档 → 409（绝不覆盖正在玩的世界）；兼容旧包的 world/ 前缀布局（2026-09-13）
-GET/PUT /api/settings                        # 系统设置（模型 / 注入上限 / 质检开关，2026-09-16）；PUT 落盘 data/settings.json（gitignore，含 api_key），启动时覆盖 env 值——重启不丢（2026-09-11）
+GET/PUT /api/settings                        # 系统设置（主 / 辅两套模型接口 + 注入上限 + 质检开关，2026-09-16；辅侧独立出口 2026-09-20）；PUT 落盘 data/settings.json（gitignore，含 api_key），启动时覆盖 env 值——重启不丢（2026-09-11）。⚠️ PUT 会重建 LLMRouter，用量统计随之清零（与拆出口之前同行为）
 GET/PUT /api/presets                 # 全局预设（编剧准则 + 禁用词）
 ```
 
@@ -935,7 +949,7 @@ POST /api/sessions/{sid}/director
 | `StatePanel` | 时钟 / 在场 / 可见轴（二期）/ 目标两级树（大目标带 x/y 章节进度、子目标缩进、已完成划线、未挂靠支线单列）；在场名单里给未落卡者挂「未落卡」标记、其下一行 `待落卡 · N` 入口（N = 人物数 + 场景数，N>0 才出现）；candidate 采纳后刷新 |
 | `UnfiledPanel`（抽屉「落卡」页） | **人物 / 场景两段并列**的全量名单（人物**含不在场者**）。每条收起态一行（展开三角 + 名称 + 状态标签 + ×）；展开才拉 `draft` 预填（带「AI 草稿 · 请核对」标记）、「已写出的事实」默认折叠点了才拉、「确定落卡」/「×」；场景条目名称只读并附一行听域后果警告。键/候选与资产分层，落成后从名单消失（§2.4） |
 | `LedgerView` | 事件日志时间线（只读 + 公开/私密/正文分层展示，玩家可点名某条发起改判） |
-| `SettingsPanel` | 全局预设（导演准则 + 说书人预设）+ 系统设置（模型接口 / 注入上限 / 界面与流程 三段分组，2026-09-16 重排） |
+| `SettingsPanel` | 全局预设（导演准则 + 说书人预设）+ 系统设置（**模型接口（主 / 辅两块，各 base url + key + 模型名）** / 注入上限 / 界面与流程 三段分组；2026-09-16 重排，2026-09-20 拆成两块） |
 
 ---
 
@@ -946,9 +960,10 @@ AIWORLD_HOST=127.0.0.1
 AIWORLD_PORT=8765
 AUTH_TOKEN=                     # 非本机访问 /api/* 的 Bearer 令牌（空 = 仅本机可用）
 REQUIRE_AUTH_FOR_NON_LOCAL=true # true=非本机必须带令牌；false=整体关掉鉴权（C 方案）
-LLM_BASE_URL=…  LLM_API_KEY=…   # OpenAI 兼容任意网关
+LLM_BASE_URL=…  LLM_API_KEY=…   # OpenAI 兼容任意网关（主模型那一套）
+CHEAP_BASE_URL=…  CHEAP_API_KEY=…  # 辅助模型的**独立出口**；不填 = 跟随上面那一套（2026-09-20）
 MODEL_MAIN=…   # 主模型：导演 / Actor / 说书人默认；未配单项时回退到这里
-MODEL_CHEAP=…  # 辅助模型：质检 / 审计默认；未配单项时回退到这里
+MODEL_CHEAP=…  # 辅助模型：质检 / 审计 / 分类 / 落卡草稿默认；未配单项时回退到这里
 # 可选单项覆盖：MODEL_DIRECTOR=… MODEL_ACTOR=… MODEL_STORY=… MODEL_QC=… MODEL_AUDIT=… MODEL_CLASSIFY=…
 # （MODEL_CLASSIFY 是“意图分类 L1”档位的遗留配置键，该 worker 从未落地，配了也不生效）
 TEMP_QC=0.2   # …（各档温度）

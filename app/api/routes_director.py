@@ -76,7 +76,8 @@ async def _director_chat(request, session, message: str):
         data = await llm.complete_json(
             messages,
             DirectorReply,
-            model=settings.resolved_model("director"),
+            # 角色（= 模型名 + 出口，见 LLMRouter）；导演属主模型那一侧。
+            worker="director",
             temperature=0.7,
         )
         out = DirectorReply.model_validate(data)

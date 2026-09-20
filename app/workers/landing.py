@@ -114,7 +114,8 @@ async def draft_npc_card(
     ledger,
     name: str,
     *,
-    model: str = "fake",
+    model: str = "",
+    worker: str = "landing",
     temperature: float = 0.3,
 ) -> dict:
     """总结一个未落卡人物的草稿。没有证据 → 不调 LLM，直接给空字段。"""
@@ -130,7 +131,7 @@ async def draft_npc_card(
         },
     ]
     data = await llm.complete_json(
-        messages, NpcLandingDraft, model=model, temperature=temperature
+        messages, NpcLandingDraft, model=model, temperature=temperature, worker=worker
     )
     draft = NpcLandingDraft.model_validate(data)
     return {
@@ -145,7 +146,8 @@ async def draft_scene(
     ledger,
     name: str,
     *,
-    model: str = "fake",
+    model: str = "",
+    worker: str = "landing",
     temperature: float = 0.3,
 ) -> dict:
     """总结一个待落卡场景的草稿。没有证据 → 不调 LLM，直接给空字段。"""
@@ -161,7 +163,7 @@ async def draft_scene(
         },
     ]
     data = await llm.complete_json(
-        messages, SceneLandingDraft, model=model, temperature=temperature
+        messages, SceneLandingDraft, model=model, temperature=temperature, worker=worker
     )
     draft = SceneLandingDraft.model_validate(data)
     return {"perceivable": draft.perceivable.strip(), "evidence_count": len(evidence)}

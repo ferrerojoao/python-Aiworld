@@ -44,7 +44,8 @@ async def run_writer(
     rewrite_note: str = "",
     writer_directive: str = "",
     limits: InjectionLimits = DEFAULT_LIMITS,
-    model: str = "fake",
+    model: str = "",
+    worker: str = "story",
     temperature: float = 0.8,
 ) -> WriterOutput:
     """Single-agent writer: decides the scene and writes the prose in one call.
@@ -112,5 +113,6 @@ async def run_writer(
         WriterOutput,
         model=model,
         temperature=temperature,
+        worker=worker,
     )
     return WriterOutput.model_validate(data)

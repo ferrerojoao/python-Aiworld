@@ -38,7 +38,8 @@ async def run_actor(
     context: str = "",
     scene_id: str | None = None,
     limits: InjectionLimits = DEFAULT_LIMITS,
-    model: str = "fake",
+    model: str = "",
+    worker: str = "actor",
     temperature: float = 0.8,
 ) -> ActorDecision:
     """NPC Actor for deep choices.
@@ -63,5 +64,6 @@ async def run_actor(
         ActorDecision,
         model=model,
         temperature=temperature,
+        worker=worker,
     )
     return ActorDecision.model_validate(data)

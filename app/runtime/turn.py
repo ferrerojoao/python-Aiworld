@@ -149,7 +149,8 @@ class TurnRunner:
             rewrite_note=rewrite_note,
             writer_directive=writer_directive,
             limits=self.settings.limits(),
-            model=self.settings.resolved_model("story"),
+            # 模型名与**出口**（主 / 辅两套 base_url）都由角色决定，不再在这里
+            # 各自取一次：run_writer 的默认 worker="story" → LLMRouter 一处判定。
             temperature=self.settings.temp_writer,
         )
         out = first
@@ -222,7 +223,6 @@ class TurnRunner:
                         context=q.context,
                         scene_id=scene,
                         limits=self.settings.limits(),
-                        model=self.settings.resolved_model("actor"),
                         temperature=0.8,
                     )
                     decisions.append(
@@ -244,7 +244,6 @@ class TurnRunner:
                 rewrite_note=rewrite_note,
                 writer_directive=writer_directive,
                 limits=self.settings.limits(),
-                model=self.settings.resolved_model("story"),
                 temperature=self.settings.temp_writer,
             )
             participants |= {q.npc_id for q in out.actor_questions}
@@ -328,7 +327,6 @@ class TurnRunner:
                     known_limit=self.settings.limits().known_set_limit,
                 ),
                 summary_hint=out.summary,
-                model=self.settings.resolved_model("qc"),
                 temperature=self.settings.temp_qc,
             )
             prose = qc.prose
@@ -411,7 +409,6 @@ class TurnRunner:
                     known_limit=self.settings.limits().known_set_limit,
                 ),
                 summary_hint=out.summary,
-                model=self.settings.resolved_model("qc"),
                 temperature=self.settings.temp_qc,
             )
             prose = qc.prose
@@ -461,7 +458,6 @@ class TurnRunner:
             self.session.ledger,
             candidate.prose,
             candidate.player_input or "",
-            model=self.settings.resolved_model("audit"),
             temperature=0.2,
         )
 

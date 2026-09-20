@@ -69,6 +69,13 @@ class InjectionLimits:
 DEFAULT_LIMITS = InjectionLimits()
 
 
+# 用**辅助模型**出口的角色（2026-09-20）。这是"谁是辅助"的唯一事实源：
+# ``resolved_model`` 与 ``endpoint_for`` 都读它，别在别处再写一份名单——
+# 两处名单一旦漂了，就会出现"模型名取自辅助、出口却走主"这种半配置。
+# 落卡草稿（landing）也算辅助活：从已采纳正文里抽字段，不需要主模型的笔力。
+AUX_WORKERS = frozenset({"qc", "audit", "classify", "landing"})
+
+
 @dataclass
 class Settings:
     """Runtime configuration from AIWORLD_* environment variables."""
@@ -82,6 +89,12 @@ class Settings:
 
     llm_base_url: str = field(default_factory=lambda: _env("LLM_BASE_URL", "http://127.0.0.1:11434/v1"))
     llm_api_key: str = field(default_factory=lambda: _env("LLM_API_KEY", "ollama"))
+    # 辅助模型的**独立出口**（2026-09-20）：留空 = 跟随上面那一套。
+    # 两侧各有一套 base_url / key 才谈得上"两个模型分开配"——常见配法是
+    # 主模型走付费 API、辅助模型走本地 ollama（或反过来：便宜的本地模型写正文、
+    # 强模型只做质检）。留空即回落，是为了不配也能照旧跑（单出口零变化）。
+    cheap_base_url: str = field(default_factory=lambda: _env("CHEAP_BASE_URL", ""))
+    cheap_api_key: str = field(default_factory=lambda: _env("CHEAP_API_KEY", ""))
     llm_timeout_seconds: float = field(default_factory=lambda: float(_env("LLM_TIMEOUT_SECONDS", "90") or 90))
     model_main: str = field(default_factory=lambda: _env("MODEL_MAIN", "qwen2.5:7b"))
     model_cheap: str = field(default_factory=lambda: _env("MODEL_CHEAP", "qwen2.5:7b"))
@@ -128,9 +141,35 @@ class Settings:
         override = getattr(self, f"model_{worker}", None)
         if override:
             return override
-        if worker in {"qc", "audit", "classify"}:
+        if worker in AUX_WORKERS:
             return self.model_cheap
         return self.model_main
+
+    def uses_aux_endpoint(self, worker: str) -> bool:
+        """该角色是否走**辅助出口**。辅助侧没配 base_url 时一律走主出口。"""
+        return worker in AUX_WORKERS and bool(self.cheap_base_url)
+
+    def endpoint_for(self, worker: str) -> tuple[str, str]:
+        """worker → (base_url, api_key)。一处判定"该敲哪个门"。
+
+        base_url 与 api_key **成对**回落，不做各自回落：只填 base_url 不填 key
+        的用法不存在，分开回落只会造出"新网关 + 旧 key"这种半配置，而且它
+        静默生效、报错还长得像服务端鉴权问题。
+        """
+        if self.uses_aux_endpoint(worker):
+            return self.cheap_base_url, self.cheap_api_key
+        return self.llm_base_url, self.llm_api_key
+
+    def endpoint_label(self, worker: str) -> str:
+        """给调试卡片用的出口标签，形如 ``辅 · 127.0.0.1:11434``。
+
+        只露主机（**绝不含 key**）：调试面板会把这条显示出来，整条 base_url
+        带过去也还行，但 key 一旦被拼进去就是明面上的泄露。
+        """
+        base_url, _ = self.endpoint_for(worker)
+        kind = "辅" if self.uses_aux_endpoint(worker) else "主"
+        host = base_url.split("://")[-1].split("/")[0] or base_url
+        return f"{kind} · {host}"
 
     def limits(self) -> InjectionLimits:
         """注入上限快照。clamp 只在这一处收口：负数一律当 0（不限制），
@@ -161,10 +200,12 @@ def get_settings() -> Settings:
 
 
 # UI 可改且需要跨重启保留的设置项（PUT /api/settings 落盘，启动时覆盖 env 值）。
-# 注意含 llm_api_key：settings.json 必须在 .gitignore 里。
+# 注意含 llm_api_key / cheap_api_key：settings.json 必须在 .gitignore 里。
 SETTINGS_OVERRIDE_FIELDS = (
     "llm_base_url",
     "llm_api_key",
+    "cheap_base_url",
+    "cheap_api_key",
     "model_main",
     "model_cheap",
     "reasoning_effort",

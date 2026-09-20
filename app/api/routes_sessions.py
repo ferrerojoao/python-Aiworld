@@ -204,7 +204,7 @@ async def draft_world(request: Request, body: WorldDraftBody):
             world_id=world_id,
             name=body.name,
             player_name=body.player_name,
-            model=settings.resolved_model("story"),
+            # 模型名与出口由 run_world_draft 的默认角色（story）决定，见 LLMRouter。
             temperature=settings.temp_writer,
         )
     except Exception as exc:
@@ -340,9 +340,8 @@ async def unfiled_npc_draft(request: Request, sid: str, name: str):
     name = _unfiled_name(session, name)
     trace = TraceRecorder(request.app.state.llm)
     session.debug_trace = trace.entries
-    draft = await draft_npc_card(
-        trace, session.ledger, name, model=request.app.state.settings.model_cheap
-    )
+    # 落卡草稿是**辅助活**：worker="landing" 属 AUX_WORKERS → 辅助模型 + 辅助出口。
+    draft = await draft_npc_card(trace, session.ledger, name, worker="landing")
     return {"name": name, **draft}
 
 
@@ -401,9 +400,7 @@ async def scene_landing_draft(request: Request, sid: str, name: str):
     name, _item = _pending_scene(session, name)
     trace = TraceRecorder(request.app.state.llm)
     session.debug_trace = trace.entries
-    draft = await draft_scene(
-        trace, session.ledger, name, model=request.app.state.settings.model_cheap
-    )
+    draft = await draft_scene(trace, session.ledger, name, worker="landing")
     return {"name": name, **draft}
 
 
@@ -1036,6 +1033,9 @@ async def reset_session(request: Request, sid: str):
 class SettingsBody(BaseModel):
     llm_base_url: str | None = None
     llm_api_key: str | None = None
+    # 辅助模型的独立出口（2026-09-20）：留空 = 跟随主接口那一套。
+    cheap_base_url: str | None = None
+    cheap_api_key: str | None = None
     model_main: str | None = None
     model_cheap: str | None = None
     reasoning_effort: str | None = None
@@ -1052,6 +1052,8 @@ async def get_system_settings(request: Request):
     return {
         "llm_base_url": s.llm_base_url,
         "llm_api_key": s.llm_api_key,
+        "cheap_base_url": s.cheap_base_url,
+        "cheap_api_key": s.cheap_api_key,
         "model_main": s.model_main,
         "model_cheap": s.model_cheap,
         "reasoning_effort": s.reasoning_effort or "auto",
@@ -1077,6 +1079,12 @@ async def update_system_settings(request: Request, body: SettingsBody):
         s.llm_base_url = body.llm_base_url
     if body.llm_api_key is not None:
         s.llm_api_key = body.llm_api_key
+    # 辅助 Base URL **必须 strip**：空串是"跟随主接口"的开关值，界面里一个
+    # 多余的空格若被原样存下，就会变成"配了个叫 空格 的出口"，报错还很难认。
+    if body.cheap_base_url is not None:
+        s.cheap_base_url = body.cheap_base_url.strip()
+    if body.cheap_api_key is not None:
+        s.cheap_api_key = body.cheap_api_key
     if body.model_main is not None:
         s.model_main = body.model_main
     if body.model_cheap is not None:
@@ -1095,15 +1103,11 @@ async def update_system_settings(request: Request, body: SettingsBody):
     if body.known_set_limit is not None:
         s.known_set_limit = body.known_set_limit
     from app.config import save_settings_overrides
-    from app.core.llm import LLMGateway
+    from app.core.llm import LLMRouter
 
-    request.app.state.llm = LLMGateway(
-        base_url=s.llm_base_url,
-        api_key=s.llm_api_key,
-        max_concurrency=4,
-        timeout=s.llm_timeout_seconds,
-        reasoning_effort=s.reasoning_effort,
-    )
+    # 重建路由器 = 按新配置重新建网关（网关是懒建的，没配的出口不会凭空多出
+    # 一个 client）。⚠️ 副作用：用量统计随之清零 —— 与拆出口之前的行为一致。
+    request.app.state.llm = LLMRouter(s)
     # UI 改的设置落盘（data/settings.json），重启后由 lifespan 覆盖回来。
     save_settings_overrides(s.data_dir / "settings.json", s)
     return {"ok": True}

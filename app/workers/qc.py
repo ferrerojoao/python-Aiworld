@@ -70,7 +70,8 @@ async def run_qc(
     preset: NarrativePreset | None = None,
     reference: str = "",
     summary_hint: str = "",
-    model: str = "fake",
+    model: str = "",
+    worker: str = "qc",
     temperature: float = 0.2,
 ) -> QCOutput:
     """QC worker: style, leak and banned-words checks (all by the LLM)."""
@@ -117,6 +118,7 @@ async def run_qc(
         QCOutput,
         model=model,
         temperature=temperature,
+        worker=worker,
     )
     out = QCOutput.model_validate(data)
     if not out.prose:
