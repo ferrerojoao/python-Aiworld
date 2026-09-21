@@ -164,7 +164,7 @@ cd web && npm ci && npm test
 
 - `GET /api/sessions/{sid}/state` — 世界状态快照（含时钟、结算留痕、本回合状态变化）
 - `GET /api/sessions/{sid}/ledger/events` — 事件流
-- `GET`/`PUT /api/sessions/{sid}/player` — 主角设定
+- 主角 = 人物表里 `is_player` 的那张卡，**没有独立接口**；编辑走工作台的 `GET`/`PUT /api/sessions/{sid}/world`
 - `POST /api/sessions/{sid}/states/{state_id}/revoke` — 撤销一条角色状态
 - `GET /api/sessions/{sid}/unfiled/{name}/evidence` — 落卡证据（该角色在已采纳正文里的原文，只机械提取）
 - `GET /api/sessions/{sid}/unfiled/{name}/draft` — 落卡 AI 草稿（模型从**他自己的**原文总结 外貌/人格，走便宜模型；无证据不调 LLM）
@@ -175,7 +175,7 @@ cd web && npm ci && npm test
 
 **世界工作台（会话内编辑）**
 
-- `GET`/`PUT /api/sessions/{sid}/world` — 读取 / 原地保存世界资产
+- `GET`/`PUT /api/sessions/{sid}/world` — 读取 / 原地保存世界资产（`GET` 回 `player_locked`；**已开局后改主角 → `PUT` 409**，要换请先「重置世界」）
 - `GET /api/sessions/{sid}/world/check` — 校验
 - `POST /api/sessions/{sid}/world/save-as` — 另存为新世界资产包
 - `GET /api/sessions/{sid}/world/export` — 导出资产包 zip

@@ -21,7 +21,7 @@ from app.workers.drafter import run_world_draft
 from app.workers.landing import draft_npc_card, draft_scene
 from app.world.draft import blank_world_assets, check_assets, validate_assets
 from app.world.loader import check_world, save_world_assets
-from app.world.models import SCENE_PLACEHOLDER, NpcCard, Scene
+from app.world.models import PLAYER_PLACEHOLDER, SCENE_PLACEHOLDER, NpcCard, Scene
 
 router = APIRouter(prefix="/api")
 
@@ -244,6 +244,79 @@ async def update_world_assets(request: Request, world_id: str, body: WorldAssetD
     raise HTTPException(status_code=410, detail="已改为编辑当前存档的世界实例：PUT /sessions/{sid}/world")
 
 
+def _player_keys(npcs: dict) -> set[str]:
+    """人物表里"主角"的**键**集合（键 = 卡自己的 ``id``）。
+
+    ⚠️ 取 ``card.id`` 而不是外层 dict 的键：``save_world_assets`` 按 dict 键命名
+    文件，``load_world`` 却按 ``card.id`` 建键——两者不一致时以 ``card.id`` 为准，
+    因为**那才是落盘并重载之后真正生效的键**（前端 ``readNpcs`` 本来就保证两者
+    一致，所以只有手改请求体才会碰见这种错位）。
+    ``WorldContent.player_name()`` 用的也是 ``card.id``，判据必须与它同源。
+
+    同时吃两种形状：内存里的 ``NpcCard`` 模型与请求体里的裸 dict——**判据只有
+    一份**，形状差异在这里消化掉，别在调用处各写一遍。
+    """
+    keys: set[str] = set()
+    for npc_id, card in (npcs or {}).items():
+        if isinstance(card, dict):
+            marked, name = card.get("is_player"), card.get("id")
+        else:
+            marked, name = getattr(card, "is_player", False), getattr(card, "id", None)
+        if marked:
+            keys.add(str(name or npc_id))
+    return keys
+
+
+def _assert_player_unlocked(session, incoming_npcs: dict) -> None:
+    """主角锁定（2026-09-21 拍板）：本局一开演，"谁是主角"就冻结。
+
+    判据是**集合比对**而非逐 case 检字段——换人（把 is_player 勾到另一张卡）、
+    改名（改主角卡的 ``id``，而日志键就是人名）、删人（连主角卡一起删）三种表现
+    由同一条收口。**别再按 case 打补丁**。
+
+    顺序在 ``check_assets`` **之前**：先过不变量校验会抛"人物表必须有且只有一张
+    主角卡——当前 0 张"这种技术话，而玩家需要知道的是"已开始游戏，主角已锁定"。
+    状态码用 **409** 而非 400：不是"你填错了"，是"这个存档状态不允许"
+    （与 ``PUT /worlds/{id}`` 那条 410 的语义分区一致）。
+    """
+    if not session.ledger.game_started():
+        return
+    before = _player_keys(session.world.npcs)
+    after = _player_keys(incoming_npcs)
+    if before == after:
+        return
+    current = "、".join(sorted(before)) or "无"
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            f"本局已开始，主角已锁定（当前主角：{current}）。"
+            "事件日志一旦落了正文，主角就不能再换（改名、删卡同理）——"
+            "日志里的旧名不会迁移，历史目标与状态也全都挂在旧名上。"
+            "要换主角请先「重置世界」，或用「另存为」开一个新世界再改。"
+        ),
+    )
+
+
+def _player_lock_problems(session) -> list[str]:
+    """已开局的档丢了主角卡 → **只报不改**（2026-09-21 拍板 4）。
+
+    ``load_world`` 对"人物表里没有 is_player 卡"会**无条件**补一张占位主角卡
+    （引擎处处以"主角名"为键，缺卡会静默失配）——所以不补是不行的，但已开局的档
+    上被补一张占位卡，实际效果就是**一次隐式换人**。这里不做还原、不猜原主、
+    不自动修：只把这件事说出来。玩家唯一能走的路是「重置世界」。
+    """
+    if not session.ledger.game_started():
+        return []
+    player = session.world.player()
+    if player is None or player.id != PLAYER_PLACEHOLDER:
+        return []
+    return [
+        "本局已开始，但磁盘上找不到主角卡——载入时已补占位卡「主角」。"
+        "这等于换了一次主角：主角已锁定，只能先「重置世界」再改名；"
+        "此前事件日志里记的旧主角名不会迁移。"
+    ]
+
+
 @router.put("/sessions/{sid}/world")
 async def update_session_world(request: Request, sid: str, body: WorldAssetData):
     """就地编辑当前世界（单一真相源：写的就是 ``content/<world>/``，即时生效）。
@@ -254,10 +327,13 @@ async def update_session_world(request: Request, sid: str, body: WorldAssetData)
     - **语义问题**（``start_scene`` 越界 / 场景 id 重复 / 世界书条目没关键词）
       落盘后随响应带回 ``problems``，前端标黄警告——允许"中途拆结构"的半成品态
       存在，但它必须是**被看见的**，不能像以前那样静默通过。
+
+    主角锁定（2026-09-21）插在两级之前：已开局时"谁是主角"冻结 → 409。
     """
     session = _get_session(request, sid)
     payload = body.model_dump()
     payload["overview"]["id"] = session.world.meta.id
+    _assert_player_unlocked(session, payload.get("npcs") or {})
     try:
         problems = check_assets(payload)
     except ValueError as exc:
@@ -518,6 +594,8 @@ async def check_session_world(request: Request, sid: str):
     文件，保留两个入口只为前端语义顺口。"""
     session = _get_session(request, sid)
     problems = check_world(session.world_dir)
+    # 已开局却丢了主角卡（外部手改磁盘）：只报不改（见 _player_lock_problems）。
+    problems.extend(_player_lock_problems(session))
     return {"ok": not problems, "problems": problems}
 
 
@@ -609,8 +687,18 @@ async def get_state(request: Request, sid: str):
             break
     # 在场 = "还有谁在"（玩家视角）：主角就是镜头本人，不列进自己的视野
     # （2026-09-13 主角入人物表后 present_at 会带上他）。
+    # ⚠️ 这个名单**不能**放进主角：提示词的在场名单与状态面板 `state_view` 都按
+    # "主角另有 [主角] 段"来用（`STATE_CAP_PLAYER` ≠ `STATE_CAP_NPC`），混进来会
+    # 重复计数、左栏的「未落卡」标记也会跟着错。左栏要的"场景里有谁"另用一个独立
+    # 布尔 `player_present` 表达（2026-09-21 用户要求把主角显示在左栏在场名单里）。
     player_name = session.world.player_name()
-    present_ids = [pid for pid in session.ledger.present_at(player_scene) if pid != player_name]
+    in_scene = session.ledger.present_at(player_scene)
+    present_ids = [pid for pid in in_scene if pid != player_name]
+    # 主角在不在镜头场景里。**判据仍是引擎的位置推导**，前端不另算：提交时
+    # `location` 与 `save.player_scene` 同源写、主角恒进 `participants`（transaction
+    # 里兜底），所以落过账之后恒为 True；只有"连一条带位置的流水都没有"（世界没写
+    # 开场白）才为 False——那时引擎确实没有证据说他站在这里。
+    player_present = player_name in in_scene
     # 目标是两级树（大目标=章节 / 小目标=节拍，2026-09-12）：状态栏需要
     # 「active 目标 + 挂在 active 大目标下的子目标（含已完成）」才能显示章节
     # 进度 x/y；其余历史目标（已闭合的主线、已完成/废弃的孤儿支线）不进状态栏。
@@ -646,6 +734,9 @@ async def get_state(request: Request, sid: str):
         "recent_scenes": recent,
         "present": present_ids,
         "present_names": present_ids,
+        # 镜头场景里有主角吗（2026-09-21）：左栏「在场人物」要把他列出来并打「主角」
+        # 标，而 `present_ids` 是"还有谁在"（不含他）。见上面的判据说明。
+        "player_present": player_present,
         # 未落卡的确定人物（NPC 落卡机制，2026-09-19）：有键无卡——引擎已经
         # 认他是"人"（有名字 + 与玩家有往来 ≥2 轮），但世界资产里还没有他的
         # 人物档案。`present` 判定沿用同一份 present_ids，所以左栏可以直接用
@@ -699,14 +790,6 @@ def _apply_preset_update(preset, body: PresetBody) -> None:
         preset.style_sample = body.style_sample
 
 
-class PlayerBody(BaseModel):
-    name: str | None = None
-    appearance: str | None = None
-    persona: str | None = None
-    private_note: str | None = None
-    personal_secrets: str | None = None
-
-
 @router.put("/sessions/{sid}/presets")
 async def update_presets(request: Request, sid: str, body: PresetBody):
     _get_session(request, sid)
@@ -735,61 +818,6 @@ async def update_global_preset(request: Request, body: PresetBody):
     return {"ok": True}
 
 
-@router.get("/sessions/{sid}/player")
-async def get_player(request: Request, sid: str):
-    """主角资料：就是人物表里 is_player 的那张卡。
-
-    对外沿用 ``name`` 字段（前端表单与旧接口同形）：卡的 ``id`` 即名字。
-    """
-    session = _get_session(request, sid)
-    card = session.world.player()
-    if card is None:
-        raise HTTPException(status_code=404, detail="world has no player card")
-    return {**card.model_dump(), "name": card.id}
-
-
-def _write_player_card(session, card) -> None:
-    """主角卡落盘（人物表 + 实例文件），并把新的键接回内存世界。"""
-    world = session.world
-    write_json_atomic(
-        session.world_dir / "npcs" / f"{card.id}.json",
-        card.model_dump(),
-    )
-    world.npcs[card.id] = card
-
-
-@router.put("/sessions/{sid}/player")
-async def update_player(request: Request, sid: str, body: PlayerBody):
-    """编辑主角：主角就是人物表里 is_player 的那张卡（2026-09-13）。
-
-    改名 = 换人物表键 = 换事件日志此后记录的名字；旧日志保持原有名字不改写
-    （用户口径：日志直接记人名，中途换主角不影响日志）。
-    """
-    session = _get_session(request, sid)
-    card = session.world.player()
-    if card is None:
-        raise HTTPException(status_code=404, detail="world has no player card")
-    old_id = card.id
-    new_id = (body.name or "").strip()
-    if new_id and new_id != old_id:
-        if new_id in session.world.npcs:
-            raise HTTPException(status_code=400, detail=f"人物表里已有「{new_id}」")
-        card.id = new_id
-    for field in ("appearance", "persona", "private_note", "personal_secrets"):
-        value = getattr(body, field)
-        if value is not None:
-            setattr(card, field, value)
-    if new_id and new_id != old_id:
-        del session.world.npcs[old_id]
-        old_file = session.world_dir / "npcs" / f"{old_id}.json"
-        if old_file.exists():
-            old_file.unlink()
-        # 目标归属用空串哨兵表示主角，无需跟着改名；镜头位置由存档小抄保管。
-    _write_player_card(session, card)
-    session.ledger.persist_save()
-    return {"ok": True, "name": card.id}
-
-
 @router.get("/sessions/{sid}/world")
 async def world_browser(request: Request, sid: str):
     session = _get_session(request, sid)
@@ -802,6 +830,10 @@ async def world_browser(request: Request, sid: str):
         "axes": [axis.model_dump() for axis in world.axes],
         # 事件日志标签页读的就是这里——同样要走 access_view()，否则改判看不见。
         "events": session.ledger.access_view(),
+        # 主角锁定（2026-09-21）：判据在账本（Ledger.game_started），前端只消费结论。
+        # 前端拿它把 is_player 勾选框与主角卡的 id 输入框置灰——**只是礼貌**，
+        # 真闸门是 PUT /world 的 409（M14 教训：只拦 UI 等于没拦）。
+        "player_locked": session.ledger.game_started(),
     }
 
 

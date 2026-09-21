@@ -41,6 +41,26 @@ def test_export_save_includes_events(tmp_path):
         assert save["meta"]["save_name"] == "main"
 
 
+def _set_npc_fields(client, sid, npc_id, fields):
+    """改当前世界某张人物卡上的几个字段：读-改-写整份资产，走 ``PUT /world``。
+
+    主角锁定（2026-09-21）删掉了专供主角档案的 ``GET/PUT /player`` 两条死接口
+    （前端从未调用过）。现在改主角档案只有这一条路，且**只在开局前**放行。
+    """
+    world = client.get(f"/api/sessions/{sid}/world").json()
+    payload = {
+        "overview": world["overview"],
+        "lorebook": world["lorebook"],
+        "scenes": world["scenes"],
+        "npcs": dict(world["npcs"]),
+        "axes": world["axes"],
+    }
+    payload["npcs"][npc_id] = {**payload["npcs"][npc_id], **fields}
+    resp = client.put(f"/api/sessions/{sid}/world", json=payload)
+    assert resp.status_code == 200, resp.text
+    return resp
+
+
 def test_import_save_roundtrip(tmp_path):
     """导出→导入往返：世界已有进行中的存档 → 409 拒绝（绝不覆盖正在玩的
     世界）；删掉坏世界后导入即可原样恢复（世界=存档，落点是世界目录本身）。"""
@@ -52,10 +72,8 @@ def test_import_save_roundtrip(tmp_path):
     with _make_client(tmp_path) as client:
         r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
         sid = r.json()["sid"]
-        client.put(
-            f"/api/sessions/{sid}/player",
-            json={"name": "刘星", "persona": "18岁高中生", "private_note": "底牌"},
-        )
+        # 落账前改主角档案（本局还没开演，所以放行）。
+        _set_npc_fields(client, sid, "刘星", {"persona": "18岁高中生", "private_note": "底牌"})
         client.post(f"/api/sessions/{sid}/turn", json={"input": "问朱明"})
         client.post(f"/api/sessions/{sid}/turn", json={"input": "继续问"})
 
@@ -79,10 +97,11 @@ def test_import_save_roundtrip(tmp_path):
         assert data["world_id"] == "qinghsi"
         assert data["save_name"] == "main"
 
-        # 导入的存档可打开：主角资料与事件日志都在。
-        player = client.get(f"/api/sessions/{data['sid']}/player").json()
-        assert player["name"] == "刘星"
-        assert player["private_note"] == "底牌"
+        # 导入的存档可打开：主角档案与事件日志都在。
+        npcs = client.get(f"/api/sessions/{data['sid']}/world").json()["npcs"]
+        assert npcs["刘星"]["is_player"] is True
+        assert npcs["刘星"]["persona"] == "18岁高中生"
+        assert npcs["刘星"]["private_note"] == "底牌"
         events = client.get(f"/api/sessions/{data['sid']}/ledger/events").json()["events"]
         assert len(events) >= 2
         assert events[0]["source"] == "opening"

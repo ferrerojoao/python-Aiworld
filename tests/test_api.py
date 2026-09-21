@@ -274,39 +274,48 @@ def test_director_retire_marks_lifecycle(tmp_path):
 
 
 def test_player_profile_update(tmp_path):
-    """主角就是人物表里的 is_player 卡：读回来的名字即卡键，改名走改名路径。"""
+    """主角就是人物表里的 is_player 卡：名字即卡键，改名走资产写路径。
+
+    ⚠️ 2026-09-21 主角锁定：这条路**只在开局前可用**——本局一旦落了一条正文，
+    ``PUT /world`` 会因"主角已锁定"直接 409（覆盖见 ``test_player_lock.py``）。
+    原先专供主角档案的 ``GET/PUT /player`` 两条死接口已删除（前端从未调用过，
+    全仓 grep 零命中）——"主角"现在只有"人物表里的那张卡"这一条路。
+    """
     with _make_client(tmp_path) as client:
         r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
         sid = r.json()["sid"]
 
-        player = client.get(f"/api/sessions/{sid}/player").json()
-        assert player["name"] == "刘星"
-        assert player["is_player"] is True
+        world = client.get(f"/api/sessions/{sid}/world").json()
+        assert world["player_locked"] is False  # 账本里只有开场事件 → 还没开演
         # 主角也是世界人物表里的一员（前端"人物"页能看到主角）。
-        npcs = client.get(f"/api/sessions/{sid}/world").json()["npcs"]
-        assert npcs["刘星"]["is_player"] is True
+        assert world["npcs"]["刘星"]["is_player"] is True
 
-        put = client.put(
-            f"/api/sessions/{sid}/player",
-            json={
-                "name": "林晓",
-                "appearance": "黑发",
-                "persona": "冷静",
-                "private_note": "其实是镇长的私生子",
-                "personal_secrets": "欠了赌债",
-            },
-        )
+        payload = {
+            "overview": world["overview"],
+            "lorebook": world["lorebook"],
+            "scenes": world["scenes"],
+            "npcs": dict(world["npcs"]),
+            "axes": world["axes"],
+        }
+        card = payload["npcs"].pop("刘星")
+        # 前端 readNpcs 是"键 = 卡内 id"一起改的：落盘按 dict 键命名文件，
+        # 重载却按 card.id 建键——只改一边不算改名（见 _player_keys 的注释）。
+        card["id"] = "林晓"
+        card["appearance"] = "黑发"
+        card["persona"] = "冷静"
+        card["private_note"] = "其实是镇长的私生子"
+        card["personal_secrets"] = "欠了赌债"
+        payload["npcs"]["林晓"] = card
+
+        put = client.put(f"/api/sessions/{sid}/world", json=payload)
         assert put.status_code == 200
-        assert put.json()["name"] == "林晓"
 
-        player = client.get(f"/api/sessions/{sid}/player").json()
-        assert player["name"] == "林晓"
-        assert player["private_note"] == "其实是镇长的私生子"
-        assert player["personal_secrets"] == "欠了赌债"
-        # 改名 = 换人物表键：旧键消失，新键带着主角标记留下。
-        npcs = client.get(f"/api/sessions/{sid}/world").json()["npcs"]
-        assert "刘星" not in npcs
-        assert npcs["林晓"]["is_player"] is True
+        world = client.get(f"/api/sessions/{sid}/world").json()
+        # 改名 = 换人物表键：旧键消失，新键带着主角标记与档案留下。
+        assert "刘星" not in world["npcs"]
+        assert world["npcs"]["林晓"]["is_player"] is True
+        assert world["npcs"]["林晓"]["private_note"] == "其实是镇长的私生子"
+        assert world["npcs"]["林晓"]["personal_secrets"] == "欠了赌债"
 
 
 def test_opening_event_anchors_player_at_start_scene(tmp_path):
@@ -321,7 +330,33 @@ def test_opening_event_anchors_player_at_start_scene(tmp_path):
         assert state["scene_id"] == "主街"
         # 状态栏的「在场」是"还有谁在"——主角不列进自己的视野
         assert state["present"] == []
+        # 但左栏要把他列出来并打「主角」标（2026-09-21），所以另给一个独立布尔：
+        # 同一刻「我在场」为真、而「还有谁在场」为空，两者说的不是一件事。
+        assert state["player_present"] is True
+        assert state["player_name"] == "刘星"
         assert state["scene"].startswith("这里是主街。")
+
+
+def test_player_present_needs_a_position_fact(tmp_path):
+    """没有开场白的世界：连一条带位置的流水都没有 → 引擎没证据说主站在场景里。
+
+    这条不是"顺手加个边界"，而是 `player_present` **不是常量 True** 的证据——
+    判据取的是引擎的位置推导（`present_at`），不是"主角恒在镜头场景"这种想当然。
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    with _make_client(tmp_path) as client:
+        world_json = _Path(tmp_path / "qinghsi" / "world.json")
+        raw = _json.loads(world_json.read_text(encoding="utf-8"))
+        raw["opening"] = ""  # 开档就不会写开场事件（write_opening_event 直接返回）
+        world_json.write_text(_json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+        sid = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"}).json()["sid"]
+        assert client.get(f"/api/sessions/{sid}/ledger/events").json()["events"] == []
+        state = client.get(f"/api/sessions/{sid}/state").json()
+        assert state["player_present"] is False
+        assert state["present"] == []
 
 
 def test_player_cannot_be_retired(tmp_path):

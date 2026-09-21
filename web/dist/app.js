@@ -23,6 +23,10 @@ const state = {
   // （此前是审计直接静默写 scenes.json 的）。
   unfiled: [],
   unfiledScenes: [],
+  // 主角锁定（2026-09-21）：本局已开演 → 人物页的「主角」勾选框与主角卡的姓名
+  // 输入框置灰。**只是礼貌**（后端 PUT /world 会 409）；由 GET /world 的
+  // player_locked 喂进来，判据在 ledger 一侧只有一份。
+  playerLocked: false,
 };
 
 // 访问令牌：非本机访问 /api/* 时后端要求 Authorization: Bearer <token>。
@@ -309,6 +313,13 @@ async function refreshState() {
   renderStatePanel(data);
   renderStateBadge(data);
   renderUnfiled(data);
+  // 工作台缓存作废（2026-09-21）：/state 是"存档动过了"的权威信号，而工作台
+  // 里有些结论会随存档一起变（player_locked 就是——第一轮落账后主角就锁上了）。
+  // 作废后**下次打开工作台才重拉**（`if (!state.worldData) loadWorldBrowser()`），
+  // 所以这不是每次回合都发请求。
+  // ⚠️ 工作台开着的时候不作废：切页会因缓存为空而重渲染，把未保存的改动冲掉
+  //（切页不丢改动是工作台的既有承诺）。此时后端 409 仍是最后一道闸。
+  if (!$("#world-modal")?.classList.contains("open")) state.worldData = null;
 }
 
 function renderLeftRail(data) {
@@ -332,9 +343,24 @@ function renderLeftRail(data) {
   present.innerHTML = "";
   const names = data.present_names || [];
   const unfiledMap = unfiledByName(data);
-  if (!names.length) {
+  // 主角也列进来（2026-09-21 用户要求）：他就是镜头本人。后端**单独**给一个
+  // `player_present` 而不是把他塞进 `present_names`——那个名单是"还有谁在"，
+  // 提示词的在场名单与状态面板都按"主角另有 [主角] 段"来用，混进来会重复计数。
+  // 排最前：镜头就是他，别让人在名单里找他。（判据在后端，前端不自己算位置。）
+  const you = data.player_present ? data.player_name || "" : "";
+  if (!names.length && !you) {
     present.innerHTML = '<div class="rail-item">无人</div>';
   } else {
+    if (you) {
+      const mine = document.createElement("div");
+      mine.className = "rail-item rail-player";
+      const label = document.createElement("span");
+      label.textContent = you;
+      mine.appendChild(label);
+      mine.appendChild(stTag("主角"));
+      mine.title = "就是你——镜头跟着你走（你自己的状态在「状态」页单列）";
+      present.appendChild(mine);
+    }
     for (const name of names) {
       // 在场名单里区分**有卡 / 未落卡**（同一把尺子："可改的字段必须在清单里
       // 看得见"）——要被落卡的对象，先得让人看出他没档。
@@ -1849,6 +1875,7 @@ async function loadWorldBrowser() {
   if (!state.sid) return; // 无世界时没有可浏览的对象（与其余 loader 同款守卫）
   const data = await api(`/api/sessions/${state.sid}/world`);
   state.worldData = data;
+  state.playerLocked = !!data.player_locked;
   renderWorldTabs(data);
   updateWorldContext();
   await refreshProblems();
@@ -2313,15 +2340,28 @@ function refreshNpcLoreHints() {
   });
 }
 
+/** 主角锁定提示（2026-09-21）：置灰的几个控件共用同一句，改就一起改。
+ *  不含双引号——它会进 title 属性。 */
+const PLAYER_LOCK_HINT =
+  "本局已开始，主角已锁定；要换主角请先「重置世界」（事件日志、目标与状态会一并清空）";
+
 function npcCard(id, card) {
   const c = card || {};
   const isPlayer = !!c.is_player;
+  // 主角锁定（2026-09-21）：本局一开演，"谁是主角"就冻结。
+  // **每张卡的框都禁用**——锁是全局状态（本局已开始），不是某张卡的属性；只禁
+  // 主角那张的话，点开另一张卡又能勾上，而那正是要防的事。渲染原则：一个布尔进、
+  // 同一份 HTML 出，不做"哪张才是主角"的特殊判断。
+  // 主角卡的「姓名」同锁：改名 = 换人物表键 = 换事件日志此后记录的名字，与换人是
+  // 同一类错位（日志里的旧名不会迁移，目标 "" 哨兵会静默改归新人）。
+  const locked = !!state.playerLocked;
+  const lockAttr = locked ? `disabled title="${PLAYER_LOCK_HINT}"` : "";
   return `
     <div class="edit-card${isPlayer ? " is-player" : ""}">
       <div class="form-grid">
         <div class="field">
           <label>姓名（即 ID，中文名；participants 与显示名共用此键）</label>
-          <input class="edit-field" data-field="id" value="${escapeHtml(id || "")}" />
+          <input class="edit-field" data-field="id" value="${escapeHtml(id || "")}" ${isPlayer ? lockAttr : ""} />
         </div>
         <div class="field">
           <label>听域（逗号分隔地域名；决定该 NPC 听说过哪些区域的公开旧事；空 = 按亲历事件推导）</label>
@@ -2349,13 +2389,15 @@ function npcCard(id, card) {
           <label><input class="edit-field" data-field="has_actor" type="checkbox" ${c.has_actor ? "checked" : ""} /> 使用 Actor</label>
         </div>
         <div class="field">
-          <label><input class="edit-field" data-field="is_player" type="checkbox" ${isPlayer ? "checked" : ""} /> <span class="player-check">主角（人物表有且仅有一个）</span></label>
+          <label><input class="edit-field" data-field="is_player" type="checkbox" ${isPlayer ? "checked" : ""} ${lockAttr} /> <span class="player-check">主角（人物表有且仅有一个）</span></label>
         </div>
       </div>
       <div class="npc-lore-hint empty"></div>
       ${
         isPlayer
-          ? '<div class="player-lock">主角 · 不可删除（换主角：在另一张卡上勾选「主角」）</div>'
+          ? locked
+            ? '<div class="player-lock locked">主角 · 已锁定（本局已开始）——要换主角请先「重置世界」</div>'
+            : '<div class="player-lock">主角 · 不可删除（换主角：在另一张卡上勾选「主角」）</div>'
           : '<button class="danger remove-item">删除</button>'
       }
     </div>

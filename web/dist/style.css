@@ -1249,6 +1249,13 @@ button:hover {
   color: var(--muted);
 }
 
+/* 已开局：主角锁定，提示从"怎么换"变成"换不了 + 唯一出口"（2026-09-21）。
+   用 --danger 是刻意的——重置会清空事件、目标与状态，这是一句警告不是说明。 */
+.player-lock.locked {
+  color: var(--danger);
+  font-weight: 600;
+}
+
 /* 面板内的说明文字（如主角资料说明） */
 .hint {
   font-size: 12px;
@@ -1555,6 +1562,16 @@ body.light .rail-item.current {
 #unfiled-entry .rail-item:hover,
 #present-npcs .rail-temp:hover {
   background: var(--hover);
+}
+
+/* 左栏在场名单里的主角行（2026-09-21）：他永远是"在场"的第一行，但不是可点的
+   临时角色——右侧挂「主角」标签即可区分（标签说话，不必再给文字上色）。 */
+#present-npcs .rail-player {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-weight: 600;
 }
 
 /* 抽屉「落卡」：人物 / 场景两段并列，收起态只有一行。 */

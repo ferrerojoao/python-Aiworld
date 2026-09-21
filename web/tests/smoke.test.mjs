@@ -355,3 +355,128 @@ test("场景段：展开拉草稿、写明听域后果、确定 POST 到 /locati
   assert.equal(posted.body.perceivable, "齐腰的苇子围着浅塘。");
   assert.deepEqual(Object.keys(posted.body), ["perceivable"], "场景表单只有描述一栏");
 });
+
+/** 人物页锁态用例的桩：一个主角 + 一个普通 NPC，player_locked 由参数决定。 */
+function npcWorldRoutes(locked) {
+  const card = (id, isPlayer) => ({
+    id,
+    is_player: isPlayer,
+    has_actor: !isPlayer,
+    appearance: "",
+    persona: "",
+    private_note: "",
+    personal_secrets: "",
+    region: [],
+  });
+  return [
+    ...worldRoutes(),
+    [
+      "/api/sessions/s1/world",
+      () => ({
+        overview: { id: "w1", name: "测试世界" },
+        lorebook: [],
+        scenes: [],
+        npcs: { 刘星: card("刘星", true), 朱明: card("朱明", false) },
+        axes: [],
+        events: [],
+        player_locked: locked,
+      }),
+    ],
+    ["/api/sessions/s1/world/check", () => ({ ok: true, problems: [] })],
+  ];
+}
+
+/** 打开工作台 → 切到「人物」页，然后把锁态相关的外部可见状态读回来。
+ *  ⚠️ 探针返回值要跨 realm 传回 Node：只回**标量 / 字符串**，别回数组或对象
+ *  （jsdom 里的 Array 原型与 Node 不同，deepStrictEqual 会莫名判不相等）。 */
+const npcTabProbe = `
+  ${clickJs("#open-world")}
+  await new Promise((r) => setTimeout(r, 60));
+  ${clickJs('.modal-tabs .tab[data-tab="npcs"]')}
+  await new Promise((r) => setTimeout(r, 30));
+  const cards = [...document.querySelectorAll("#edit-npc-list .edit-card")];
+  const player = cards.find((c) => c.classList.contains("is-player"));
+  const other = cards.find((c) => !c.classList.contains("is-player"));
+  return {
+    cardCount: cards.length,
+    // 锁是全局状态 → 每一张卡的框都要禁：只禁主角那张等于没禁（换张卡就能勾上）。
+    boxesDisabled: cards.map((c) => c.querySelector('[data-field="is_player"]').disabled).join(","),
+    playerIdDisabled: player.querySelector('[data-field="id"]').disabled,
+    otherIdDisabled: other.querySelector('[data-field="id"]').disabled,
+    lockText: player.querySelector(".player-lock").textContent,
+  };`;
+
+test("主角锁定：已开局 → 每张卡的「主角」框都禁用，主角姓名也禁用", async () => {
+  const { result } = await bootApp({
+    routes: npcWorldRoutes(true),
+    probe: npcTabProbe,
+  });
+
+  assert.equal(result.cardCount, 2);
+  assert.equal(result.boxesDisabled, "true,true", "每一张卡的框都要禁，不只是主角那张");
+  assert.equal(result.playerIdDisabled, true, "改名 = 换日志键，与换人同锁");
+  assert.equal(result.otherIdDisabled, false, "非主角卡的姓名不受锁影响（改名是日常操作）");
+  assert.match(result.lockText, /已锁定/);
+  assert.match(result.lockText, /重置世界/, "必须指出唯一出口，否则玩家会一头撞上破坏性操作");
+});
+
+test("主角未锁定：框可勾，提示仍在教怎么换主角", async () => {
+  const { result } = await bootApp({
+    routes: npcWorldRoutes(false),
+    probe: npcTabProbe,
+  });
+
+  assert.equal(result.boxesDisabled, "false,false");
+  assert.equal(result.playerIdDisabled, false);
+  assert.match(result.lockText, /换主角/);
+  assert.doesNotMatch(result.lockText, /已锁定/);
+});
+
+/** 左栏「在场人物」的读取：只回标量/字符串（跨 realm 不能回数组）。 */
+const railProbe = `
+  const rows = [...document.querySelectorAll("#present-npcs .rail-item")];
+  const tags = [...document.querySelectorAll("#present-npcs .st-tag")].map((t) => t.textContent).join("|");
+  return {
+    count: rows.length,
+    labels: rows.map((r) => r.textContent).join("|"),
+    firstIsPlayer: !!(rows[0] && rows[0].classList.contains("rail-player")),
+    tags,
+  };`;
+
+test("在场人物：镜头场景里有主角 → 主角排第一并挂「主角」标", async () => {
+  const { result } = await bootApp({
+    routes: worldRoutes({
+      state: { player_present: true, player_name: "刘星", present_names: ["朱明"] },
+    }),
+    probe: railProbe,
+  });
+
+  assert.equal(result.count, 2, "主角也要列进来（他不再是「还有谁在」的反面）");
+  assert.equal(result.firstIsPlayer, true, "主角排第一：镜头就是他");
+  assert.equal(result.labels, "刘星主角|朱明");
+  assert.equal(result.tags, "主角");
+});
+
+test("在场人物：player_present=false 时不硬塞主角，空场仍显示「无人」", async () => {
+  const { result } = await bootApp({
+    routes: worldRoutes({ state: { player_present: false, player_name: "刘星", present_names: [] } }),
+    probe: railProbe,
+  });
+
+  assert.equal(result.count, 1);
+  assert.equal(result.firstIsPlayer, false, "没有位置事实就不该假装他在场");
+  assert.equal(result.labels, "无人");
+});
+
+test("在场人物：主角不在场但别人在 → 只列别人，不出现主角行", async () => {
+  const { result } = await bootApp({
+    routes: worldRoutes({
+      state: { player_present: false, player_name: "刘星", present_names: ["朱明"] },
+    }),
+    probe: railProbe,
+  });
+
+  assert.equal(result.count, 1);
+  assert.equal(result.labels, "朱明");
+  assert.equal(result.tags, "");
+});

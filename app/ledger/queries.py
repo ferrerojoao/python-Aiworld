@@ -219,6 +219,37 @@ class Ledger:
         """主角名（= 人物表键 = 事件日志里记的名字）。"""
         return self.world.player_name()
 
+    def game_started(self) -> bool:
+        """本局是否已开演（主角锁定的**唯一判据**，2026-09-21）。
+
+        判据：账本里存在**非开场**事件（``source != "opening"``）。
+
+        换主角本质 = 把一个人名从引擎所有"以人名为键"的索引里抽走（事件日志
+        直接记人名、``last_location`` / ``entities[名].states`` / ``by_participant``
+        全按名索引、目标 ``subject=""`` 是"主角"哨兵、QC 参照区拉的是当前主角的
+        ``personal_secrets``）→ 中途换人 = 目标被静默改归新人 + 泄漏基线整体换人。
+        所以一旦历史开始累积，身份就冻结。
+
+        - ❌ **不能按"账本非空"判**：开档与重置都会写一条 ``source="opening"``
+          的开场事件（``session.write_opening_event``）→ 按非空判，重置完立刻又被锁，
+          与"重置世界可以换主角"直接冲突。
+        - ❌ **不能用 ``save.meta.next_event_id``**：那是实现细节（重置归 1），
+          拿它当判据会把合法入口也堵掉。
+        - ✅ 只有事件自己的 ``source`` 是一手事实。写入点已知取值：
+          ``opening``（开场）/ ``turn``（回合正文、NPC 移动与退场）/ ``state``
+          （状态增删）/ ``director``（导演覆写与记忆注入）。
+          **除 ``opening`` 外一律计入**——导演改的也是历史，换了主角一样错位。
+        - 缺 ``source`` 的旧事件按"已开始"算（fail-closed）：能被写下来就说明
+          本局演过。
+
+        为什么落在 Ledger 而不是 save：账本即真相，**不新增状态字段**（新字段要
+        迁移、会与账本不同步，还会被"重置时忘了清"咬）。落卡候选、目标等运行态
+        都在 save 里，唯独这条判据必须读流水。
+        """
+        return any(
+            str(event.get("source") or "") != "opening" for event in self.events
+        )
+
     def current_scene(self) -> str:
         """当前场景（镜头位置）：存档小抄优先，空则回开局场景。"""
         return self.save.player_scene or self.world.start_scene_id()
