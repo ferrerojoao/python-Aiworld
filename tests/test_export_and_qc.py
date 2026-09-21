@@ -53,7 +53,6 @@ def _set_npc_fields(client, sid, npc_id, fields):
         "lorebook": world["lorebook"],
         "scenes": world["scenes"],
         "npcs": dict(world["npcs"]),
-        "axes": world["axes"],
     }
     payload["npcs"][npc_id] = {**payload["npcs"][npc_id], **fields}
     resp = client.put(f"/api/sessions/{sid}/world", json=payload)

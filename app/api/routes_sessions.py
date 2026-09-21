@@ -49,7 +49,6 @@ class WorldAssetData(BaseModel):
     lorebook: list = []
     scenes: list = []
     npcs: dict = {}
-    axes: list = []
 
 
 class SaveAsWorldBody(WorldAssetData):
@@ -369,7 +368,6 @@ def _world_assets_payload(session) -> dict:
         "lorebook": [e.model_dump(mode="json") for e in world.lorebook],
         "scenes": [s.model_dump(mode="json") for s in world.scenes],
         "npcs": {nid: c.model_dump(mode="json") for nid, c in world.npcs.items()},
-        "axes": [a.model_dump(mode="json") for a in world.axes],
     }
 
 
@@ -827,7 +825,6 @@ async def world_browser(request: Request, sid: str):
         "lorebook": [entry.model_dump() for entry in world.lorebook],
         "scenes": [scene.model_dump() for scene in world.scenes],
         "npcs": {npc_id: card.model_dump() for npc_id, card in world.npcs.items()},
-        "axes": [axis.model_dump() for axis in world.axes],
         # 事件日志标签页读的就是这里——同样要走 access_view()，否则改判看不见。
         "events": session.ledger.access_view(),
         # 主角锁定（2026-09-21）：判据在账本（Ledger.game_started），前端只消费结论。
@@ -1031,7 +1028,6 @@ async def reset_session(request: Request, sid: str):
     save.player_scene = session.world.start_scene_id()
     save.narrative_preset = session.world.presets
     save.entities = {}
-    save.axes = {}
     save.goals = []
     save.access_overrides = {}
     save.audit_last_error = None

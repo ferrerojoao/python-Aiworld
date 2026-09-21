@@ -52,7 +52,7 @@ def test_blank_assets_are_minimal_and_playable():
     assert assets["npcs"] == {"刘星": {"id": "刘星", "is_player": True}}
     assert assets["overview"]["name"] == "空白镇"
     assert assets["overview"]["start_scene"] == "主街"
-    assert assets["lorebook"] == [] and assets["axes"] == []
+    assert assets["lorebook"] == []
     # 开场白不是占位符：它是主角在本世界的第一条位置事实
     assert assets["overview"]["opening"] == "刘星来到主街。"
     assert validate_assets(assets) == []

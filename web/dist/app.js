@@ -1888,7 +1888,6 @@ function renderWorldTabs(data) {
   renderEditLore(data);
   renderEditScenes(data);
   renderEditNpcs(data);
-  renderEditAxes(data);
   renderEventsTab(data);
   bindEditEvents();
   bindDirtyTracking();
@@ -1936,7 +1935,7 @@ function accessTag(ev) {
 
 /* ---------- 脏检查与保存条 ---------- */
 
-const ASSET_TABS = ["overview", "lore", "scenes", "npcs", "axes"];
+const ASSET_TABS = ["overview", "lore", "scenes", "npcs"];
 
 function snapshotWorld() {
   try {
@@ -2404,74 +2403,6 @@ function npcCard(id, card) {
   `;
 }
 
-function renderEditAxes(data) {
-  const items = data.axes || [];
-  $("#world-tab-axes").innerHTML = `
-    <h3>数值轴</h3>
-    <div class="md-pane">
-      <div class="md-side">
-        <input class="md-search" placeholder="搜索数值轴…" />
-        <div class="md-items"></div>
-        <button id="add-axis" class="md-add">＋ 添加数值轴</button>
-      </div>
-      <div class="edit-list" id="edit-axis-list">
-        ${items.map((item, i) => axisCard(item, i)).join("")}
-      </div>
-    </div>`;
-  mdRebuild("edit-axis-list");
-}
-
-function axisCard(item, i) {
-  const range = item.range || [-100, 100];
-  return `
-    <div class="edit-card" data-index="${i}">
-      <div class="form-grid">
-        <div class="field">
-          <label>ID</label>
-          <input class="edit-field" data-field="id" value="${escapeHtml(item.id || "")}" />
-        </div>
-        <div class="field">
-          <label>名称</label>
-          <input class="edit-field" data-field="label" value="${escapeHtml(item.label || "")}" />
-        </div>
-      </div>
-      <div class="form-grid">
-        <div class="field">
-          <label>标签（逗号分隔）</label>
-          <input class="edit-field" data-field="tags" value="${escapeHtml((item.tags || []).join(", "))}" />
-        </div>
-        <div class="field">
-          <label>目标实体</label>
-          <input class="edit-field" data-field="target" value="${escapeHtml(item.target || "")}" />
-        </div>
-      </div>
-      <div class="form-grid three">
-        <div class="field">
-          <label>最小值</label>
-          <input class="edit-field" data-field="min" type="number" value="${range[0] ?? -100}" />
-        </div>
-        <div class="field">
-          <label>最大值</label>
-          <input class="edit-field" data-field="max" type="number" value="${range[1] ?? 100}" />
-        </div>
-        <div class="field">
-          <label>初始值</label>
-          <input class="edit-field" data-field="init" type="number" value="${item.init ?? 0}" />
-        </div>
-      </div>
-      <div class="form-grid">
-        <div class="field">
-          <label><input class="edit-field" data-field="visible" type="checkbox" ${item.visible ? "checked" : ""} /> 可见</label>
-        </div>
-        <div class="field">
-          <label><input class="edit-field" data-field="track_cause" type="checkbox" ${item.track_cause ? "checked" : ""} /> 记录变化原因</label>
-        </div>
-      </div>
-      <button class="danger remove-item">删除</button>
-    </div>
-  `;
-}
-
 /* ---------- 主从布局（左列表 + 右单卡）助手 ----------
    所有 .edit-card 常驻 DOM，只是隐藏未选中的——各 read 函数与
    collectWorldEditData / 脏跟踪因此完全不用改；这里只负责摘要列表的构建、选中与过滤。 */
@@ -2618,12 +2549,6 @@ function bindEditEvents() {
     mdRebuild("edit-npc-list");
     refreshDirty();
   };
-  const addAxis = $("#add-axis");
-  if (addAxis) addAxis.onclick = () => {
-    $("#edit-axis-list").insertAdjacentHTML("beforeend", axisCard({}, 999));
-    mdRebuild("edit-axis-list");
-    refreshDirty();
-  };
 }
 
 function splitList(str) {
@@ -2688,26 +2613,12 @@ function readNpcs() {
   return result;
 }
 
-function readAxes() {
-  return Array.from(document.querySelectorAll("#edit-axis-list .edit-card")).map((card) => ({
-    id: card.querySelector('[data-field="id"]')?.value ?? "",
-    label: card.querySelector('[data-field="label"]')?.value ?? "",
-    tags: splitList(card.querySelector('[data-field="tags"]')?.value),
-    target: card.querySelector('[data-field="target"]')?.value || null,
-    range: [Number(card.querySelector('[data-field="min"]')?.value) || 0, Number(card.querySelector('[data-field="max"]')?.value) || 0],
-    init: Number(card.querySelector('[data-field="init"]')?.value) || 0,
-    visible: !!card.querySelector('[data-field="visible"]')?.checked,
-    track_cause: !!card.querySelector('[data-field="track_cause"]')?.checked,
-  }));
-}
-
 function collectWorldEditData() {
   return {
     overview: readOverview(),
     lorebook: readLore(),
     scenes: readScenes(),
     npcs: readNpcs(),
-    axes: readAxes(),
   };
 }
 

@@ -92,7 +92,6 @@ def test_save_world_assets_requires_exactly_one_player(world_root, tmp_path):
         "lorebook": [e.model_dump() for e in world.lorebook],
         "scenes": [s.model_dump() for s in world.scenes],
         "npcs": {"朱明": world.npcs["朱明"].model_dump()},
-        "axes": [],
     }
     try:
         save_world_assets(dest, payload)

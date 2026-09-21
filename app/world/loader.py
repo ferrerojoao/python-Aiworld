@@ -8,7 +8,6 @@ from app.rules.lorebook import LORE_SUBJECT_CAP
 
 from .models import (
     PLAYER_PLACEHOLDER,
-    Axis,
     LoreEntry,
     NarrativePreset,
     NpcCard,
@@ -55,9 +54,6 @@ def load_world(root: str | Path) -> WorldContent:
     if not any(card.is_player for card in npcs.values()):
         npcs[PLAYER_PLACEHOLDER] = NpcCard(id=PLAYER_PLACEHOLDER, is_player=True)
 
-    raw_axes = _read_json(root / "axes.json", [])
-    axes = [Axis.model_validate(item) for item in raw_axes]
-
     raw_presets = _read_json(root / "presets.json", {})
     presets = NarrativePreset.model_validate(raw_presets)
 
@@ -66,7 +62,6 @@ def load_world(root: str | Path) -> WorldContent:
         lorebook=lorebook,
         scenes=scenes,
         npcs=npcs,
-        axes=axes,
         presets=presets,
     )
 
@@ -133,7 +128,7 @@ def check_world(root: str | Path) -> list[str]:
 def save_world_assets(root: str | Path, data: dict) -> None:
     """Write world asset files from editor payload.
 
-    data keys: overview, lorebook, scenes, npcs, axes
+    data keys: overview, lorebook, scenes, npcs
 
     强制不变量（2026-09-13）：人物表里必须恰好有一张主角卡——前端不给删除
     按钮，这里是服务端兜底（"主角无法删掉"）。
@@ -159,7 +154,6 @@ def save_world_assets(root: str | Path, data: dict) -> None:
     write_json_atomic(root / "world.json", world_info)
     write_json_atomic(root / "lorebook.json", data.get("lorebook", []))
     write_json_atomic(root / "scenes.json", data.get("scenes", []))
-    write_json_atomic(root / "axes.json", data.get("axes", []))
 
     npcs_dir = root / "npcs"
     npcs_dir.mkdir(exist_ok=True)

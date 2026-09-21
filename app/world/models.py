@@ -66,17 +66,6 @@ class NpcCard(BaseModel):
     attributes: dict[str, int] = Field(default_factory=dict)  # 二期预留
 
 
-class Axis(BaseModel):
-    id: str
-    label: str = ""
-    tags: list[str] = Field(default_factory=list)
-    target: str | None = None
-    range: tuple[int, int] = (-100, 100)
-    init: int = 0
-    visible: bool = True
-    track_cause: bool = False
-
-
 class NarrativePreset(BaseModel):
     """Global narrative preset for the merged writer agent (single box).
 
@@ -95,7 +84,6 @@ class WorldContent(BaseModel):
     lorebook: list[LoreEntry] = Field(default_factory=list)
     scenes: list[Scene] = Field(default_factory=list)
     npcs: dict[str, NpcCard] = Field(default_factory=dict)
-    axes: list[Axis] = Field(default_factory=list)
     presets: NarrativePreset = Field(default_factory=NarrativePreset)
 
     # ------------------------------------------------------------------

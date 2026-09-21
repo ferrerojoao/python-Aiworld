@@ -6,7 +6,7 @@
   都可以后补，唯独场景与主角卡缺了引擎就跑不动（主角位置由事件流水推导）。
 - **L2 草稿**：LLM 只产**提案**，落在内存里先过 ``validate_assets`` 这道闸门，
   玩家看过、改过、点确认才落盘。所以本模块的产物与工作台编辑用的是**同一种
-  资产形状**（overview/lorebook/scenes/npcs/axes），落盘一律复用
+  资产形状**（overview/lorebook/scenes/npcs），落盘一律复用
   ``save_world_assets``，不新增第二条写世界的路径。
 """
 
@@ -74,7 +74,7 @@ def blank_world_assets(
     start_scene: str = "",
     opening: str = "",
 ) -> dict:
-    """L1 最小种子包：world.json + 1 个场景 + 主角卡 + 空的世界书/数值轴。
+    """L1 最小种子包：world.json + 1 个场景 + 主角卡 + 空的世界书。
 
     开场白留空时写一句纪实句「<主角>来到<开局场景>。」——它不是占位符，而是
     主角在本世界的第一条**位置事实**：没有它，首轮工作单的在场名单里没有主角。
@@ -93,7 +93,6 @@ def blank_world_assets(
         "lorebook": [],
         "scenes": [{"id": scene, "aliases": [], "perceivable": "", "region": ""}],
         "npcs": {player: {"id": player, "is_player": True}},
-        "axes": [],
     }
 
 
@@ -179,7 +178,6 @@ def draft_to_assets(
         "lorebook": lore,
         "scenes": scenes,
         "npcs": npcs,
-        "axes": [],
     }
 
 

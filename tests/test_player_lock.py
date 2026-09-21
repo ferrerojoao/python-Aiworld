@@ -99,7 +99,6 @@ def _payload(client, sid) -> dict:
         "lorebook": world["lorebook"],
         "scenes": world["scenes"],
         "npcs": {k: dict(v) for k, v in world["npcs"].items()},
-        "axes": world["axes"],
     }
 
 

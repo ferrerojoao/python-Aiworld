@@ -72,7 +72,6 @@ class SideEffects(BaseModel):
 
     narrative: dict | None = None
     events: list[dict] = Field(default_factory=list)
-    axes: dict[str, int] = Field(default_factory=dict)  # 二期预留
     overrides: list[dict] = Field(default_factory=list)
 
 
@@ -380,10 +379,6 @@ class Transaction:
                 },
                 flush=False,
             )
-
-        # v1 relation axes are reserved; just copy values if provided.
-        for key, value in candidate.side_effects.axes.items():
-            self.ledger.save.axes[key] = value
 
         # Apply the audit's goal/lifecycle settlement.
         if audit_out is not None:

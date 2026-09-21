@@ -91,8 +91,7 @@ content/<world>/
 ├── lorebook.json     # 世界书条目 [{id, keywords, body, always_on, subject}]，可空
 │                     #   always_on=每轮必注入；subject=归属角色（在场即注入）
 ├── scenes.json       # M17 场景注册表（预置节点）
-├── npcs/*.json       # 每 NPC 一卡（〇①）
-└── axes.json         # ③ 抽象属性轴声明（题材级，可空数组；二期启用，v1 预留）
+└── npcs/*.json       # 每 NPC 一卡（〇①）
 
 # 叙述预设不在世界包内；是全局配置 data/presets.json（导演准则 + 说书人预设）
 ```
@@ -153,10 +152,6 @@ content/<world>/
   "is_player": true
 }
 
-// axes.json —— ③ 轴声明（二期启用；v1 可空/预留，引擎不结算）
-[ { "id": "favor", "label": "好感", "tags": ["relation"], "target": "朱明",
-    "range": [-100, 100], "init": 0, "visible": true, "track_cause": true } ]
-
 // data/presets.json —— 全局叙述预设（不在世界包内；2026-09-05 导演准则+说书人预设合并单框）
 {
   "writer_guidelines": "不要主动揭穿秘密；优先让 NPC 主动制造冲突；克制写实，白描为主…",
@@ -210,9 +205,9 @@ content/<world>/
 | `world.json` | 必须有 | `name` 可后补；`start_scene` 空 = 取场景表第一个 |
 | `scenes.json` | ≥ 1 条 | 缺场景引擎跑不动（事件 location 无处落） |
 | `npcs/` | ≥ 1 张（主角卡） | 主角位置由事件流水推导，缺卡首轮在场名单就空 |
-| `lorebook.json` / `axes.json` | 可空 | 空数组是合法状态 |
+| `lorebook.json` | 可空 | 空数组是合法状态 |
 
-**L1 种子**（`app/world/draft.py::blank_world_assets`）：`world.json` + 1 个场景 + 主角卡 + 空世界书/数值轴。开场白留空时写一句纪实句「`<主角>来到<开局场景>。`」——**它不是占位符**，而是主角在本世界的第一条位置事实（没有它，首轮工作单的在场名单里没有主角）。
+**L1 种子**（`app/world/draft.py::blank_world_assets`）：`world.json` + 1 个场景 + 主角卡 + 空世界书。开场白留空时写一句纪实句「`<主角>来到<开局场景>。`」——**它不是占位符**，而是主角在本世界的第一条位置事实（没有它，首轮工作单的在场名单里没有主角）。
 
 **L2 一句话草稿**（`app/workers/drafter.py`）：一句前提 → `WorldDraft`（`name`/`summary`/`opening`/`start_time`/`start_scene`/`player_*`/`scenes`/`npcs`/`lorebook`）→ `draft_to_assets` 转成**与工作台编辑同一种资产形状** → 前端预览。
 
@@ -272,13 +267,13 @@ content/<world>/
 
 ### 2.2 存档 = 账本（`content/<world>/`，世界=存档 1:1）
 
-**单一真相源（2026-09-13 改版，取代旧"设计 C"模板/副本分层）**：一个世界就是一份存档。世界资产（world.json / npcs/ / scenes.json / lorebook.json / axes.json）与运行态（save.json / events.jsonl / candidates/）**同住 `content/<world>/` 一层目录**——正在玩的状态就是唯一真相，工作台编辑直写这层，即时生效。没有"改了副本、列表不变"的第二真相。备份/还原走文件：**导出资产包** = 纯资产快照（不含运行态），想要初始状态就开局时导一份 zip 自己保存；世界改坏了 → 删掉它 → 导入资产包得到一个初始态新世界。**导出完整备份** = 资产+事件日志一起打包（换机/复盘）。
+**单一真相源（2026-09-13 改版，取代旧"设计 C"模板/副本分层）**：一个世界就是一份存档。世界资产（world.json / npcs/ / scenes.json / lorebook.json）与运行态（save.json / events.jsonl / candidates/）**同住 `content/<world>/` 一层目录**——正在玩的状态就是唯一真相，工作台编辑直写这层，即时生效。没有"改了副本、列表不变"的第二真相。备份/还原走文件：**导出资产包** = 纯资产快照（不含运行态），想要初始状态就开局时导一份 zip 自己保存；世界改坏了 → 删掉它 → 导入资产包得到一个初始态新世界。**导出完整备份** = 资产+事件日志一起打包（换机/复盘）。
 
 物理真源四块：**事件流**（events.jsonl）+ **世界设定**（world.json 概要 ⊕ lorebook.json 世界书）+ **实体档案**（npcs/ 人物卡 ⊕ save.json 运行层补丁）+ **元配置**（世界默认 ⊕ 玩家覆盖）。位置 / 在场 / 秘密 / 公共均无独立存储——全由事件流查询得出（§3）。
 
 ```
 content/<world>/
-├── world.json / npcs/ / scenes.json / lorebook.json / axes.json   # 世界资产（工作台直编）
+├── world.json / npcs/ / scenes.json / lorebook.json   # 世界资产（工作台直编）
 ├── save.json          # 引擎运行态 + 元配置玩家覆盖 + 实体运行层（原子写）
 ├── events.jsonl       # 事件流（追加写；正文史实不可变）
 └── candidates/        # 候选事务暂存（非账本，可断线恢复；采纳/放弃后清理，见 §4）
@@ -313,7 +308,6 @@ content/<world>/
   "narrative_preset": { "writer_guidelines": "…", "banned_words": [] },  // 全局预设镜像
   "entities": { "朱明": { "lifecycle": "active",   // active | retired（主角不在其中：不可退场）
                           "states": [ ] } },       // 角色状态·长期事实（§2.3）：叙事事实类，随重置清零
-  "axes": { },                                    // ③ 轴当前值（二期；v1 预留不结算）
   "access_overrides": { },                        // 事件访问改判（§7）
   "audit_last_error": null,                       // 最近一次审计失败记录
   "active_lore_ids": ["net_bar_fire"],            // 本轮世界书命中列表（§6 世界书 v2）
@@ -546,7 +540,7 @@ A 尤其像地雷：`until` 是**审计单方面**给的，玩家没有异议渠
 Candidate（候选快照，落盘到 candidates/；采纳时由 Transaction 落地）
 ├── 正文 prose（说书人成品或导演采纳的玩家原文）+ 质检修改记录（conflicts）
 ├── side_effects：narrative.location（规则目的地）
-│                 · events · axes（二期预留）· overrides
+│                 · events · overrides
 │                 （**时间不在这里**——时钟由审计在采纳时独家结算，2026-09-16）
 └── 关联信息：player_input / writer_directive / trace_id / mode（重掷档位）
 ```
@@ -580,7 +574,6 @@ Candidate（候选快照，落盘到 candidates/；采纳时由 Transaction 落�
   "side_effects": {
     "narrative": {"location": "校门口", "summary": "第二天早上出门。"},
     "events": [],
-    "axes": {},                          // 二期预留
     "overrides": []
   },
   // 时间不在 side_effects 里：时钟由审计在采纳时独家结算
@@ -728,7 +721,7 @@ Candidate（候选快照，落盘到 candidates/；采纳时由 Transaction 落�
 
 v1 的审计/记账在玩家“采纳”（含下一次输入自动采纳）时，于同一请求内完成，产物进账本影响后续轮。所有账本写入都收敛到采纳这一个串行点，避免后台协程与下一回合并发写 `events.jsonl` / `save.json`。
 1. **目标完成判定（M14）**：按已采纳正文判活动目标是否达成（小目标=当事达成；大目标=关键真相/冲突解决；只推进未达成不填）。**层级证据（2026-09-12）**：审计目标块渲染成两级树（`app/core/workorder.py:audit_goals_lines`），大目标行附「其下子目标 x/y 已完成」——**只作参考证据、不是判据**：正文给出明确的关键了结（即使子目标没走完，如玩家绕道达成）即可判完成；只是把子目标推了推、关键冲突没解决就不判。不设"子目标未全完成则禁止判父完成"的硬门锁（避免机械兜底，也避免误伤绕道达成）。
-2. **关系结算复核**：M5 关系系统暂缓设计，v1 不执行关系轴结算；此处只保留接口位，待二期实现。
+2. **关系结算复核**：M5 关系值结算已于 2026-09-21 取消，此处不再保留接口位（理由见 REQ 〇③）。
 3. **生命周期扫描（〇章）**：终态事件（死亡/永久离开）→ 实体置 `retired`（数据全保留；目标留玩家定夺）。**退场留痕（2026-09-12）**：置 retired 的同时落一条轻量事件（summary「X退场（永久离开舞台）」，known_by=[该NPC, 主角名]，source=turn）——事件日志是长期记忆比对基准，静默退场会让"他不在了"无史实可引；已退场者再判不重复留痕。**主角豁免（2026-09-13）**：主角即使被审计写进 `lifecycle` 也直接跳过——主角不可退场。
 4. **在场与出场（`participants` / `featured`，2026-09-19）**：`participants` = **主角 ∪ 在场的、有名字的角色**（没名字的布景人物一律不进名单，戏份多少都一样）；`featured` = 本轮**与玩家有往来且有名字**的人。两者是「位置（可继承）」与「这一轮真的碰上了（不可继承）」的区别，也是 NPC 落卡的计数依据（§2.4）。
 5. **NPC 离场落账（npc_moves，2026-09-09）**：正文明确写出某 NPC 离开去了别处（回家/回店/告辞离去）→ 审计输出 `{npc_id, location, scene_name}`，commit 追加轻量位置事件（participants=[该NPC]，known_by=[本人+玩家] 去向私密名单制，summary="朱明前往朱明家"）。补上"位置只能被事件改变"的离场半边——离场者不再是主事件参与者，否则快照无法被"离开"更新，出现"已写他回家、名单还顶着刚刚目击"的确定错误。去向未注册也无妨：`present_at` 匹配不上它 = "不在任何已注册场景"的机械表达；没写去向不输出（不猜，宁可不记不错记）；非法 npc_id 静默跳过。
@@ -917,7 +910,7 @@ POST   /api/worlds/draft                    # L2 一句话草稿：LLM 出一整
 POST   /api/sessions                        # 在世界里开一局（写 save.json 进世界目录）；已有存档 → 409（打开即可接着玩）
 POST   /api/sessions/open                   # 接着玩：打开已有存档（世界=存档 1:1，只传 world_id）
 GET    /api/sessions/{sid}                  # 会话详情（时钟/场景/在场/预设/目标）
-GET    /api/sessions/{sid}/state            # 右栏面板：时钟/场景/在场/可见轴（二期）/目标树（active 目标 + 挂在 active 大目标下的子目标含已完成，供侧栏显 x/y 进度，2026-09-12）。⚠️ `present` / `present_names` 是"还有谁在"（**不含主角**）；`player_present` 是"镜头场景里有主角吗"（左栏在场名单的第一行，2026-09-21）——两者不是一个问题，别合并
+GET    /api/sessions/{sid}/state            # 右栏面板：时钟/场景/在场/目标树（active 目标 + 挂在 active 大目标下的子目标含已完成，供侧栏显 x/y 进度，2026-09-12）。⚠️ `present` / `present_names` 是"还有谁在"（**不含主角**）；`player_present` 是"镜头场景里有主角吗"（左栏在场名单的第一行，2026-09-21）——两者不是一个问题，别合并
 GET    /api/sessions/{sid}/ledger/events?cursor=   # 事件日志（玩家视角全量叙述 + 访问状态标注，只读）
 GET    /api/sessions/{sid}/world            # 世界工作台（概览/世界书/场景/NPC/轴/事件）；npcs 里含主角卡（is_player）；附 player_locked（本局是否已开演，见 §2.1.4）
 PUT    /api/sessions/{sid}/world            # 就地编辑当前世界（单一真相源：写的就是 content/<world>/，即时生效）；三级闸门：主角锁定（已开局却改了"谁是主角"）→409 最优先，不变量（恰好一张主角卡）失败→400 先于落盘，语义问题（start_scene 不在场景表等）→保存成功但返回 problems 由 UI 软警告（2026-09-13 / 2026-09-21）
@@ -950,7 +943,7 @@ POST /api/sessions/{sid}/turn  {"input": "…"}
   → text/event-stream:
      event: stage        data: {"stage": "writer", "label": "编排成文中"}
      event: candidate    data: {"trace_id", "turn_id", "candidate_id", "prose", "side_effects": {"narrative": {"location": "…"},
-                            "events": [], "axes": [](二期预留)}, "conflicts": […]}
+                            "events": []}, "conflicts": […]}
      event: error        data: {"trace_id", "message"}
 ```
 
@@ -991,9 +984,9 @@ POST /api/sessions/{sid}/director
 |---|---|
 | `ChatView` | 正文流 + 打字机（SSE candidate 的 prose 播放）；**候选区版本列表**：展示/比较多份候选，可单独查看、选择采纳 / 重掷 / 放弃；提示“唯一候选时直接继续输入 = 采纳该候选” |
 | `DirectorPanel` | OOC 窗口：求建议 / 答疑 / 剧情讨论 / 幕后事务（覆写、记忆注入、改判、剧情目标、角色退场）。**世界资产不在窗口内**——人物卡 / Actor 档位 / 转正 / 场景注册一律由世界工作台直接编辑（2026-09-08 导演窗口精简；2026-09-13 复核确认：转正产物是世界资产，按此分界线落工作台） |
-| `WorldBrowser` | **世界工作台**（2026-09-13 重构 + 同日单一真相源改版）：顶栏 = 标题 + 上下文行（世界名 · 目录名）+ 「切换世界 ▾」面板（收起的世界列表 = 存档列表：每项带世界名/时钟进度/当前徽标/待修标记/打开·校验·删除，内含新建世界 L1/L2 表单与「导入为新世界」）；tab 分两组——**世界资产**（概览/世界书/场景/人物/数值轴，**就地编辑**，无全局编辑模式开关）与**本存档**（事件日志只读，改判走导演窗口）；底部 sticky 保存条 = 未保存标记 + 待修数 + 校验/放弃/保存，常态提示「所有改动直接保存到这个世界，即时生效」（tab 切换不丢改动，DOM 常驻 display 切换；关闭弹窗有未保存拦截）。底栏动作三组：备份与复制（导出资产包/复制为新世界）· 全量备份（导出完整备份/导入备份）· 危险区（重置剧情） |
+| `WorldBrowser` | **世界工作台**（2026-09-13 重构 + 同日单一真相源改版）：顶栏 = 标题 + 上下文行（世界名 · 目录名）+ 「切换世界 ▾」面板（收起的世界列表 = 存档列表：每项带世界名/时钟进度/当前徽标/待修标记/打开·校验·删除，内含新建世界 L1/L2 表单与「导入为新世界」）；tab 分两组——**世界资产**（概览/世界书/场景/人物，**就地编辑**，无全局编辑模式开关）与**本存档**（事件日志只读，改判走导演窗口）；底部 sticky 保存条 = 未保存标记 + 待修数 + 校验/放弃/保存，常态提示「所有改动直接保存到这个世界，即时生效」（tab 切换不丢改动，DOM 常驻 display 切换；关闭弹窗有未保存拦截）。底栏动作三组：备份与复制（导出资产包/复制为新世界）· 全量备份（导出完整备份/导入备份）· 危险区（重置剧情） |
 | `SceneCard` | 当前场景 + 在场人物（模板底稿直出；首达/剧情舞台时展示说书人成品）。**名单第一行是主角本人**并挂「主角」标（取自 `/state.player_present`；不在镜头场景时不出现）——标签负责区分，行本身不改色（2026-09-21 用户："有标记了就不用文字变色"）。那是"我眼前有谁"，与底稿正文剔主角不矛盾（§8.3 / §8.6） |
-| `StatePanel` | 时钟 / 在场 / 可见轴（二期）/ 目标两级树（大目标带 x/y 章节进度、子目标缩进、已完成划线、未挂靠支线单列）；在场名单里给未落卡者挂「未落卡」标记、其下一行 `待落卡 · N` 入口（N = 人物数 + 场景数，N>0 才出现）；candidate 采纳后刷新 |
+| `StatePanel` | 时钟 / 在场 / 目标两级树（大目标带 x/y 章节进度、子目标缩进、已完成划线、未挂靠支线单列）；在场名单里给未落卡者挂「未落卡」标记、其下一行 `待落卡 · N` 入口（N = 人物数 + 场景数，N>0 才出现）；candidate 采纳后刷新 |
 | `UnfiledPanel`（抽屉「落卡」页） | **人物 / 场景两段并列**的全量名单（人物**含不在场者**）。每条收起态一行（展开三角 + 名称 + 状态标签 + ×）；展开才拉 `draft` 预填（带「AI 草稿 · 请核对」标记）、「已写出的事实」默认折叠点了才拉、「确定落卡」/「×」；场景条目名称只读并附一行听域后果警告。键/候选与资产分层，落成后从名单消失（§2.4） |
 | `LedgerView` | 事件日志时间线（只读 + 公开/私密/正文分层展示，玩家可点名某条发起改判） |
 | `SettingsPanel` | 全局预设（导演准则 + 说书人预设）+ 系统设置（**模型接口（主 / 辅两块，各 base url + key + 模型名）** / 注入上限 / 界面与流程 三段分组；2026-09-16 重排，2026-09-20 拆成两块） |

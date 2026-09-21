@@ -110,7 +110,6 @@ class SaveData(BaseModel):
     player_scene: str = ""
     narrative_preset: NarrativePreset = Field(default_factory=NarrativePreset)
     entities: dict[str, EntityRuntime] = Field(default_factory=dict)
-    axes: dict[str, int] = Field(default_factory=dict)  # 二期预留
     access_overrides: dict[str, list[str] | None] = Field(default_factory=dict)
     audit_last_error: str | None = None  # 最近一次审计失败记录（不再静默）
     active_lore_ids: list[str] = Field(default_factory=list)  # 本轮装配的世界书命中列表

@@ -295,7 +295,6 @@ def test_player_profile_update(tmp_path):
             "lorebook": world["lorebook"],
             "scenes": world["scenes"],
             "npcs": dict(world["npcs"]),
-            "axes": world["axes"],
         }
         card = payload["npcs"].pop("刘星")
         # 前端 readNpcs 是"键 = 卡内 id"一起改的：落盘按 dict 键命名文件，
@@ -392,7 +391,6 @@ def test_world_edit_requires_exactly_one_player(tmp_path):
             "lorebook": world["lorebook"],
             "scenes": world["scenes"],
             "npcs": {"朱明": world["npcs"]["朱明"]},  # 把主角卡删掉
-            "axes": world["axes"],
         }
         put = client.put(f"/api/sessions/{sid}/world", json=payload)
         assert put.status_code == 400
@@ -421,7 +419,6 @@ def test_world_edit_and_save_as(tmp_path):
             "lorebook": world["lorebook"],
             "scenes": world["scenes"],
             "npcs": world["npcs"],
-            "axes": world["axes"],
         }
         payload["overview"]["name"] = "青石镇（已改）"
         r = client.put(f"/api/sessions/{sid}/world", json=payload)
@@ -1114,7 +1111,6 @@ def test_create_world_from_draft_payload(tmp_path):
             "刘星": {"id": "刘星", "is_player": True},
             "朱明": {"id": "朱明", "has_actor": True},
         },
-        "axes": [],
     }
     with _make_client(tmp_path) as client:
         r = client.post(
@@ -1135,7 +1131,6 @@ def test_create_world_rejects_unclean_assets_before_writing(tmp_path):
         "lorebook": [],
         "scenes": [{"id": "主街"}],
         "npcs": {"刘星": {"id": "刘星", "is_player": True}},
-        "axes": [],
     }
     with _make_client(tmp_path) as client:
         r = client.post("/api/worlds/new", json={"world_id": "bad1", "payload": payload})
@@ -1184,7 +1179,6 @@ def test_world_edit_soft_warns_and_hard_blocks(tmp_path):
             "lorebook": world["lorebook"],
             "scenes": world["scenes"],
             "npcs": world["npcs"],
-            "axes": world["axes"],
         }
 
         # 软警告：start_scene 指向不存在的场景 → 存进去能跑，但必须被看见
@@ -1214,7 +1208,6 @@ def test_world_check_targets_the_save_instance_not_the_template(tmp_path):
             "lorebook": world["lorebook"],
             "scenes": world["scenes"],
             "npcs": world["npcs"],
-            "axes": world["axes"],
         }
         payload["overview"]["start_scene"] = "不存在的地方"
         assert client.put(f"/api/sessions/{sid}/world", json=payload).status_code == 200

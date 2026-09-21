@@ -13,7 +13,7 @@ from app.world.models import WorldContent
 class GameSession:
     """一个世界 = 一个存档（单一真相源，2026-09-13 改版）。
 
-    世界资产（world.json / npcs/ / scenes.json / lorebook.json / axes.json）
+    世界资产（world.json / npcs/ / scenes.json / lorebook.json）
     与运行态（save.json / events.jsonl / candidates/）同住 ``content/<world>/``
     一层目录——正在玩的状态就是唯一真相，没有模板/副本之分。
     ``world_dir`` 与 ``save_dir`` 是同一目录的两个名字，保留两个属性名是

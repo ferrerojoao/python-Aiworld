@@ -377,7 +377,6 @@ function npcWorldRoutes(locked) {
         lorebook: [],
         scenes: [],
         npcs: { 刘星: card("刘星", true), 朱明: card("朱明", false) },
-        axes: [],
         events: [],
         player_locked: locked,
       }),
