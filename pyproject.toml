@@ -9,6 +9,10 @@ dependencies = [
     "pydantic>=2.6",
     "openai>=1.30",
     "jinja2>=3.1",
+    # 图片处理（2026-09-24 用户要求装）：场景图/人物图的解码校验 +
+    # 归一化到规范尺寸（1280×720 场景 / 512×512 人物）。方案见
+    # docs/方案-场景与人物附图-AIWorld.md §4.4。
+    "pillow>=10.0",
 ]
 
 [project.optional-dependencies]
