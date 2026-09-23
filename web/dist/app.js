@@ -19,7 +19,7 @@ const state = {
   goals: [],
   // 落卡窗口 2.0（2026-09-19）：待落卡的**人物**与**场景**。
   // 人物 = 有键无卡（引擎已认他是"人"，但资产里还没有档案），缓存下来是为了
-  // 左栏在场名单能打「未落卡」标；场景 = 审计建议落卡但玩家还没拍板的地方
+  // 左栏在场名单能打「未转正」标（内部名 unfiled）；场景 = 审计建议落卡但玩家还没拍板的地方
   // （此前是审计直接静默写 scenes.json 的）。
   unfiled: [],
   unfiledScenes: [],
@@ -194,7 +194,9 @@ async function rerollCurrent() {
     state.candidates.push(data);
     state.currentCandidateId = data.candidate_id;
     renderCandidateMessage();
-    loadDebugTrace();  // 重抽过程也进调试面板
+    // 调试面板入口已下线（2026-09-22 用户要求）：面板本身保留，但顶栏与抽屉不再有
+    // 入口按钮，这里也就不再预取 trace（否则每次重抽白发一个请求、且玩家看不到）。
+    // 要恢复：把 loadDebugTrace(); 加回这一行，并在 index.html 放回 data-tab="debug" 按钮。
   } catch (e) {
     clearPipelineStatus();
     addMessage("npc", `⚠ 重抽失败：${e.message}`);
@@ -362,8 +364,8 @@ function renderLeftRail(data) {
       present.appendChild(mine);
     }
     for (const name of names) {
-      // 在场名单里区分**有卡 / 未落卡**（同一把尺子："可改的字段必须在清单里
-      // 看得见"）——要被落卡的对象，先得让人看出他没档。
+      // 在场名单里区分**有卡 / 未转正**（同一把尺子："可改的字段必须在清单里
+      // 看得见"）——要被转正的对象，先得让人看出他没档。
       const pending = unfiledMap.get(name);
       const item = document.createElement("div");
       item.className = pending ? "rail-item rail-temp" : "rail-item";
@@ -371,8 +373,8 @@ function renderLeftRail(data) {
       label.textContent = name;
       item.appendChild(label);
       if (pending) {
-        item.appendChild(stTag("未落卡"));
-        item.title = "跟你有过往来，但引擎还没有他的档案——点击去补一张人物卡";
+        item.appendChild(stTag("未转正"));
+        item.title = "跟你有过往来，但引擎还没有他的档案——点击去转正（补一张人物卡）";
         item.onclick = () => openDrawer("unfiled");
       }
       present.appendChild(item);
@@ -683,7 +685,11 @@ function renderStatePanel(data) {
 // 正式一员（编剧被禁止替他编来历），但他已经是个"人"（有名字、看得见、挂得住）。
 //
 // 分工照旧：左栏只报数（它回答"这个场景此刻有谁"，而名单里可能含**不在场**的人
-// ——玩家离开酒馆后他还挂得住）；全量与操作都在抽屉「落卡」里。
+// ——玩家离开酒馆后他还挂得住）；全量与操作都在抽屉「转正」里。
+//
+// ⚠️ 命名：机制内部仍叫「落卡」（`unfiled` / `landing`，接口与文档都沿用），
+// **只有玩家看见的文案叫「转正」**（2026-09-22 用户要求）——两者指的是同一件事，
+// 改文案时别去动 id / 接口名。
 function unfiledByName(data) {
   const map = new Map();
   for (const item of data.unfiled || []) map.set(item.name, item);
@@ -696,8 +702,9 @@ function unfiledByName(data) {
 // 场景此前是审计单方面静默写进 scenes.json 的——描述只能是占位句（"暂无描述。"），
 // 而那句每轮都被注入；这个窗口就是那个缺口的补法。
 //
-// 折叠纪律（省调用）：收起态只有一行（名称 + 展开 + ×）；展开才去拉「AI 草稿」，
-// 「已写出的事实」**默认折叠**、点了才拉。没展开的条目一个请求都不发。
+// 折叠纪律（省调用）：收起态只有一行（名称 + 展开 + ×）；展开才去拉「AI 草稿」。
+// 没展开的条目一个请求都不发。（「已写出的事实」入口已于 2026-09-22 从前台撤掉，
+// 见 landingBody 里的说明。）
 function renderUnfiled(data) {
   state.unfiled = data.unfiled || [];
   state.unfiledScenes = data.unfiled_scenes || [];
@@ -718,8 +725,8 @@ function renderUnfiledEntry() {
   const row = document.createElement("button");
   row.type = "button";
   row.className = "rail-item rail-temp";
-  row.textContent = `待落卡 · ${total}`;
-  row.title = "有名字的人、或是你还会再去的地点——引擎都还没有它们的档案。点开逐条落卡";
+  row.textContent = `待转正 · ${total}`;
+  row.title = "有名字的人、或是你还会再去的地点——引擎都还没有它们的档案。点开逐条转正";
   row.onclick = () => openDrawer("unfiled");
   box.appendChild(row);
 }
@@ -731,14 +738,14 @@ function renderUnfiledPanel() {
   const npcs = state.unfiled;
   const scenes = state.unfiledScenes;
   if (!npcs.length && !scenes.length) {
-    box.innerHTML = '<div class="empty">没有待落卡的东西。</div>';
+    box.innerHTML = '<div class="empty">没有待转正的东西。</div>';
     return;
   }
   const hint = document.createElement("div");
   hint.className = "st-note";
   hint.textContent =
-    "引擎只把候选摆在这里，落不落由你决定。展开会向模型要一份「AI 草稿」——草稿" +
-    "**只从已写出的事实里总结**，写不到的就留空（留空 = 还没写到，不是没有）；" +
+    "引擎只把候选摆在这里，转不转正由你决定。展开会向模型要一份「AI 草稿」——草稿" +
+    "只从已采纳的正文里总结，写不到的就留空（留空 = 还没写到，不是没有）；" +
     "核对过、改过，点确定才落地。";
   box.appendChild(hint);
   if (npcs.length) box.appendChild(landingSection("人物", npcs, "npc"));
@@ -856,38 +863,14 @@ function landingBody(body, item, kind) {
     const warn = document.createElement("div");
     warn.className = "st-note land-warn";
     warn.textContent =
-      "落卡之后，这里的公开事件会进入**所有人**的风闻范围（现在不会）。要设听域请落卡后到世界工作台改。";
+      "转正之后，这里的公开事件会进入**所有人**的风闻范围（现在不会）。要设听域请转正后到世界工作台改。";
     body.appendChild(warn);
   }
 
-  // 「已写出的事实」默认折叠：它是草稿的对账凭据，点了才拉。
-  const evToggle = document.createElement("button");
-  evToggle.type = "button";
-  evToggle.className = "land-ev-toggle";
-  evToggle.textContent = "▸ 已写出的事实";
-  const evBox = document.createElement("div");
-  evBox.className = "unfiled-evidence";
-  evBox.hidden = true;
-  let evLoaded = false;
-  evToggle.onclick = async () => {
-    if (!evBox.hidden) {
-      evBox.hidden = true;
-      evToggle.textContent = "▸ 已写出的事实";
-      return;
-    }
-    evBox.hidden = false;
-    evToggle.textContent = "▾ 已写出的事实";
-    if (evLoaded) return;
-    evLoaded = true;
-    evBox.textContent = "读取中…";
-    try {
-      renderEvidence(evBox, await api(landingUrl(item, kind, "evidence")));
-    } catch (e) {
-      evBox.textContent = `读取失败：${e.message}`;
-    }
-  };
-  body.appendChild(evToggle);
-  body.appendChild(evBox);
+  // 「已写出的事实」入口已于 2026-09-22 撤掉（用户要求：这一栏不需要）。三个零件
+  // ——`.land-ev-toggle` 按钮 / `.unfiled-evidence` 盒子 / `renderEvidence()`——全部保留，
+  // 后端 `GET .../evidence` 也照旧可用。要加回：把按钮 + 盒子 + 那个 onclick 贴回
+  // `status` 之前即可，别处一行都不用改（展开本就在拉草稿，加回只是多一次请求）。
 
   const status = document.createElement("div");
   status.className = "st-note";
@@ -896,7 +879,7 @@ function landingBody(body, item, kind) {
   const ok = document.createElement("button");
   ok.type = "button";
   ok.className = "land-file";
-  ok.textContent = "确定落卡";
+  ok.textContent = "确定转正";
   ok.onclick = async () => {
     ok.disabled = true;
     try {
@@ -907,20 +890,20 @@ function landingBody(body, item, kind) {
         body: JSON.stringify(payload),
       });
       await refreshState();
-      // 体检问题（start_scene 越界之类）与这次落卡无关时也会报出来——允许"半成品态"
+      // 体检问题（start_scene 越界之类）与这次转正无关时也会报出来——允许"半成品态"
       // 存在，但它必须是**被看见的**，所以如实转告，不拦。
       const problems = res.problems || [];
       const what =
         kind === "npc"
-          ? `「${item.name}」已落卡——从此刻起他是这个世界有档案的一员。`
-          : `「${item.name}」已落卡——它成了世界的正式场景，公开事件从此会被风闻。`;
+          ? `「${item.name}」已转正——从此刻起他是这个世界有档案的一员。`
+          : `「${item.name}」已转正——它成了世界的正式场景，公开事件从此会被风闻。`;
       addMessage(
         "npc",
         problems.length ? `⚠ ${what}但引擎体检查到：${problems.join("；")}` : `✓ ${what}`
       );
     } catch (e) {
       ok.disabled = false;
-      status.textContent = `落卡失败：${e.message}`;
+      status.textContent = `转正失败：${e.message}`;
     }
   };
   body.appendChild(ok);
@@ -930,7 +913,7 @@ function landingBody(body, item, kind) {
 }
 
 async function loadLandingDraft(inputs, badges, item, kind, status) {
-  status.textContent = "正在从已写出的事实里总结草稿…";
+  status.textContent = "正在从已采纳的正文里总结草稿…";
   try {
     const res = await api(landingUrl(item, kind, "draft"));
     const count = res.evidence_count || 0;
@@ -950,6 +933,9 @@ async function loadLandingDraft(inputs, badges, item, kind, status) {
   }
 }
 
+// ⚠️ 入口已下线（2026-09-22）：「已写出的事实」按钮从前台撤掉了，这个渲染器与后端的
+// `GET /unfiled|locations/{name}/evidence` 都**照旧保留**（用户要求"代码留着"）。
+// 加回入口时它立刻又能用——只要把 landingBody 里那段按钮 + 盒子贴回去。
 function renderEvidence(box, res) {
   box.innerHTML = "";
   const meta = document.createElement("div");
@@ -994,7 +980,7 @@ function landingDiscard(item, kind) {
   x.textContent = "×";
   x.title =
     kind === "npc"
-      ? "放弃落卡：他退回去当即兴角色（出场计数一并清零）"
+      ? "放弃转正：他退回去当即兴角色（出场计数一并清零）"
       : "定为临时：不再自动入队。要改成正式场景请去世界工作台";
   x.onclick = () => {
     const ask = document.createElement("span");

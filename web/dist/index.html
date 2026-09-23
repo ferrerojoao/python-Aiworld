@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AIWorld</title>
-  <link rel="stylesheet" href="style.css?v=73560726" />
+  <link rel="stylesheet" href="style.css?v=87bc2e73" />
 </head>
 <body>
   <div id="app">
@@ -15,9 +15,11 @@
       <div id="scene-nav"></div>
       <h2>在场</h2>
       <div id="present-npcs"></div>
-      <!-- 待落卡 · N（落卡窗口 2.0，2026-09-19）：N = 待落卡的人物数 + 场景数，>0 才出现。
+      <!-- 待转正 · N（落卡窗口 2.0，2026-09-19）：N = 待转正的人物数 + 场景数，>0 才出现。
            名单可能含**不在场**的人（玩家离开酒馆后他还挂得住），所以全量与操作在
-           抽屉「落卡」里。 -->
+           抽屉「转正」里。
+           ⚠️ 机制内部仍叫「落卡」（代码 / 接口 / 文档里都是 unfiled · landing），
+           只有**玩家看见的文案**叫「转正」（2026-09-22 用户要求）。 -->
       <div id="unfiled-entry" hidden></div>
       <h2>剧情目标</h2>
       <ul id="state-goals"></ul>
@@ -36,7 +38,9 @@
           <button id="open-world">世界工作台</button>
           <button data-tab="director">导演</button>
           <button data-tab="preset">预设</button>
-          <button data-tab="debug">调试</button>
+          <!-- 调试入口已下线（2026-09-22 用户要求）：面板与 app.js 里的
+               loadDebugTrace / debugEntryCard 全部保留，只是不再有按钮。
+               要恢复：把 <button data-tab="debug">调试</button> 加回这里和下面抽屉。 -->
           <button data-tab="settings">设置</button>
         </div>
       </header>
@@ -63,9 +67,10 @@
         <div class="drawer-tabs">
         <button class="tab active" data-tab="director">导演</button>
         <button class="tab" data-tab="states">状态</button>
-        <button class="tab" data-tab="unfiled">落卡</button>
+        <button class="tab" data-tab="unfiled">转正</button>
         <button class="tab" data-tab="preset">预设</button>
-        <button class="tab" data-tab="debug">调试</button>
+        <!-- 调试入口已下线（2026-09-22 用户要求）：面板保留、按钮撤掉。
+             要恢复：把 <button class="tab" data-tab="debug">调试</button> 加回这一行。 -->
         <button class="tab" data-tab="settings">设置</button>
       </div>
 
@@ -85,7 +90,7 @@
       </div>
 
       <div id="tab-unfiled" class="tab-panel">
-        <h3>落卡</h3>
+        <h3>转正</h3>
         <div id="unfiled-panel"></div>
       </div>
 
@@ -100,6 +105,11 @@
         <button id="save-preset">保存预设</button>
       </div>
 
+      <!-- 调试面板：入口已下线（2026-09-22 用户要求），但**面板与代码全部保留**。
+           app.js 里的 loadDebugTrace / debugEntryCard / #refresh-debug 接线都还在，
+           只是顶栏与抽屉不再放按钮，所以正常人点不到它。
+           要恢复：把两个 <button data-tab="debug">调试</button>（顶栏 + 抽屉各一个）
+           加回即可，这一整块不用动。 -->
       <div id="tab-debug" class="tab-panel">
         <h3>调试追踪</h3>
         <button id="refresh-debug">刷新</button>
@@ -117,7 +127,7 @@
         <label>模型名</label>
         <input id="setting-model-main" type="text" placeholder="qwen2.5:7b" />
 
-        <h4>辅助模型接口（质检 / 审计 / 分类 / 落卡草稿）</h4>
+        <h4>辅助模型接口（质检 / 审计 / 分类 / 转正草稿）</h4>
         <label>API Base URL</label>
         <input id="setting-cheap-url" type="text" placeholder="留空 = 跟随主模型接口" />
         <label>API Key</label>
@@ -231,6 +241,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=23d1a5db"></script>
+  <script src="app.js?v=c6c57769"></script>
 </body>
 </html>

@@ -136,7 +136,9 @@ test("事件日志：标签由接口给的有效名单决定（改判私密后�
   assert.match(result.text, /【私密·无知情者】（已改判）/, "空名单是私密且无人知情：\n" + result.text);
 });
 
-/* ---------- 落卡窗口 2.0（2026-09-19）：待落卡的人物 + 场景 ---------- */
+/* ---------- 落卡窗口 2.0（2026-09-19）：待落卡的人物 + 场景 ----------
+   ⚠️ 机制内部叫「落卡」/ `unfiled`，**前台文案叫「转正」**（2026-09-22 用户要求）。
+   断言一律按玩家看得见的文案写——文案错了就是 bug。 */
 
 const unfiledState = {
   present_names: ["刘星", "卢克"],
@@ -148,7 +150,7 @@ const unfiledState = {
   unfiled_scenes: [{ name: "村东苇塘", aliases: ["苇塘"] }],
 };
 
-test("在场名单里分得清「有卡 / 未落卡」，入口报人物 + 场景的总数", async () => {
+test("在场名单里分得清「有卡 / 未转正」，入口报人物 + 场景的总数", async () => {
   const { result } = await bootApp({
     routes: worldRoutes({ state: unfiledState }),
     probe: `return {
@@ -158,9 +160,9 @@ test("在场名单里分得清「有卡 / 未落卡」，入口报人物 + 场�
     };`,
   });
 
-  assert.match(result.rail, /卢克/, "未落卡者也是在场的「人」，要在名单里");
-  assert.match(result.rail, /未落卡/, "在场名单必须看得出谁还没有档案");
-  assert.equal(result.entry, "待落卡 · 4", "入口要报全量（3 人 + 1 场景，含不在场的人）");
+  assert.match(result.rail, /卢克/, "未转正者也是在场的「人」，要在名单里");
+  assert.match(result.rail, /未转正/, "在场名单必须看得出谁还没有档案");
+  assert.equal(result.entry, "待转正 · 4", "入口要报全量（3 人 + 1 场景，含不在场的人）");
   assert.equal(result.hidden, false);
 });
 
@@ -188,7 +190,7 @@ test("抽屉「落卡」：人物与场景两段并列，含不在场者与变�
   });
 
   assert.equal(result.open, true, "点入口应该打开抽屉");
-  assert.equal(result.active, true, "并且停在「落卡」页");
+  assert.equal(result.active, true, "并且停在「转正」页");
   // 不在场的人也在——玩家离开酒馆后他还挂得住，这里是他唯一的入口。
   assert.match(result.text, /人物 · 3/);
   assert.match(result.text, /场景 · 1/);
@@ -215,7 +217,7 @@ test("收起态不发草稿请求：没展开的条目不该花钱", async () =>
   assert.deepEqual(drafts, [], `没展开就不该要草稿：${JSON.stringify(drafts)}`);
 });
 
-test("展开待落卡的一条：拉草稿预填、挂「AI 草稿」标记、确定时原样 POST", async () => {
+test("展开待转正的一条：拉草稿预填、挂「AI 草稿」标记、确定时原样 POST", async () => {
   let drafted = null;
   let posted = null;
   const { result } = await bootApp({
@@ -260,37 +262,24 @@ test("展开待落卡的一条：拉草稿预填、挂「AI 草稿」标记、�
   assert.ok(drafted, "展开就该去拉草稿");
   assert.equal(result.prefilled, "灰袍，左手有旧疤", "草稿要预填进 textarea");
   assert.equal(result.badgeShown, true, "预填的字段必须挂「AI 草稿 · 请核对」（草稿 ≠ 事实）");
-  assert.ok(posted, "「确定落卡」必须真的发请求");
+  assert.ok(posted, "「确定转正」必须真的发请求");
   assert.equal(posted.body.appearance, "灰袍，左手有旧疤", "玩家没改的栏位原样送出去");
   assert.equal(posted.body.persona, "话少，但记性极好", "玩家改过的以玩家为准");
   assert.deepEqual(
     Object.keys(posted.body).sort(),
     ["appearance", "persona"],
-    "只发能从正文推导的两栏；幕后注 / 自知的隐秘 / Actor 档位不进落卡表单（落卡后到工作台填）"
+    "只发能从正文推导的两栏；幕后注 / 自知的隐秘 / Actor 档位不进转正表单（转正后到工作台填）"
   );
   // 体检问题与本张卡无关时也会报出来——允许半成品态存在，但它必须被看见。
-  assert.match(result.messages, /已落卡/);
+  assert.match(result.messages, /已转正/);
   assert.match(result.messages, /start_scene 不在场景表里/);
 });
 
-test("「已写出的事实」默认折叠：点了才拉证据（草稿的对账凭据）", async () => {
-  let asked = null;
-  const { result } = await bootApp({
+test("「已写出的事实」入口已下线：转正条目里没有这个按钮，也不去拉证据", async () => {
+  const { result, calls } = await bootApp({
     routes: [
       ...worldRoutes({ state: unfiledState }),
       [/\/unfiled\/[^/]+\/draft$/, () => ({ name: "卢克", appearance: "灰袍", persona: "话少", evidence_count: 1 })],
-      [
-        /\/unfiled\/[^/]+\/evidence$/,
-        (u) => {
-          asked = u;
-          return {
-            name: "卢克",
-            location: "测试场景",
-            last_seen: "2026-07-14T08:00:00",
-            events: [{ id: "e1", at: "2026-07-14T08:00:00", location: "测试场景", body: "卢克擦着杯子。" }],
-          };
-        },
-      ],
     ],
     probe: `
       ${clickJs("#unfiled-entry .rail-item")}
@@ -299,19 +288,44 @@ test("「已写出的事实」默认折叠：点了才拉证据（草稿的对�
         .find((r) => r.textContent.includes("卢克"));
       luke.querySelector(".land-toggle").dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await new Promise((r) => setTimeout(r, 60));
-      const ev = luke.querySelector(".unfiled-evidence");
-      const before = { hidden: ev.hidden, text: ev.textContent };
-      luke.querySelector(".land-ev-toggle").dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await new Promise((r) => setTimeout(r, 60));
-      return { before, hidden: ev.hidden, text: ev.textContent };`,
+      return {
+        toggle: luke.querySelectorAll(".land-ev-toggle").length,
+        box: luke.querySelectorAll(".unfiled-evidence").length,
+        text: luke.textContent,
+        buttons: [...luke.querySelectorAll("button")].map((b) => b.textContent),
+      };`,
   });
 
-  // 没点之前盒子是空的（真拉过的话会先被写成"读取中…"再被填上）
-  assert.equal(result.before.hidden, true, "默认折叠：不该请求证据");
-  assert.equal(result.before.text, "", "默认折叠：盒子必须是空的");
-  assert.ok(asked, "点了才拉");
-  assert.equal(result.hidden, false);
-  assert.match(result.text, /卢克擦着杯子/);
+  assert.equal(result.toggle, 0, "「已写出的事实」按钮不该再出现在转正条目里（2026-09-22 用户要求）");
+  assert.equal(result.box, 0, "证据盒子一并撤掉——没有入口的盒子只是死重量");
+  assert.ok(!result.text.includes("已写出的事实"), `条目里不该再出现这几个字：\n${result.text}`);
+  assert.deepEqual(
+    calls.filter((c) => c.url.endsWith("/evidence")),
+    [],
+    "没有入口就不该有人去拉证据"
+  );
+  assert.ok(result.buttons.includes("确定转正"), `「确定转正」必须还在：${JSON.stringify(result.buttons)}`);
+});
+
+/* ---------- 调试窗口：入口下线，代码保留（2026-09-22） ---------- */
+
+test("调试入口已下线：顶栏与抽屉都没有「调试」，但面板与代码保留", async () => {
+  const { result } = await bootApp({
+    routes: worldRoutes(),
+    probe: `return {
+      entries: document.querySelectorAll('[data-tab="debug"]').length,
+      staleButtons: [...document.querySelectorAll("button")].filter((b) => b.textContent === "调试").length,
+      panel: document.querySelector("#tab-debug") !== null,
+      refresh: document.querySelector("#refresh-debug") !== null,
+      drawerTabs: [...document.querySelectorAll(".drawer-tabs .tab")].map((b) => b.textContent),
+    };`,
+  });
+
+  assert.equal(result.entries, 0, "顶栏与抽屉都不该再有 data-tab=debug 的按钮（2026-09-22 用户要求）");
+  assert.equal(result.staleButtons, 0, "文案层也不该再有「调试」按钮");
+  assert.equal(result.panel, true, "面板要留着：入口下线、代码不删，以后还能加回来");
+  assert.equal(result.refresh, true, "#refresh-debug 的接线也留着（恢复入口即可用）");
+  assert.ok(result.drawerTabs.includes("转正"), `抽屉里要有「转正」页：${JSON.stringify(result.drawerTabs)}`);
 });
 
 test("场景段：展开拉草稿、写明听域后果、确定 POST 到 /locations/{name}/file", async () => {
