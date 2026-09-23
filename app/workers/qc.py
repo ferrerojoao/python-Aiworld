@@ -66,7 +66,6 @@ async def run_qc(
     ledger: Ledger,
     prose: str,
     *,
-    participants: list[str] | None = None,
     preset: NarrativePreset | None = None,
     reference: str = "",
     summary_hint: str = "",
@@ -74,7 +73,12 @@ async def run_qc(
     worker: str = "qc",
     temperature: float = 0.2,
 ) -> QCOutput:
-    """QC worker: style, leak and banned-words checks (all by the LLM)."""
+    """QC worker: style, leak and banned-words checks (all by the LLM).
+
+    参照区**只由调用方的 ``reference`` 决定**（调用方用 ``build_qc_reference`` 算好再传）。
+    这里曾有一个 ``participants`` 形参，函数体从不使用它 —— 2026-09-23 删掉：
+    它诱使人以为"传 participants 就能控制参照区"，而重抽那笔正是因此长期传着空表。
+    """
     preset = preset or world.presets
     banned = list(preset.banned_words)
 

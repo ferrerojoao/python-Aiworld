@@ -263,6 +263,46 @@ def test_reroll_keeps_multiple_candidates(session, fake_llm, settings):
     assert len(session.candidates.list_for_turn(first.turn_id)) == 2
 
 
+def test_reroll_qc_reference_keeps_previous_participants(session, fake_llm, settings):
+    """重抽的质检参照区必须沿用上一稿上缴过的角色，不能退化成空表。
+
+    修复前：重抽那笔给 ``build_qc_reference`` 传的是 ``[]`` ⇒ 参照区只剩「当前场景
+    + 主角两条边界」，**NPC 知识泄漏完全查不了**，而重抽稿和主稿一样可被采纳。
+
+    夹具的假响应里 ``actor_questions`` 为空，自然产不出 NPC，所以这里按**落盘格式**
+    补一次 participants，验证重抽真的**读得到**上一稿存档里的那份基准。
+    判据取**实际发给质检的提示词**，不取内部变量。
+    """
+    runner = _runner(session, fake_llm, settings)
+    first = asyncio.run(runner.run_turn("问朱明昨天的事"))
+
+    first.participants = ["刘星", "朱明"]
+    session.candidates.save(first)
+
+    before = len(fake_llm.calls)
+    second = asyncio.run(runner.reroll(first.turn_id, mode="rephrase"))
+
+    # ① 参照区带上了上一稿的角色
+    qc_calls = [c for c in fake_llm.calls[before:] if c["worker"] == "qc"]
+    assert len(qc_calls) == 1
+    prompt = qc_calls[0]["messages"][-1]["content"]
+    assert "朱明 知道的事：" in prompt
+
+    # ② 基准被接力补存到新候选上，再抽一次还接得上
+    assert second.participants == ["刘星", "朱明"]
+
+
+def test_candidate_stores_qc_basis_even_when_qc_disabled(session, fake_llm, settings):
+    """比对基准随候选落盘，且**关掉质检那一轮也要有值**——否则重抽拿不到（2026-09-23）。"""
+    settings.qc_enabled = False
+    runner = _runner(session, fake_llm, settings)
+    candidate = asyncio.run(runner.run_turn("问朱明昨天的事"))
+
+    assert candidate.participants == ["刘星"]  # 夹具世界的主角
+    # 落盘/读回同一份（重抽读的就是它）
+    assert session.candidates.load(candidate.candidate_id).participants == candidate.participants
+
+
 def test_adopt_commits_one_and_cleans_other_candidates(session, fake_llm, settings):
     runner = _runner(session, fake_llm, settings)
     first = asyncio.run(runner.run_turn("问朱明昨天的事"))

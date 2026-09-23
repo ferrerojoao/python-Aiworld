@@ -86,6 +86,12 @@ class Candidate(BaseModel):
     prose: str = ""
     side_effects: SideEffects = Field(default_factory=SideEffects)
     conflicts: list[dict] = Field(default_factory=list)
+    # 本稿的质检比对基准：**这一拍上缴过的角色**（含玩家）。随候选落盘，因为重抽
+    # 要沿用它——上一稿上缴的角色不会从新稿的 writer 输出里再出现一次，而"二稿不再
+    # 提"不代表这一拍没发生过（否则相关 NPC 会从质检的比对基准里掉出去，见 turn.py
+    # 里"诊断成因 #6"那条注释）。缺省空表：老候选文件没这个字段也能读，只是那一稿
+    # 没有可比对的角色（重抽时以新稿上缴的为准）。
+    participants: list[str] = Field(default_factory=list)
     created_at: str = ""
     updated_at: str = ""
 

@@ -308,17 +308,19 @@ class TurnRunner:
         out = result.output
         player = self.session.ledger.player_name()
 
+        # 两稿上缴过的角色都进比对基准：二稿不再提，不代表这一拍没发生过
+        # （诊断成因 #6：participants 侧漏会让相关 NPC 从质检里掉出去）。
+        # **放在 if 之外算**：它要随候选落盘（见下面 Candidate），所以关掉质检的那一轮
+        # 也得有值——否则后面重抽取不到"这一拍上缴过的角色"，比对基准会退化成空表。
+        qc_participants = [player] + [pid for pid in result.participants if pid != player]
+
         if self.settings.qc_enabled:
             await self._progress("qc", "质检员审校中")
-            # 两稿上缴过的角色都进比对基准：二稿不再提，不代表这一拍没发生过
-            # （诊断成因 #6：participants 侧漏会让相关 NPC 从质检里掉出去）。
-            qc_participants = [player] + [pid for pid in result.participants if pid != player]
             qc = await run_qc(
                 self.llm,
                 self.session.world,
                 self.session.ledger,
                 out.prose,
-                participants=qc_participants,
                 preset=self.preset,
                 reference=build_qc_reference(
                     self.session.world,
@@ -362,6 +364,8 @@ class TurnRunner:
                 events=[],
             ),
             conflicts=issues + result.notes,
+            # 质检比对基准随候选落盘：重抽那一笔要用它（2026-09-23 用户定：补存，不做兜底）。
+            participants=qc_participants,
             created_at=now,
             updated_at=now,
         )
@@ -393,6 +397,14 @@ class TurnRunner:
             writer_directive=latest.writer_directive,
         )
         out = result.output
+        player = self.session.ledger.player_name()
+        # 重抽同样要过质检，比对基准 = **这一拍上缴过的角色** = 新稿上缴的 ∪ 上一稿存下的。
+        # 以前这里给 build_qc_reference 传的是空表 ⇒ 重抽稿只查"场景 + 主角两条边界"，
+        # 完全查不了 NPC 知识泄漏，而重抽稿和主稿一样可被采纳（2026-09-23 修）。
+        # 走"补存"而不是"兜底"（用户定）：上一稿的 participants 就在候选文件里，直接读，
+        # 不用"此刻在场"去猜——在场 ≠ 上缴过。
+        merged = {pid for pid in (*result.participants, *latest.participants) if pid and pid != player}
+        qc_participants = [player, *sorted(merged)]
 
         if self.settings.qc_enabled:
             await self._progress("qc", "质检员审校中")
@@ -405,7 +417,7 @@ class TurnRunner:
                 reference=build_qc_reference(
                     self.session.world,
                     self.session.ledger,
-                    [],
+                    qc_participants,
                     known_limit=self.settings.limits().known_set_limit,
                 ),
                 summary_hint=out.summary,
@@ -434,6 +446,7 @@ class TurnRunner:
             prose=prose,
             side_effects=side_effects,
             conflicts=issues + result.notes,
+            participants=qc_participants,
             created_at=now,
             updated_at=now,
         )
