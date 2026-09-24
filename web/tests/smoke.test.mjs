@@ -328,7 +328,7 @@ test("调试入口已下线：顶栏与抽屉都没有「调试」，但面板�
   assert.ok(result.drawerTabs.includes("转正"), `抽屉里要有「转正」页：${JSON.stringify(result.drawerTabs)}`);
 });
 
-test("场景段：展开拉草稿、写明听域后果、确定 POST 到 /locations/{name}/file", async () => {
+test("场景段：展开拉草稿、写明**落卡不改听域**、确定 POST 到 /locations/{name}/file", async () => {
   let posted = null;
   const { result } = await bootApp({
     routes: [
@@ -363,11 +363,56 @@ test("场景段：展开拉草稿、写明听域后果、确定 POST 到 /locati
   assert.equal(result.prefilled, "齐腰的苇子围着浅塘。", "场景草稿预填进描述栏");
   assert.equal(result.roValue, "村东苇塘");
   assert.equal(result.roReadonly, true, "名称是场景键（历史事件都记着它），只读");
-  assert.match(result.warn, /风闻/, "落卡会改变听域语义——必须在前端说出来，不能藏");
+  // 旧文案说"转正后公开事件会进所有人的风闻范围（现在不会）"——那是"空 region = 全域公共"
+  // 时代的结论。2026-09-24 反转默认之后落卡对听域**零影响**，警告必须跟着改，否则它自己
+  // 就在误导玩家（两边都得说：默认不传播 + 去哪改）。
+  assert.match(result.warn, /不传播/, "落卡不改听域：默认不传播要说出来");
+  assert.match(result.warn, /世界工作台/, "还要说清去哪改（不然玩家只被告知了一个坏消息）");
+  assert.ok(!/所有人/.test(result.warn), "旧的『进所有人风闻范围』不能再出现");
   assert.ok(posted, "场景落卡也要真的发请求");
   assert.match(posted.url, /\/locations\/[^/]+\/file$/);
   assert.equal(posted.body.perceivable, "齐腰的苇子围着浅塘。");
   assert.deepEqual(Object.keys(posted.body), ["perceivable"], "场景表单只有描述一栏");
+});
+
+test("region 选项化：场景可选已有地域 + 「全域」，人物只听已有地域（都不再靠手打）", async () => {
+  // 手打 region 的后果是**静默的**：场景填「青石镇」、人物误填「清石镇」，两边都不报错，
+  // 只是那个人从此收不到消息。把已出现的值喂给 datalist，错字压根不在候选里。
+  const data = {
+    scenes: [
+      { id: "主街", region: "青石镇" },
+      { id: "网吧", region: "" },
+      { id: "鱼市", region: "全域" },
+    ],
+    npcs: { 朱明: { region: ["清石镇"] }, 王蓉: {} },
+  };
+  const { result } = await bootApp({
+    routes: worldRoutes(),
+    probe: `
+      renderEditScenes(${JSON.stringify(data)});
+      renderEditNpcs(${JSON.stringify(data)});
+      const sInput = document.querySelector('#edit-scene-list [data-field="region"]');
+      const nInput = document.querySelector('#edit-npc-list [data-field="region"]');
+      const opts = (id) => [...document.querySelectorAll("#" + id + " option")].map((o) => o.value);
+      const label = (el) => el.closest(".field").querySelector("label").textContent;
+      return {
+        sList: sInput.getAttribute("list"),
+        nList: nInput.getAttribute("list"),
+        sOpts: opts("scene-region-options"),
+        nOpts: opts("npc-region-options"),
+        sLabel: label(sInput),
+        nLabel: label(nInput),
+      };`,
+  });
+
+  assert.equal(result.sList, "scene-region-options", "场景的 region 要挂上候选表");
+  assert.equal(result.nList, "npc-region-options", "人物的听域也要挂");
+  // 场景候选 = 「全域」+ 本世界已出现过的地域（场景卡 ∪ 人物卡），空串不进候选。
+  assert.equal(result.sOpts.join("|"), "全域|清石镇|青石镇", "候选要含全域与两侧已有的地域");
+  // 听域写「全域」是空转（全域事件本来就绕过听域这一路，后端也会滤掉）⇒ 不给这个候选。
+  assert.equal(result.nOpts.join("|"), "清石镇|青石镇", "听域候选里不该有『全域』");
+  assert.match(result.sLabel, /不传播/, "场景那条要说清留空 = 不传播");
+  assert.match(result.nLabel, /别手打/, "人物那条要说明为什么给候选（错一个字就静默收不到）");
 });
 
 /** 人物页锁态用例的桩：一个主角 + 一个普通 NPC，player_locked 由参数决定。 */
@@ -845,6 +890,106 @@ test("手改：编辑 → 改字 → 保存修改 → 正文就地变新（不�
   const puts = calls.filter((c) => c.method === "PUT");
   assert.equal(puts.length, 1);
   assert.match(puts[0].url, /\/api\/sessions\/s1\/candidates\/cand_1$/, "就地改这一稿");
+});
+
+test("编辑框必须与正文同列折行（padding 一给，行数就变、高度就对不上）", () => {
+  // ⚠️ jsdom 不排版 ⇒ 这条在行为上永远测不出来，只能退一步查源码（同「浮层是不是
+  //    真藏起来了」那条）。高度是拿编辑框自己的 scrollHeight 量的：左右 padding 一给，
+  //    可用宽度就比正文窄，同一段话多折出一行 ⇒ 高度静默差出一行。
+  const css = readDist("style.css");
+  const i = css.indexOf(".message-edit {");
+  assert.ok(i >= 0, "style.css 里要能找到 .message-edit 规则");
+  const body = css.slice(i + ".message-edit".length, css.indexOf("}", i));
+  assert.match(body, /padding:\s*0\s*;/, "padding 必须为 0（要改就得同步改 fitEditorHeight）");
+});
+
+test("编辑框高度跟着内容量（和正文档一样大：同列折行 + 补回边框）", async () => {
+  const { result } = await bootApp({
+    routes: [...candidateRoutes(), ...worldRoutes()],
+    probe: `
+      ${BTN_HELPERS}
+      // jsdom **不排版**：scrollHeight / offsetHeight / clientHeight 恒为 0。要给这条
+      // 逻辑写守卫，只能自己塞假的尺寸进去——顺便连"边框要补回来"一起验。
+      let fakeH = 512;
+      const stub = (name, get) =>
+        Object.defineProperty(HTMLTextAreaElement.prototype, name, { configurable: true, get });
+      stub("scrollHeight", () => fakeH);          // 内容高（不含边框）
+      stub("clientHeight", () => fakeH);          // 同上（无 padding / 无滚动条）
+      stub("offsetHeight", () => fakeH + 2);      // 上下各 1px 边框
+      click(btn("编辑"));
+      const box = document.querySelector(".message-edit");
+      const onOpen = box.style.height;
+      fakeH = 900;                                // 玩家又敲进去几段
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+      return { onOpen, onInput: box.style.height };
+    `,
+  });
+
+  // 512 + (offsetHeight - clientHeight) = 514 ⇒ 高度与正文对齐，不会比正文矮 2px。
+  assert.equal(result.onOpen, "514px", "一进编辑态就按内容高度撑开（含边框补偿）");
+  assert.equal(result.onInput, "902px", "继续写要跟着长，否则又变成在小框里滚");
+});
+
+test("编辑框宽度必须与正文一致（宽度真排版才量得出 ⇒ 查源码里两处读同一个变量）", () => {
+  // ⚠️ 同「padding 必须为 0」那条：jsdom **不排版**，宽度测不出来，只能退一步钉**同源**。
+  //    正文的 max-width 与编辑态的 width 必须读同一个变量 —— 否则改一处忘一处，
+  //    编辑框的宽度就和正文对不上（用户原话："宽度也要和稿件一样"）。
+  const css = readDist("style.css");
+  assert.match(css, /--bubble-max:\s*72%\s*;/, "气泡宽度要提成一个变量");
+  assert.match(css, /\.message\s*\{[^}]*max-width:\s*var\(--bubble-max\)/, "正文读这个变量");
+  assert.match(
+    css,
+    /\.message\.editing\s*\{[^}]*width:\s*var\(--bubble-max\)/,
+    "编辑态也得读同一个（textarea 的 100% 要有个确定的基准，否则退回内在宽度、缩成窄条）",
+  );
+});
+
+test("手改：进编辑态气泡挂 editing 类 → 宽度才有基准；退出就摘掉", async () => {
+  const { result } = await bootApp({
+    routes: [...candidateRoutes(), ...worldRoutes()],
+    probe: `
+      ${BTN_HELPERS}
+      const box = () => [...document.querySelectorAll("#messages .message")].pop();
+      const before = box().classList.contains("editing");
+      click(btn("编辑"));
+      const opened = box().classList.contains("editing");
+      click(btn("取消"));
+      const closed = box().classList.contains("editing");
+      return { before, opened, closed };
+    `,
+  });
+
+  assert.equal(result.before, false, "正文态不挂 editing（宽度仍由内容决定）");
+  assert.equal(result.opened, true, "进编辑态要挂上，否则 textarea 的 width:100% 没有基准");
+  assert.equal(result.closed, false, "退出编辑态要摘掉，否则这条空消息也占满一条");
+});
+
+test("编辑态中途待采纳的稿没了 → 气泡上那条 editing 也要摘掉（不然空消息占满一条）", async () => {
+  // 真实路径：`syncPendingFromServer` 发现这一轮候选已经被别处采纳/放弃 ⇒ clearCandidateControls。
+  // 那时气泡**不会**从对话里消失（只是控件被摘了），editing 类就会留在一条已经没有编辑框的
+  // 消息上。桩按调用次数分岔：启动那次给待采纳的稿，探针里那次给空。
+  let pendingHits = 0;
+  const { result } = await bootApp({
+    routes: [
+      [
+        /^\/api\/sessions\/s1\/candidates\/pending/,
+        () => ({ candidates: ++pendingHits === 1 ? [CAND] : [] }),
+      ],
+      ...candidateRoutes(),
+      ...worldRoutes(),
+    ],
+    probe: `
+      ${BTN_HELPERS}
+      const box = () => [...document.querySelectorAll("#messages .message")].pop();
+      click(btn("编辑"));
+      const opened = box().classList.contains("editing");
+      await syncPendingFromServer();
+      return { opened, cleared: box().classList.contains("editing") };
+    `,
+  });
+
+  assert.equal(result.opened, true, "先得真的进了编辑态（前提没成立的话，这条守卫等于没跑）");
+  assert.equal(result.cleared, false, "候选没了要连 editing 一起摘");
 });
 
 test("手改：点「取消」→ 编辑框收掉、正文回到原稿，且一个请求都不发", async () => {

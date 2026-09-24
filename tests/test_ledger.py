@@ -1,4 +1,6 @@
 from app.ledger.access import apply_access_override
+from app.ledger.queries import ADHOC_REGION, region_scope
+from app.world.models import Scene
 
 
 def test_present_at_derives_from_narrative(session):
@@ -302,7 +304,8 @@ def test_known_set_region_boundary(session):
     - 卡上有 region 标签 → 按标签听域（出差外地人不知本地旧事）
     - 卡上无标签 → 按亲历事件 region 推导（本地老 NPC 天然正确）
     - 推导为空（刚出场的无历史 NPC）→ 保守：什么区域的公开旧事都不闻
-    - 亲历与 known_by 无条件纳入；场景/事件无 region 标签 = 全域公共（单区域包兼容）
+    - 亲历与 known_by 无条件纳入；场景 region 留空 = **不传播**（2026-09-24 反转：
+      旧口径是"空 = 全域公共（单区域包兼容）"），要人人可闻得显式填 `全域`
     """
     ledger = session.ledger
     for s in ledger.world.scenes:
@@ -371,14 +374,32 @@ def test_known_set_region_boundary(session):
     assert "主街集市" in got
     assert "电竞比赛" not in got
 
-    # ⑤ 场景全无标签 = 全域公共：任何人闻到所有公开事件；私密仍按名单
+    # ⑤ 场景 region 留空 = **不传播**（2026-09-24 反转旧口径"空 = 全域公共"）：
+    #    任何人的听域里都没有 adhoc 哨兵 ⇒ 带地点的公开事件谁也闻不到；私密仍按名单
     for s in ledger.world.scenes:
         s.region = ""
     ledger.world.npcs["朱明"].region = []
     got = "\n".join(ledger.known_set("王蓉", "主街", 0))
+    assert "主街集市" not in got
+    assert "电竞比赛" not in got
+    assert "私下给朱明" not in got
+
+    # ⑥ 显式填 `全域` = 全域公共（旧的"空"语义搬到这里）：无地域归属，人人可闻
+    for s in ledger.world.scenes:
+        s.region = "全域"
+    got = "\n".join(ledger.known_set("王蓉", "主街", 0))
     assert "主街集市" in got
     assert "电竞比赛" in got
     assert "私下给朱明" not in got
+
+    # ⑦ 人物卡听域里写 `全域` = **无效输入，按未填处理**（哨兵值被滤掉 ⇒ 回退到亲历推导）。
+    #    它不是通配符：不能让它变成万能耳朵，也不该因为写了它就把推导那条路堵死。
+    for s in ledger.world.scenes:
+        s.region = "a" if s.id == "主街" else "b"
+    ledger.world.npcs["朱明"].region = ["全域"]
+    got = "\n".join(ledger.known_set("朱明", "主街", 0))
+    assert "主街集市" in got, "过滤后应回退到亲历推导（朱明在 a 区有亲历）"
+    assert "电竞比赛" not in got, "『全域』不能当通配符用——b 区的事他还是听不到"
 
 def test_known_set_adhoc_scene_not_hearsay(session):
     """一次性布景（location 不在场景表）的公开事件 = 哨兵 adhoc：
@@ -430,3 +451,53 @@ def test_known_set_adhoc_scene_not_hearsay(session):
     })
     got = "\n".join(ledger.known_set("朱明", "主街", 0))
     assert "天台" not in got
+
+
+def test_region_scope_maps_three_states():
+    """region 字面量 → 事件归属的**唯一**映射点（2026-09-24 默认值反转）。
+
+    这一层直接测函数而不是绕一圈 known_set：反转的全部内容就是这张三态表，
+    将来再有人想动默认值，红的会是这一条，而不是某条听测试的边角断言。
+    """
+    assert region_scope("") is ADHOC_REGION, "留空 = 不传播（新默认）"
+    assert region_scope("   ") is ADHOC_REGION, "只敲空格也算留空"
+    assert region_scope(None) is ADHOC_REGION, "字段缺失同样按不传播算"
+    assert region_scope("全域") is None, "`全域` = 全域公共（引擎侧 None = 人人可闻）"
+    assert region_scope(" 全域 ") is None
+    assert region_scope("青石镇") == "青石镇"
+    assert region_scope(" 青石镇 ") == "青石镇", "两边空白先剥掉，免得同域被拆成两个"
+
+
+def test_filing_a_scene_does_not_change_hearsay(session):
+    """**落卡不再改变听域语义**（2026-09-24 反转后的结论，也是这次改动的目的）。
+
+    旧口径下落卡是那次"从谁都不闻 → 人人可闻"的翻转（adhoc 哨兵换成"空 = 全域
+    公共"），前端不得不为此写一句警告。现在"空"也是不传播 ⇒ **落卡对听域零影响**：
+    场景从候选册进场景表、拿到别名与描述，传播范围一个字没变；要它传出去，只有
+    真的填了地域名或 `全域`。
+    """
+    ledger = session.ledger
+    # ⚠️ 名字必须在场景表里**不存在**（夹具里已经有「老巷旧楼」这类条目；重名会让
+    #    查表取到旧的那一条，整段测试就变成在验另一件事）。
+    loc = "河堤旧泵房"
+    assert loc not in {s.id for s in ledger.world.scenes}, "前提：这个名字还没进场景表"
+
+    ledger.append({
+        "id": ledger.allocate_event_id(),
+        "kind": "narrative", "at": "2026-07-14T10:00:00",
+        "location": loc, "participants": ["刘星"],
+        "known_by": None, "body": "泵房里翻出个箱子。", "summary": "泵房翻出箱子。",
+        "source": "turn",
+    })
+
+    def heard() -> bool:
+        return "翻出箱子" in "\n".join(ledger.known_set("王蓉", "主街", 0))
+
+    assert not heard(), "落卡前：一次性布景，谁都不闻"
+
+    # 落卡 = 场景表多一条（region 留空，转正表单本来就不收这个字段）
+    ledger.world.scenes.append(Scene(id=loc, aliases=[loc]))
+    assert not heard(), "落卡后仍不闻——这正是反转要的效果（旧口径这里会变成人人可闻）"
+
+    ledger.world.scenes[-1].region = "全域"
+    assert heard(), "只有显式表态（`全域`）才改变传播范围"

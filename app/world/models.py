@@ -45,7 +45,11 @@ class Scene(BaseModel):
     id: str  # 场景中文名，如"鱼市"（同时是事件 location 与显示名）
     aliases: list[str] = Field(default_factory=list)  # 变体名（"码头鱼市"），给移动解析与 id 纠偏
     perceivable: str = ""
-    region: str = ""  # 消息域：该场景事件归属的地域（跨区域知识边界用）；空 = 全域公共区
+    # 消息域：该场景事件归属的地域（跨区域知识边界用）。
+    # 🔴 留空 = **不传播**（该场景的公开事件谁都不风闻，2026-09-24 反转旧口径
+    # "空 = 全域公共"）；填 `全域` = 全域公共（人人可闻）；填地域名 = 只有听域含它的
+    # NPC 才风闻。映射点唯一：app/ledger/queries.py 的 region_scope()。
+    region: str = ""
     # 场景附图（2026-09-24）：世界目录下的**相对路径串**，如 "assets/scenes/鱼市-3f9a1c72.png"；
     # 空 = 没有图（界面不画那一块，引擎也不生成占位形象）。
     # 🔴 存路径串而不是 URL/base64 是有意的：路径串跟着 scenes.json 的**全量重写**

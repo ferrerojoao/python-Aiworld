@@ -2,8 +2,9 @@
 
 覆盖：玩家进在场名单且 Actor 视图剔掉自己；写手侧同样有玩家；占位名「你」
 降级为「玩家」、真名标注「名（玩家）」；context 人称一律写主角名（未设定时
-退化「玩家」），writer / actor 两侧契约同口径；known_set 含全域公开事件（王蓉
-0 条亲历但有「开场」）；known_set 的 0 = 全部；clean_context 不改人称；
+退化「玩家」），writer / actor 两侧契约同口径；known_set 的第三来源只在**显式**
+全域公共（场景 region = `全域`）时人人可闻、留空则谁也不闻（王蓉 0 条亲历，靠
+「开场」验证）；known_set 的 0 = 全部；clean_context 不改人称；
 写手工作单的三级梯队顺序（二级 → 三级 → 一级，整体前置于资料区）与抬头不带解释句。
 """
 
@@ -86,11 +87,22 @@ def test_player_name_placeholder_falls_back_to_player(session):
 
 
 def test_known_set_includes_global_public_event(session):
-    """王蓉 0 条亲历，但全域公开的「开场」应进她的已知集（第三来源）。"""
+    """王蓉 0 条亲历：**显式标了全域公共**（场景 region = `全域`）的「开场」进她的已知集
+    （第三来源）；而 region **留空 = 不传播** ⇒ 同一条公开事件她一点也闻不到。
+
+    2026-09-24 **默认值反转**：旧口径"空 region = 全域公共"下这条不必标 `全域`。把
+    "是不是人人可闻"从一个默认值改成一次**显式表态**，两个半边都得钉住——只钉
+    正方向的话，"留空"悄悄变回公共也没人发现。
+    """
     ledger = session.ledger
     assert ledger.by_participant.get("王蓉", []) == []
+
+    assert not any("开场" in line for line in ledger.known_set("王蓉", "主街", 0)), "留空 = 不传播，谁也不风闻"
+
+    for s in ledger.world.scenes:
+        s.region = "全域"
     mem = ledger.known_set("王蓉", "主街", 0)
-    assert any("开场" in line for line in mem)
+    assert any("开场" in line for line in mem), "显式标全域公共才人人可闻"
 
 
 def test_known_set_zero_returns_everything(session):

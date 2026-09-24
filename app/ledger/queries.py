@@ -8,7 +8,32 @@ from app.core.store import append_event, read_events, read_json, write_json_atom
 from app.ledger.save import LocationCandidate, SaveData
 from app.world.models import WorldContent
 
-ADHOC_REGION = "adhoc"  # 一次性布景的归属哨兵：不进任何听域的风闻通道
+ADHOC_REGION = "adhoc"  # 不传播哨兵：不进任何听域的风闻通道（一次性布景 / 场景 region 留空）
+GLOBAL_REGION = "全域"  # 全域公共哨兵（场景 region 填它 = 人人可闻，即引擎侧的 `None`）
+
+
+def region_scope(raw: str | None) -> str | None:
+    """场景卡上的 ``region`` 字面量 → 事件归属（唯一映射点）。
+
+    2026-09-24 **默认值反转**（用户裁定）：旧口径「留空 = 全域公共区」会把每一个
+    随手落卡的场景都变成全城广播，而 ``region`` 当时根本没有写入路径（转正表单只
+    收 ``perceivable``）⇒ 现实里所有场景的 region 都是空串 ⇒ 默认即"人人可闻"。
+    新口径：
+
+    - **留空 / 空白 → 不传播**（``ADHOC_REGION``，谁都不风闻）。宁可不闻，不错闻。
+    - ``全域`` → 全域公共（``None``，人人可闻）。要继续表达"全城都在传"就显式填它。
+    - 其余 → 该地域名，只有听域里含它的 NPC 才风闻。
+
+    ⚠️ 用中文词 `全域` 而不是 `*` 之类的符号：这个值是**玩家要在世界工作台里手打**
+    的，而且世界起草提示词也要让模型自己产出它——中文词两边都不用额外解释。
+    ⚠️ 这是**查表现算**的 ⇒ 改一条场景的 region，历史事件的归属跟着变（追溯生效）。
+    """
+    name = (raw or "").strip()
+    if not name:
+        return ADHOC_REGION
+    if name == GLOBAL_REGION:
+        return None
+    return name
 
 
 class Ledger:
@@ -347,24 +372,26 @@ class Ledger:
                 result.append(event)
         return result
 
-    def _scene_region(self, scene_id: str) -> str | None:
-        """读取场景的 region（消息域）；空 = 全域公共区（None）."""
-        scene = next((s for s in self.world.scenes if s.id == scene_id), None)
-        if scene is None:
-            return None
-        return scene.region.strip() or None
-
     def _event_region(self, event: dict[str, Any]) -> str | None:
-        """事件发生地归属：注册场景取其 region（消息域，空 = 全域公共区）；
-        location 指向场景表查不到的一次性布景 → 哨兵 `adhoc`（不进任何听域的
-        风闻通道——宁可不闻，不错闻；在场者走亲历通道不受影响）。"""
+        """事件的发生地归属（听域筛选的唯一入口）。
+
+        两支，都过 :func:`region_scope` 这一个映射点：
+
+        - 注册场景 → 该场景的 region（留空 = **不传播**，见 :func:`region_scope`）。
+        - 其余（`location` 指向场景表查不到的一次性布景、事件根本没有 `location`、
+          空串）→ 哨兵 `adhoc`（不进任何听域的风闻通道——宁可不闻，不错闻；在场者
+          走亲历通道不受影响）。
+
+        ⚠️ 没有"无 location"的早退分支是**故意的**：空串在场景表里必然查不到
+        （`id` 不会是空串），于是自然落进第二支给出同一个答案 —— 多一条早退就是
+        多一条**测不出差别**的冗余分支。无 `location` 的公开事件现实中也不存在
+        （状态留痕事件都带 `known_by`，在 `known_set` 里更早就被挡住）。
+        """
         loc = event.get("location") or ""
-        if not loc:
-            return None
         scene = next((s for s in self.world.scenes if s.id == loc), None)
         if scene is None:
             return ADHOC_REGION
-        return scene.region.strip() or None
+        return region_scope(scene.region)
 
     def _npc_hearing_regions(self, npc_id: str) -> set[str]:
         """NPC 的听域（公开事件的地域耳闻范围）。
@@ -373,14 +400,18 @@ class Ledger:
         卡上打原属地，就不该耳闻本地旧事）；卡上为空 → 按亲历事件的发生地
         region 推导（本地老 NPC 天然正确；跟玩家旅行过的 NPC 听域随之扩大）；
         推导为空（刚出场的无历史 NPC）→ 听域为空，保守地什么区域的公开旧事
-        都不闻（宁可不闻，不错闻）。哨兵 `adhoc` 永不进听域——一次性布景的
-        公开事件对任何人不风闻。
+        都不闻（宁可不闻，不错闻）。
+
+        两个哨兵都不该进听域：`adhoc`（不传播，谁也闻不到）与 `全域`（全域事件本来
+        就人人可闻、绕过听域这一路）——写进卡里也是空转，一律滤掉。
         """
         npc = self.world.npcs.get(npc_id)
         card_regions: set[str] = set()
         if npc is not None:
             card_regions = {
-                r.strip() for r in (getattr(npc, "region", None) or []) if r.strip() and r.strip() != ADHOC_REGION
+                r.strip()
+                for r in (getattr(npc, "region", None) or [])
+                if r.strip() and r.strip() not in {ADHOC_REGION, GLOBAL_REGION}
             }
         if card_regions:
             return card_regions
@@ -402,9 +433,15 @@ class Ledger:
 
         已知集 = 亲历（全量 by_participant，不随滑窗） ∪ known_by 含己（含改判）
         ∪ 听域内公开事件。听域取自人物卡 `region` 字段（来属地/听域），缺省按
-        亲历事件发生地推导（`_npc_hearing_regions`）。场景 region 为空 =
-        全域公共区（单区域内容包行为与旧口径兼容）：**无地域归属的公开事件人人
-        可闻，与听域无关**；听域空集只掐掉"带地域归属的公开事件"这一路。
+        亲历事件发生地推导（`_npc_hearing_regions`）。
+
+        第三来源的两条口径（2026-09-24 反转默认后）：
+
+        - 场景 region **留空 = 不传播** ⇒ 该场景的公开事件谁的听域里都没有它，
+          谁也闻不到（"宁可不闻，不错闻"）。要"人人可闻"得显式填 `全域`。
+        - `全域`（全域公共，引擎侧 `None`）⇒ **无地域归属的公开事件人人可闻，与听域
+          无关**；听域空集只掐掉"带地域归属的公开事件"这一路。
+
         按事件时间排序，取最近 limit 条。
 
         注：`scene_id` 为兼容装配层调用签名保留——听域口径落地后，筛选已改为
@@ -430,7 +467,8 @@ class Ledger:
             if known_by is not None:
                 continue  # 已知集第三来源只收公开事件
             ev_region = self._event_region(ev)
-            # 全域公共区（无标签）人人可闻；有归属的事件须落在该 NPC 听域内。
+            # 全域公共（`全域`，映射成 None）人人可闻；有归属的事件须落在该 NPC 听域内；
+            # 不传播（留空 / 一次性布景，哨兵 adhoc）谁的听域里都没有它 ⇒ 谁也闻不到。
             # 注意用听域而非当前场景 region——刚出差到本地的外乡人不应耳闻本地旧事。
             if ev_region is not None and ev_region not in hearing:
                 continue

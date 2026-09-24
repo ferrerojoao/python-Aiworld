@@ -299,6 +299,9 @@ function clearCandidateControls() {
   if (state.currentMessageEl) {
     const ctrl = state.currentMessageEl.querySelector(".message-controls");
     if (ctrl) ctrl.remove();
+    // 气泡留在页面上（只是没了控件），`editing` 类却会把它的宽度从"由内容决定"
+    // 变成写死的 --bubble-max —— 得一起摘掉，否则这条空消息也占满一条。
+    state.currentMessageEl.classList.remove("editing");
   }
   state.candidates = [];
   state.currentCandidateId = null;
@@ -338,6 +341,11 @@ function renderCandidateMessage() {
   // 「保存修改 / 取消」。退出时把 textarea 整块摘掉，不挂着一块看不见的 DOM。
   // ⚠️ 只在**新建**时灌 value：同一稿重渲染（refreshState 等）不能冲掉玩家正在敲的字。
   const editing = state.editingId === cand.candidate_id;
+  // 编辑态气泡的宽度**必须与内容无关**（见 style.css `.message.editing`）：`.message.npc`
+  // 是 align-self: flex-start，宽度由内容决定，而 textarea 的 `width: 100%` 在这种"宽度
+  // 待定"的父级里会被当成 auto ⇒ 退回内在宽度（默认 cols≈20 字符），整块缩成窄条。
+  // 用 toggle 一处管两边：进编辑态加上、退回正文自动摘掉（不写两行，免得漏一条路径）。
+  state.currentMessageEl.classList.toggle("editing", editing);
   let editor = state.currentMessageEl.querySelector(".message-edit");
   if (editing) {
     if (!editor) {
@@ -345,6 +353,9 @@ function renderCandidateMessage() {
       editor.className = "message-edit";
       state.currentMessageEl.insertBefore(editor, ctrl);
       editor.value = cand.prose;
+      // 写到第三段就不该在小框里滚：输入时跟着长。
+      editor.oninput = () => fitEditorHeight(editor);
+      fitEditorHeight(editor);
     }
     textEl.hidden = true;
     const save = document.createElement("button");
@@ -412,6 +423,22 @@ function renderCandidateMessage() {
 }
 
 /* ---------- 候选手改（2026-09-24） ---------- */
+
+/** 编辑框高度跟着内容走，让「编辑」和「正文档」**一样大**（用户要求：框太小了）。
+ *
+ *  高度取**编辑框自己的** `scrollHeight`：它的文字宽度与正文同列（`.message-edit`
+ *  的 padding 是 0，见 style.css），所以同一段话两边折行一致、行数一致 ⇒ 高度自然一致。
+ *  ⚠️ 改了 padding 就等于改了折行宽度，高度会静默差出几行 —— 那两条注释是一体的。
+ *  ⚠️ `scrollHeight` 只含 padding **不含边框**，而全局是 border-box ⇒ 必须补回边框高，
+ *  否则永远比正文矮 2px（内容一长就看得出来）。
+ *  ⚠️ jsdom 里 `scrollHeight`/`offsetHeight`/`clientHeight` 恒为 0（**不排版**），
+ *  所以这条逻辑的守卫只能靠"给原型塞一个假尺寸"来验（见 smoke.test.mjs）。
+ */
+function fitEditorHeight(el) {
+  if (!el) return;
+  el.style.height = "auto";
+  el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`;
+}
 
 function enterEditMode() {
   if (!state.currentCandidateId) return;
@@ -1152,7 +1179,7 @@ function landingBody(body, item, kind) {
     const warn = document.createElement("div");
     warn.className = "st-note land-warn";
     warn.textContent =
-      "转正之后，这里的公开事件会进入**所有人**的风闻范围（现在不会）。要设听域请转正后到世界工作台改。";
+      "转正只是把它变成正式场景（有名字、有描述、能被别名命中）——**听域一个字不变**：region 留空就是不传播，这里的事件谁都不风闻。要让它传出去，转正后到世界工作台填 region（地域名，或「全域」= 人人可闻）。";
     body.appendChild(warn);
   }
 
@@ -1185,7 +1212,7 @@ function landingBody(body, item, kind) {
       const what =
         kind === "npc"
           ? `「${item.name}」已转正——从此刻起他是这个世界有档案的一员。`
-          : `「${item.name}」已转正——它成了世界的正式场景，公开事件从此会被风闻。`;
+          : `「${item.name}」已转正——它成了世界的正式场景（region 留空，公开事件暂不风闻）。`;
       addMessage(
         "npc",
         problems.length ? `⚠ ${what}但引擎体检查到：${problems.join("；")}` : `✓ ${what}`
@@ -2524,10 +2551,53 @@ function loreCard(item, i, npcIds, counts) {
   `;
 }
 
+/* ---------- region / 听域 的取值（2026-09-24） ---------- */
+
+/** 全域公共的哨兵值：场景 region 填它 = 这里的公开事件人人可闻。
+ *  与后端 `app/ledger/queries.py` 的 `GLOBAL_REGION` 必须一致（留空则是**不传播**）。 */
+const GLOBAL_REGION = "全域";
+
+/** 本世界里**已经出现过**的地域名（场景卡 ∪ 人物卡听域）。
+ *
+ *  为什么要这个：region 原来是纯手打，错一个字的后果是**静默的**——场景填「青石镇」、
+ *  人物误填「清石镇」，两边都不报错，只是那个人从此收不到消息，事后再想归因很难。
+ *  把已存在的值喂给 `<datalist>`，"青石镇"一定能选到、错别字则压根不在候选里。
+ *  ⚠️ 仍然是 `<input list>` 而不是 `<select>`：**新地域要能现起名字**（自由输入不能丢）。
+ */
+function regionNames(data) {
+  const names = new Set();
+  for (const s of (data && data.scenes) || []) {
+    const r = (s.region || "").trim();
+    if (r && r !== GLOBAL_REGION) names.add(r);
+  }
+  for (const c of Object.values((data && data.npcs) || {})) {
+    for (const raw of c.region || []) {
+      const r = (raw || "").trim();
+      if (r && r !== GLOBAL_REGION) names.add(r);
+    }
+  }
+  return [...names].sort();
+}
+
+/** 场景段的候选表：已有地域 + 「全域公共」。
+ *  ⚠️ 全域只给**场景**：人物卡的听域里写"全域"是空转（全域事件本来就绕过听域这一路，
+ *     后端也会把它滤掉），放进候选只会让人以为写了有用。 */
+function sceneRegionDatalist(names) {
+  const opts = [GLOBAL_REGION, ...names].map((n) => `<option value="${escapeHtml(n)}"></option>`).join("");
+  return `<datalist id="scene-region-options">${opts}</datalist>`;
+}
+
+function npcRegionDatalist(names) {
+  const opts = names.map((n) => `<option value="${escapeHtml(n)}"></option>`).join("");
+  return `<datalist id="npc-region-options">${opts}</datalist>`;
+}
+
 function renderEditScenes(data) {
   const items = data.scenes || [];
+  const names = regionNames(data);
   $("#world-tab-scenes").innerHTML = `
     <h3>场景</h3>
+    ${sceneRegionDatalist(names)}
     <div class="md-pane">
       <div class="md-side">
         <input class="md-search" placeholder="搜索场景…" />
@@ -2556,8 +2626,8 @@ function sceneCard(item, i) {
       </div>
       <div class="form-grid">
         <div class="field">
-          <label>消息域 region（地域名，如"镇上"；该场景事件只被同域 NPC 听闻；空 = 全域公共区）</label>
-          <input class="edit-field" data-field="region" value="${escapeHtml(item.region || "")}" />
+          <label>消息域 region（从候选里挑已有地域，也可直接写新的；留空 = <b>不传播</b>，这里的事件谁都不风闻；填「全域」= 人人可闻）</label>
+          <input class="edit-field" data-field="region" list="scene-region-options" value="${escapeHtml(item.region || "")}" />
         </div>
       </div>
       <div class="field full">
@@ -2577,6 +2647,7 @@ function renderEditNpcs(data) {
   const entries = Object.entries(data.npcs || {});
   $("#world-tab-npcs").innerHTML = `
     <h3>人物</h3>
+    ${npcRegionDatalist(regionNames(data))}
     <div class="md-pane">
       <div class="md-side">
         <input class="md-search" placeholder="搜索人物…" />
@@ -2642,8 +2713,8 @@ function npcCard(id, card) {
           <input class="edit-field" data-field="id" value="${escapeHtml(id || "")}" ${isPlayer ? lockAttr : ""} />
         </div>
         <div class="field">
-          <label>听域（逗号分隔地域名；决定该 NPC 听说过哪些区域的公开旧事；空 = 按亲历事件推导）</label>
-          <input class="edit-field" data-field="region" value="${escapeHtml((c.region || []).join(", "))}" />
+          <label>听域（逗号分隔；从候选里挑已有地域，别手打——错一个字这个人就静默地收不到消息了；留空 = 按亲历事件推导）</label>
+          <input class="edit-field" data-field="region" list="npc-region-options" value="${escapeHtml((c.region || []).join(", "))}" />
         </div>
       </div>
       <div class="field full">
@@ -2852,7 +2923,9 @@ function bindEditEvents() {
           if (cb !== box) cb.checked = false;
         });
         const npcs = readNpcs();
-        renderEditNpcs({ npcs });
+        // 顺带把场景也传进去：region 候选表要同时看场景卡与人物卡（少了一侧，
+        // 刚加完人物那张卡的听域下拉就会少一批本该能选中的地域）。
+        renderEditNpcs({ npcs, scenes: readScenes() });
         bindEditEvents();
         const fresh = Array.from($("#edit-npc-list").querySelectorAll(".edit-card"));
         const target = fresh[prevIdx >= 0 ? prevIdx : 0];
@@ -3184,6 +3257,13 @@ async function init() {
     addMessage("npc", "还没有世界：点右上角「世界工作台」→「切换世界」→ 新建一个。");
     $("#world-name").textContent = "（无世界）";
   }
+
+  // 手改框的高度是按**当前折行数**量出来的 ⇒ 窗口一变宽窄，折行数就变，得重量一次
+  // （不在编辑态就什么都不做）。
+  window.addEventListener("resize", () => {
+    const el = state.currentMessageEl && state.currentMessageEl.querySelector(".message-edit");
+    if (el) fitEditorHeight(el);
+  });
 
   $("#input-form").addEventListener("submit", async (e) => {
     e.preventDefault();

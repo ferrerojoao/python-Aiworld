@@ -569,9 +569,11 @@ async def file_landing_scene(request: Request, sid: str, name: str, body: SceneC
     别名（候选册里攒的变体名）一并写进 ``aliases``：同一个地点换个叫法，下一轮
     才认得出来（否则"巷子深处的旧楼"会被当成新地点再排一条）。
 
-    ⚠️ ``region`` 一律留空 = 全域公共区：**落卡之后这里的公开事件会进所有人的
-    风闻范围**（落卡前是 adhoc 哨兵 = 谁都不风闻），而且**追溯生效**（
-    ``_event_region`` 查表现算）。这是落卡的实质后果，前端必须写出来。
+    ⚠️ ``region`` 一律留空 = **不传播**（2026-09-24 反转旧口径"空 = 全域公共"）。
+    所以**落卡不改变听域语义**：落卡前是 adhoc 哨兵（谁都不风闻），落卡后场景表
+    多了一条、region 仍是空串 ⇒ 归属还是"不传播"。要让这里的公开事件传出去，得
+    到世界工作台填 region（地域名，或 `全域` = 人人可闻）。前端那句提示按这个
+    新结论写；改一条场景的 region 是**查表现算**的，所以对历史事件追溯生效。
     """
     session = _get_session(request, sid)
     name, item = _pending_scene(session, name)

@@ -27,6 +27,9 @@ class DraftScene(BaseModel):
     id: str = ""  # 场景中文名（同时是事件 location 与显示名）
     aliases: list[str] = Field(default_factory=list)
     perceivable: str = ""
+    # 消息域。**空 = 不传播**（2026-09-24 反转旧口径"空 = 全域公共"）：模型漏填时
+    # 宁可不闻（错闻比不闻更难查），要传播得显式给地域名或 `全域`。
+    # 世界起草提示词因此要求 scenes[].region 一个都不许留空（见 workers/drafter.py）。
     region: str = ""
 
 

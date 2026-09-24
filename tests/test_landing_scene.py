@@ -170,7 +170,9 @@ def test_scene_landing_writes_assets_and_clears_the_book(tmp_path) -> None:
         landed = next(s for s in scenes if s["id"] == "村东苇塘")
         assert landed["perceivable"] == "一片苇子围着的浅塘，风过时哗哗响。"
         assert landed["aliases"] == ["村东苇塘", "苇塘"]  # 变体名一并落表
-        assert landed["region"] == ""  # 留空 = 全域公共区（落卡前是 adhoc 哨兵）
+        # 留空 = **不传播**（2026-09-24 反转；落卡前是 adhoc 哨兵，落卡后 region 仍是
+        # 空串 ⇒ 归属不变 ⇒ **落卡不改变听域语义**，这正是这次反转要达到的效果）
+        assert landed["region"] == ""
         # 键交还给资产：候选册里没有他了，界面也不再列
         assert "村东苇塘" not in live.ledger.save.locations
         assert client.get(f"/api/sessions/{sid}/state").json()["unfiled_scenes"] == []

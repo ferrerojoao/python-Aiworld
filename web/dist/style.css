@@ -18,6 +18,9 @@
   --warn-bg: #3a2e16;
   --hover: #26272d;
   --modal-overlay: rgba(0, 0, 0, 0.6);
+  /* 气泡最大宽度：正文与**编辑态**气泡都要读它（两处同值 ⇒ 提成一处，
+     否则改了 max-width 忘了改编辑态的 width，编辑框的宽度就会和正文对不上）。 */
+  --bubble-max: 72%;
 }
 
 body.light {
@@ -179,7 +182,7 @@ body {
   margin-bottom: 12px;
   padding: 10px 14px;
   border-radius: 10px;
-  max-width: 72%;
+  max-width: var(--bubble-max);
   white-space: pre-wrap;
 }
 
@@ -193,6 +196,15 @@ body {
   background: var(--npc-bg);
   color: var(--text);
   align-self: flex-start;
+}
+
+/* 编辑态（2026-09-24）：气泡宽度**必须与内容无关**。
+   `.message.npc` 是 `align-self: flex-start` ⇒ 宽度由内容决定（正文是长文本，正好顶到
+   max-width）；可编辑态里放的是 textarea，它的 `width: 100%` 在这种"宽度待定"的父级里
+   会被当成 auto（循环百分比），于是退回**内在宽度**（默认 cols≈20 字符）—— 整块缩成一条
+   窄条，正是用户说的「宽度还是太窄」。给它一个确定的 width，textarea 的百分比才有基准。 */
+.message.editing {
+  width: var(--bubble-max);
 }
 
 .message-text {
@@ -234,22 +246,31 @@ body {
   background: var(--success);
 }
 
-/* 手改稿的输入框（2026-09-24）。只给尺寸与配色，**不写 display** ——
-   它是整块插入/摘除的（编辑态才存在），不靠 `hidden` 属性藏着；这里一旦写了
-   display，将来要改回 `hidden` 就得再补一条 `[hidden]` 覆盖（大图浮层踩过这坑）。 */
+/* 手改稿的输入框（2026-09-24）。**高度由 JS 跟着内容量**（`fitEditorHeight`），
+   目的是让"编辑"和"正文档"一样大——否则一切换过去那块地方就突然缩成一小截
+   （用户原话：「编辑的框太小了，要和稿件的一样大」）。
+
+   ⚠️ `padding` 必须是 0：文字要按**同一列**折行。给了左右 padding，可用宽度就比正文
+   窄，同一段话多折出一行，行数变了高度自然对不上。
+   ⚠️ 不写 `line-height`：靠 `font: inherit` 连行高一起继承 —— 正文用 `normal`
+   （body 没写行高），这里若写成 1.6，每行都比正文高，量出来的高度只会更离谱。
+   ⚠️ 不写 `display`：它是整块插入/摘除的（编辑态才存在），不靠 `hidden` 属性藏着；
+   这里一旦写了 display，将来要改回 `hidden` 就得再补一条 `[hidden]` 覆盖
+   （大图浮层踩过这坑）。
+   `min-height` 只是**可用性下限**（极短正文别缩成一行），真实稿件 6 段左右远超它。 */
 .message-edit {
   width: 100%;
   box-sizing: border-box;
   min-height: 140px;
-  padding: 8px;
+  padding: 0;
   margin-bottom: 6px;
   font: inherit;
-  line-height: 1.6;
   color: var(--text);
   background: var(--input-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
-  resize: vertical;
+  /* 高度已经跟着内容走，留个拖拽角只会被下一次输入冲掉。 */
+  resize: none;
 }
 
 /* ---------- 输入框 ---------- */
