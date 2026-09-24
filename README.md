@@ -245,7 +245,7 @@ AIWORLD_MODEL_CHEAP=qwen2.5:7b
 |---|---|
 | 双击 `run.bat` 窗口一闪而过 | 缺运行环境。方式 A 的包不该出现；方式 B 说明 `.venv` 没建好，按第一节重做 |
 | 停在那儿说 `API key : MISSING` | 正常提示。按它说的填 `.env` 里的 `AIWORLD_LLM_API_KEY`，保存再跑 |
-| 换了新包，看到的还是旧版本 | 分两步认：① 看窗口里的 **`Build` / `Folder`** 两行 —— 确认你启动的是哪一份、在哪个目录；② 看页面上世界工作台标题旁的 **`前端 v…`**（新旧代码的号不一样）。然后按这两种原因查：**旧的那份服务还占着 8765**（新包会直接告诉你 `Port … ALREADY TAKEN`，并说明你看的页面是那一份），或**你双击的快捷方式指向旧文件夹** |
+| 换了新包，看到的还是旧版本 | 先分两步认：① 看窗口里的 **`Build` / `Folder`** 两行 —— 确认你启动的是哪一份、在哪个目录；② 看世界工作台标题旁的 **`前端 v…`**（新旧代码的号不一样）。认下来之后按这两种原因查：**旧的那份服务还占着 8765**（新包会直接告诉你 `Port … ALREADY TAKEN`，并说明你看的页面是那一份）；或**浏览器把旧页面存住了**（最常见）—— 按一次 `Ctrl+F5` 强制刷新就好。从这版起已经改掉：入口页每次都重新取，不会再被存住 |
 | 报 `No module named '…'`（最常见是 `uvicorn`） | 启动器现在会自己说清属于哪种：提示 `not the bundled interpreter` = 用的不是包内运行环境（改成双击 `run.bat`）；提示 `bundled runtime looks incomplete` 或 `package looks damaged` = 包没拷全，重新拷一遍 |
 | 报 `Missing credentials` / `401` | key 没填、填错、或者 base_url 和 key 不是同一家的 |
 | 世界列表是空的 | 还没有世界。去第四节新建 / 导入 / 拷贝一个 |
@@ -266,4 +266,4 @@ AIWORLD_MODEL_CHEAP=qwen2.5:7b
 - `docs/` 里有完整设计文档：**GDD**（策划）、**REQ**（机制需求清单）、**TDD**（技术设计），以及若干 `方案-*.md`。
 - 目录速查：`app/` 后端 · `web/dist/` 前端（原生 HTML/JS，无构建步骤）· `content/` 世界与存档 · `data/` 设置与预设 · `tests/` 测试。
 - 测试与静态检查：`./.venv/Scripts/python.exe -m pytest -q`、`./.venv/Scripts/python.exe -m ruff check`、前端 `cd web && node --test`。
-- ⚠️ 改了 `web/dist/` 下的前端资源，要跑一次 `scripts/bump_frontend_version.py`（页面上 `?v=` 是**文件内容哈希**，不刷浏览器会吃缓存）。
+- ⚠️ 改了 `web/dist/` 下的前端资源，要跑一次 `scripts/bump_frontend_version.py`（页面上 `?v=` 是**文件内容哈希**，所以带 `?v=` 的资源才敢长期缓存）。`index.html` 相反：一律 `Cache-Control: no-store` —— 它钉着 `?v=`，旧一份 = 整个前端锁死在旧版。口径在 `app/main.py` 的 `_StaticAssets`，测试在 `tests/test_main.py`。
