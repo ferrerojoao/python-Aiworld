@@ -1096,4 +1096,14 @@ test("项目地址放两处，且都在最底部：抽屉「设置」页 + 世�
     assert.match(node.cls, /repo-foot/, `${where}最底部那一条应当是项目地址`);
     assert.ok(node.html.includes(REPO), `${where}里要有完整的仓库地址（含 href，地址写错也要红）`);
   }
+
+  // 上面是直接调模板渲染的：模板写了却没人调，用户一样看不到 ⇒ 顺手钉一下接线。
+  // （概览页内容要真开工作台才会渲染，而那条路要摆一整套 /world 桩，这里按源码守。）
+  // ⚠️ 正则特意钉"调用"那种写法（行首缩进 + 结尾分号），**不能写成 `renderEditOverview\(`** ——
+  //    那样会被 `function renderEditOverview(data) {` 这一行自己匹配上，删掉调用点也照样绿（假牙）。
+  assert.match(
+    readDist("app.js"),
+    /^\s+renderEditOverview\([^)]*\);/m,
+    "概览页的模板必须还在真实流程里被调用（只有函数定义不算）"
+  );
 });
