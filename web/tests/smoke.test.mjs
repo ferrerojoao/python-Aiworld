@@ -737,3 +737,191 @@ test("工作台附图槽：路径必须随全量回传 —— 漏了就等于保
   assert.equal(result.portraits.join("|"), "assets/npcs/朱明-8b21de04.png|", "有图的带路径，没图的空串");
   assert.equal(result.images.join("|"), "assets/scenes/鱼市-3f9a1c72.png");
 });
+
+/* ---------- 候选控件与手改（2026-09-24） ----------
+
+   玩家原话：「编剧写出来的东西一半满意一半不满意，采纳只能整体采纳」——重抽是从头
+   再写，所以"局部不满意"只剩**就地手改**一条路。摘要由后台跟着正文对齐（界面刻意
+   不显示），因为摘要此后每轮都被压成一行重新装配给编剧与导演。
+
+   顺带把控件文字化：按钮从三个涨到六个，🎲 / ✓ 就得靠猜了。**只有 ◀ ▶ 留图标**
+   ——方向是自明的，换成"上一稿/下一稿"只会把这一行撑长。 */
+
+/** 一份待采纳的候选（只留前端会读的字段）。 */
+const CAND = {
+  candidate_id: "cand_1",
+  turn_id: "turn_1",
+  prose: "朱明从网吧出来，看见你愣了一下，把烟头踩灭。",
+  side_effects: { narrative: { location: "主街", summary: "朱明在网吧门口看见刘星。" } },
+  participants: ["刘星", "朱明"],
+};
+
+/** 待采纳候选 + PUT 手改口；PUT 的请求体收进 seen，好断言"发出去的到底是什么"。
+ *  必须排在 worldRoutes 之前：载具按注册顺序取**第一条**命中的路由。 */
+function candidateRoutes(seen = []) {
+  return [
+    [
+      /^\/api\/sessions\/s1\/candidates\//,
+      (url, opts = {}) => {
+        if ((opts.method || "GET") === "PUT") {
+          const body = JSON.parse(opts.body || "{}");
+          seen.push(body);
+          return { ...CAND, prose: body.prose };
+        }
+        return { candidates: [CAND] };
+      },
+    ],
+  ];
+}
+
+/** 探针里的小工具（拼进 eval 的字符串，**不能出现反引号**）。 */
+const BTN_HELPERS = `
+  const btn = (t) => [...document.querySelectorAll(".message-controls button")].find((b) => b.textContent === t);
+  const labels = () => [...document.querySelectorAll(".message-controls button")].map((b) => b.textContent).join("|");
+  const click = (el) => el.dispatchEvent(new MouseEvent("click", { bubbles: true }));`;
+
+/** 切候选是图标（方向自明），其余四个动作是文字（它们才需要辨认）。 */
+const DEFAULT_LABELS = "◀|▶|重抽|编辑|采纳|放弃";
+
+test("候选控件：只有 ◀ ▶ 是图标，其余一律文字", async () => {
+  const { result } = await bootApp({
+    routes: [...candidateRoutes(), ...worldRoutes()],
+    probe: `
+      ${BTN_HELPERS}
+      return {
+        labels: labels(),
+        prose: document.querySelector(".message-text").textContent,
+      };`,
+  });
+
+  assert.equal(result.prose, CAND.prose, "启动就该把待采纳的那一稿渲染出来");
+  assert.equal(result.labels, DEFAULT_LABELS, "◀ ▶ 留图标、另外四个用文字，顺序也别乱");
+});
+
+test("手改：编辑 → 改字 → 保存修改 → 正文就地变新（不新开一稿，界面不谈摘要）", async () => {
+  const seen = [];
+  const { calls, result } = await bootApp({
+    routes: [...candidateRoutes(seen), ...worldRoutes()],
+    probe: `
+      ${BTN_HELPERS}
+      const msgCount = () => document.querySelectorAll("#messages .message").length;
+      const before = msgCount();
+      click(btn("编辑"));
+      const ebox = document.querySelector(".message-edit");
+      const opening = {
+        hasBox: !!ebox,
+        value: ebox ? ebox.value : null,
+        textHidden: document.querySelector(".message-text").hidden,
+        labels: labels(),
+      };
+      ebox.value = "朱明挑眉看了你一眼。";
+      click(btn("保存修改"));
+      await new Promise((r) => setTimeout(r, 30));
+      return {
+        opening, before,
+        prose: document.querySelector(".message-text").textContent,
+        textHidden: document.querySelector(".message-text").hidden,
+        boxGone: !document.querySelector(".message-edit"),
+        labels: labels(),
+        messages: document.querySelector("#messages").textContent,
+        after: msgCount(),
+      };`,
+  });
+
+  assert.equal(result.opening.hasBox, true, "点「编辑」要出现编辑框");
+  assert.equal(result.opening.value, CAND.prose, "编辑框里带的是这一稿的正文");
+  assert.equal(result.opening.textHidden, true, "编辑框顶上不该还压着一层正文");
+  assert.equal(result.opening.labels, "保存修改|取消", "手改态只留保存/取消，别的动作点不到");
+
+  assert.equal(result.prose, "朱明挑眉看了你一眼。", "保存后正文就地变成改后的样子");
+  assert.equal(result.textHidden, false, "正文要重新显示出来");
+  assert.equal(result.boxGone, true, "保存完编辑框要收掉");
+  assert.equal(result.labels, DEFAULT_LABELS, "退出编辑态后控件回到原有六个");
+  assert.equal(result.after, result.before, "保存是就地替换：不该往对话里塞一条提示");
+  assert.equal(result.messages.includes("摘要"), false, "界面不显示摘要变化（后台变就行）");
+
+  assert.equal(seen.length, 1, "只发一次保存请求");
+  assert.equal(seen[0].prose, "朱明挑眉看了你一眼。", "请求体就是改后的正文（摘要不在请求里）");
+  const puts = calls.filter((c) => c.method === "PUT");
+  assert.equal(puts.length, 1);
+  assert.match(puts[0].url, /\/api\/sessions\/s1\/candidates\/cand_1$/, "就地改这一稿");
+});
+
+test("手改：点「取消」→ 编辑框收掉、正文回到原稿，且一个请求都不发", async () => {
+  const { calls, result } = await bootApp({
+    routes: [...candidateRoutes(), ...worldRoutes()],
+    probe: `
+      ${BTN_HELPERS}
+      click(btn("编辑"));
+      document.querySelector(".message-edit").value = "乱改的。";
+      click(btn("取消"));
+      return {
+        prose: document.querySelector(".message-text").textContent,
+        textHidden: document.querySelector(".message-text").hidden,
+        boxGone: !document.querySelector(".message-edit"),
+        labels: labels(),
+      };`,
+  });
+
+  assert.equal(result.prose, CAND.prose, "取消要回到原稿");
+  assert.equal(result.textHidden, false);
+  assert.equal(result.boxGone, true);
+  assert.equal(result.labels, DEFAULT_LABELS);
+  assert.equal(calls.filter((c) => c.method === "PUT").length, 0, "取消不发请求");
+});
+
+test("手改途中发新输入要被拦下（发送会顺手把候选静默采纳，手改就白改了）", async () => {
+  const { calls, result } = await bootApp({
+    routes: [...candidateRoutes(), ...worldRoutes()],
+    probe: `
+      ${BTN_HELPERS}
+      click(btn("编辑"));
+      document.querySelector(".message-edit").value = "改到一半。";
+      document.querySelector("#input").value = "接着问他";
+      document.querySelector("#input-form").dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true })
+      );
+      await new Promise((r) => setTimeout(r, 30));
+      return {
+        messages: document.querySelector("#messages").textContent,
+        kept: document.querySelector("#input").value,
+        stillEditing: !!document.querySelector(".message-edit"),
+      };`,
+  });
+
+  assert.equal(result.messages.includes("正在手改"), true, "要说清为什么发不出去，不能默默吞掉");
+  assert.equal(result.kept, "接着问他", "被拦下时不能把玩家敲的字清掉");
+  assert.equal(result.stillEditing, true, "拦下就该留在编辑态");
+  assert.equal(
+    calls.filter((c) => c.url.includes("/turn")).length,
+    0,
+    "一个回合都不该发——发出去服务端会把这一稿静默采纳掉"
+  );
+});
+
+test("编辑框不跟着串到别的候选（否则「保存」会把 A 的正文写进 B 的候选）", async () => {
+  const { result } = await bootApp({
+    routes: [...candidateRoutes(), ...worldRoutes()],
+    probe: `
+      ${BTN_HELPERS}
+      click(btn("编辑"));
+      const opened = !!document.querySelector(".message-edit");
+      // 模拟"候选被换掉"（切世界 / 导入存档 / 换稿都走这一句 renderCandidateMessage）
+      state.candidates = [{ ...state.candidates[0], candidate_id: "cand_2", prose: "另一稿的正文。" }];
+      state.currentCandidateId = "cand_2";
+      renderCandidateMessage();
+      return {
+        opened,
+        boxGone: !document.querySelector(".message-edit"),
+        prose: document.querySelector(".message-text").textContent,
+        textHidden: document.querySelector(".message-text").hidden,
+        labels: labels(),
+      };`,
+  });
+
+  assert.equal(result.opened, true, "前提：得先真的进了编辑态");
+  assert.equal(result.boxGone, true, "换了候选，编辑框必须整块收掉");
+  assert.equal(result.prose, "另一稿的正文。", "显示的是新候选的正文，不是 A 那段的残留");
+  assert.equal(result.textHidden, false);
+  assert.equal(result.labels, DEFAULT_LABELS);
+});

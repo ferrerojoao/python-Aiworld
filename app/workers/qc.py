@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.config import DEFAULT_LIMITS
 from app.ledger.queries import Ledger
-from app.workers.schemas import QCOutput
+from app.workers.schemas import QCOutput, SummaryOutput
 from app.world.models import NarrativePreset, WorldContent
 
 
@@ -130,3 +130,66 @@ async def run_qc(
     if out.issues:
         out.status = "fixed"
     return out
+
+
+async def sync_summary(
+    llm,
+    prose: str,
+    *,
+    preset: NarrativePreset | None = None,
+    reference: str = "",
+    summary_hint: str = "",
+    model: str = "",
+    worker: str = "qc",
+    temperature: float = 0.2,
+) -> str:
+    """手改正文之后，判断事件日志里那句摘要要不要跟着改；返回新摘要（"" = 沿用旧的）。
+
+    **为什么单独一笔**（2026-09-24，玩家手改候选）：候选正文被就地改掉后，摘要还是
+    编剧那一稿的产物，而摘要不会自己过期——它此后每轮都被压成一行重新装配给编剧与
+    导演（``workorder.event_log_block``）。陈旧摘要要么与新正文不符（后续回合照着
+    废摘要往下写），要么把玩家刚删掉的私密信息继续传下去（**脱敏侧门**，与质检防的
+    是同一件事）。判据因此与质检里那条 summary 字段**同一套**：不一致才改。
+
+    **为什么不直接复用 ``run_qc``**：质检会**改写正文**（文风 / 泄漏 / 禁用词），而
+    手改稿是玩家拍板的，一个字都不该再动；共用 ``QCOutput`` 只会诱使人顺手把改后的
+    正文写回候选。这里只要一句摘要，输出形状也收窄成 ``SummaryOutput``。
+
+    ``worker="qc"`` 复用"谁是辅助"的唯一名单（``config.AUX_WORKERS``）——这是同一族
+    的核对活，不需要为它新开一个角色名。参照区由调用方用 ``build_qc_reference`` 算好
+    传进来（与 ``run_qc`` 同一条纪律：这里不自己拼）。
+    """
+    system = "\n".join(
+        [
+            "你是 AIWorld 的摘要核对员。玩家手改了这一拍的正文，你要判断"
+            "**事件日志里那句摘要**还能不能站得住——它此后会长期反复提供给编剧与导演。",
+            "只返回 JSON，格式如下：",
+            '{"summary": "修正后的一句话摘要（可选）"}',
+            "只要命中下面任何一条，就必须给出修正版：",
+            "1. 摘要说的核心事件 / 结果与手改后的正文不符。",
+            "2. 手改**引入或抹去**了私密信息（参照区列出的禁区）——摘要只写参照区内的"
+            "信息，它长期反复装配，写进去的隐秘会反复泄漏。",
+            "3. 旧摘要为空或缺失。",
+            "只有当旧摘要在事件日志里**仍然成立**（改的只是措辞、氛围、动作细节）时，"
+            "才省略 summary 字段——摘要要的是稳定，不是文采。",
+            "摘要写法：第三人称、事件口吻、不超过 30 字、不引用对话原文。",
+        ]
+    )
+    messages = [{"role": "system", "content": system}]
+    user_parts = [f"手改后的正文：\n{prose}"]
+    if preset is not None and preset.writer_guidelines:
+        user_parts.append(f"\n编剧准则（仅供理解文风，正文不必再改）：\n{preset.writer_guidelines}")
+    if reference:
+        user_parts.append(f"\n参照区（只读，只用于比对；其中的禁区绝不可写进摘要）：\n{reference}")
+    user_parts.append(f"\n旧摘要（供一致性比对）：{summary_hint or '（无）'}")
+    user_parts.append("\n请给出核对结果。")
+    messages.append({"role": "user", "content": "\n".join(user_parts)})
+
+    data = await llm.complete_json(
+        messages,
+        SummaryOutput,
+        model=model,
+        temperature=temperature,
+        worker=worker,
+    )
+    return (SummaryOutput.model_validate(data).summary or "").strip()

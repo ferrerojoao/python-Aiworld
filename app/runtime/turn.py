@@ -14,7 +14,7 @@ from app.runtime.session import GameSession
 from app.runtime.transaction import Candidate, SideEffects, Transaction
 from app.workers.actor import run_actor
 from app.workers.auditor import run_audit
-from app.workers.qc import build_qc_reference, run_qc
+from app.workers.qc import build_qc_reference, run_qc, sync_summary
 from app.workers.schemas import ActorQuestion, WriterOutput
 from app.workers.writer import run_writer
 from app.world.models import NarrativePreset
@@ -455,6 +455,62 @@ class TurnRunner:
 
     def discard(self, turn_id: str) -> None:
         self.transaction.discard_turn(turn_id)
+
+    async def edit_candidate(self, candidate_id: str, *, prose: str) -> Candidate:
+        """玩家的手改稿**就地**替换候选正文，并顺带把摘要对齐（2026-09-24）。
+
+        玩家原话：「编剧写出来的东西一半满意一半不满意，采纳只能整体采纳」——
+        重抽是从头再写（不承接上一稿，见 ``reroll``），所以局部不满意只剩手改这
+        一条路。就地改而不是存成新候选：多一个版本就得解释"我在改哪一份"，而
+        玩家的动作只有一个意图——把这一稿变成我想要的样子。
+
+        **摘要必须跟着正文走**（这是手改唯一的隐藏代价）：摘要此后每轮都被压成一行
+        重新装配给编剧与导演，陈旧的它要么误导后续回合，要么把玩家刚删掉的私密信息
+        继续传下去。判据与质检里那条 summary 字段同一套，见 ``sync_summary``。
+
+        **不改正文就不发那笔核对**：光标动过但内容没变（或玩家点了保存又后悔）
+        是最常见的一种"保存"，没必要为此敲一次模型。
+
+        守卫只管**格式与归属**：候选必须还在（采纳/放弃都会把候选文件删掉，所以
+        "改一份已经生效的稿子"天然取不到 → 404）、正文非空。**不查 ``status``**：
+        全仓没有一处会把它改成 pending 以外的值，查了就是一条没有牙齿的分支。
+        """
+        candidate = self.session.candidates.load(candidate_id)
+        if candidate is None:
+            raise KeyError(f"candidate not found: {candidate_id}")
+        text = (prose or "").strip()
+        if not text:
+            raise ValueError("正文不能为空")
+        if text == (candidate.prose or "").strip():
+            return candidate
+
+        narrative = candidate.side_effects.narrative or {}
+        old_summary = str(narrative.get("summary") or "")
+
+        new_summary = await sync_summary(
+            self.llm,
+            text,
+            preset=self.preset,
+            # 参照区沿用这一稿自己存下的比对基准（与重抽同一条纪律：在场 ≠ 上缴过）。
+            # 老候选文件里 participants 可能是空的 —— 那就只剩「当前场景 + 主角两条
+            # 边界」，退化但不会误判。
+            reference=build_qc_reference(
+                self.session.world,
+                self.session.ledger,
+                candidate.participants,
+                known_limit=self.settings.limits().known_set_limit,
+            ),
+            summary_hint=old_summary,
+            temperature=self.settings.temp_qc,
+        )
+
+        candidate.prose = text
+        candidate.side_effects.narrative = narrative
+        # 摘要三档：核对员给的 → 旧摘要 → 正文前 40 字（与落候选那一处同口径）。
+        narrative["summary"] = new_summary or old_summary or text[:40]
+        candidate.updated_at = dt.datetime.now().isoformat(timespec="seconds")
+        self.session.candidates.save(candidate)
+        return candidate
 
     # ------------------------------------------------------------------
     # Internal

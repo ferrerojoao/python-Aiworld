@@ -65,6 +65,17 @@ class QCOutput(BaseModel):
     )
 
 
+class SummaryOutput(BaseModel):
+    """手改正文后的摘要核对（2026-09-24）：只回一句摘要。
+
+    ``summary`` 为空 = 旧摘要仍成立，**沿用**。刻意与 ``QCOutput`` 分开：那个
+    形状里有 ``prose``，容易被顺手把"改后的正文"当成结果写回候选——而手改稿
+    是玩家拍板的，一个字都不该再动。
+    """
+
+    summary: str = Field(default="", validation_alias=AliasChoices("summary", "摘要"))
+
+
 class ActorDecision(BaseModel):
     decision: str = Field(default="", validation_alias=AliasChoices("decision", "决定", "决策"))
     action_hint: str = Field(default="", validation_alias=AliasChoices("action_hint", "行动", "行为提示"))

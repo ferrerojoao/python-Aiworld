@@ -7,6 +7,10 @@ const state = {
   currentCandidateId: null,
   currentTurnId: null,
   currentMessageEl: null,
+  // 手改（2026-09-24）：**正在被手改的候选 id**（null = 不在手改）。
+  // 存 id 而不是布尔：候选一换（新回合 / 重抽 / 切换）就自动退出编辑态——
+  // 否则新一轮的正文会以编辑框的样子冒出来，而玩家根本没点过「编辑」。
+  editingId: null,
   worldData: null,
   // 工作台：就地编辑（无编辑模式开关）。worldBaseline = 上次保存/载入时的表单快照，
   // worldDirty 靠重算对比得出，改了什么一目了然、关窗前还能拦一道。
@@ -300,6 +304,7 @@ function clearCandidateControls() {
   state.currentCandidateId = null;
   state.currentTurnId = null;
   state.currentMessageEl = null;
+  state.editingId = null;
 }
 
 function renderCandidateMessage() {
@@ -329,8 +334,44 @@ function renderCandidateMessage() {
   }
   ctrl.innerHTML = "";
 
+  // 手改态（2026-09-24）：用 textarea **替换**正文显示，控件行只留
+  // 「保存修改 / 取消」。退出时把 textarea 整块摘掉，不挂着一块看不见的 DOM。
+  // ⚠️ 只在**新建**时灌 value：同一稿重渲染（refreshState 等）不能冲掉玩家正在敲的字。
+  const editing = state.editingId === cand.candidate_id;
+  let editor = state.currentMessageEl.querySelector(".message-edit");
+  if (editing) {
+    if (!editor) {
+      editor = document.createElement("textarea");
+      editor.className = "message-edit";
+      state.currentMessageEl.insertBefore(editor, ctrl);
+      editor.value = cand.prose;
+    }
+    textEl.hidden = true;
+    const save = document.createElement("button");
+    save.className = "save";
+    save.textContent = "保存修改";
+    save.title = "把这稿的正文改成你写的（事件日志那句摘要由后台跟着对齐）";
+    save.onclick = () => saveEdit();
+    const cancel = document.createElement("button");
+    cancel.textContent = "取消";
+    cancel.title = "放弃手改，回到原稿";
+    cancel.onclick = () => cancelEdit();
+    ctrl.append(save, cancel);
+    editor.focus();
+    return;
+  }
+  if (editor) editor.remove();
+  // 手改只属于**开编辑框的那一稿**：渲染到一个别的候选（切世界 / 导入存档 / 换稿）
+  // 就整块退出。不这么做的话，旧编辑框会顶着 A 的正文活到 B 头上，一点「保存修改」
+  // 就把 A 的正文写进 B 的候选里。
+  state.editingId = null;
+  textEl.hidden = false;
+
   const idx = state.candidates.findIndex((c) => c.candidate_id === cand.candidate_id);
 
+  // 控件文字化（2026-09-24 用户要求）：图标在只有两三个按钮时够用，加到「编辑」
+  // 之后 🎲 / ✓ 就得靠猜了。**唯独 ◀ ▶ 保留**——方向是自明的，换成"上一稿/下一稿"
+  // 反而把这一行撑长（2026-09-24 用户补正）。title 里写清各自会做什么。
   const prev = document.createElement("button");
   prev.textContent = "◀";
   prev.title = "上一个候选";
@@ -346,13 +387,18 @@ function renderCandidateMessage() {
   next.onclick = () => switchCandidate(1);
 
   const reroll = document.createElement("button");
-  reroll.textContent = "🎲";
-  reroll.title = "生成一个新候选";
+  reroll.textContent = "重抽";
+  reroll.title = "让编剧从头再写一稿（不承接这一稿，也不承接手改）";
   reroll.onclick = () => rerollCurrent();
+
+  const edit = document.createElement("button");
+  edit.textContent = "编辑";
+  edit.title = "就地改这一稿的正文";
+  edit.onclick = () => enterEditMode();
 
   const adopt = document.createElement("button");
   adopt.className = "adopt";
-  adopt.textContent = "✓";
+  adopt.textContent = "采纳";
   adopt.title = "采纳当前（静默）";
   adopt.onclick = () => adoptCurrent();
 
@@ -362,7 +408,52 @@ function renderCandidateMessage() {
   discard.title = "放弃整个回合";
   discard.onclick = () => discardCurrentTurn();
 
-  ctrl.append(prev, counter, next, reroll, adopt, discard);
+  ctrl.append(prev, counter, next, reroll, edit, adopt, discard);
+}
+
+/* ---------- 候选手改（2026-09-24） ---------- */
+
+function enterEditMode() {
+  if (!state.currentCandidateId) return;
+  state.editingId = state.currentCandidateId;
+  renderCandidateMessage();
+}
+
+function cancelEdit() {
+  state.editingId = null;
+  renderCandidateMessage();
+}
+
+/** 保存手改：正文回写候选（就地改，不新开版本）。
+ *
+ *  摘要由后端跟着正文对齐——**界面刻意不提示摘要变了**（用户原话："后台变就行，
+ *  本来前台输入的时候也是不看摘要的"）。成功时这里只说一句"保存中"，不做任何
+ *  关于摘要的展示。 */
+async function saveEdit() {
+  if (!state.editingId) return;
+  const el = state.currentMessageEl && state.currentMessageEl.querySelector(".message-edit");
+  if (!el) return;
+  const prose = el.value;
+  if (!prose.trim()) {
+    addMessage("npc", "⚠ 正文不能为空");
+    return;
+  }
+  setPipelineStatus("正在保存修改…");
+  try {
+    const data = await api(`/api/sessions/${state.sid}/candidates/${state.editingId}`, {
+      method: "PUT",
+      body: JSON.stringify({ prose }),
+    });
+    const idx = state.candidates.findIndex((c) => c.candidate_id === data.candidate_id);
+    if (idx >= 0) state.candidates[idx] = data;
+    state.editingId = null;
+    renderCandidateMessage();
+  } catch (e) {
+    clearPipelineStatus();
+    addMessage("npc", `⚠ 保存失败：${e.message}`);
+  } finally {
+    clearPipelineStatus();
+  }
 }
 
 function switchCandidate(delta) {
@@ -3098,6 +3189,12 @@ async function init() {
     e.preventDefault();
     const input = $("#input").value.trim();
     if (!input) return;
+    // 手改途中不许发新输入（2026-09-24）：发送会顺带把当前候选**静默采纳**掉，
+    // 手改就白改了（服务端没收到过这次修改）。先把「保存修改 / 取消」点掉。
+    if (state.editingId) {
+      addMessage("npc", "⚠ 正在手改这一稿：先点「保存修改」或「取消」，再发新输入。");
+      return;
+    }
     addMessage("player", input);
     $("#input").value = "";
     await sendInput(input);

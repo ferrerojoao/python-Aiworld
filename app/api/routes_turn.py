@@ -23,6 +23,17 @@ class RerollBody(BaseModel):
     note: str = ""
 
 
+class EditBody(BaseModel):
+    """手改候选手改稿的请求体：只收正文。
+
+    摘要**不在这里**——它由后端跟着正文自动对齐（``sync_summary``），前端不显示
+    也不提交（玩家原话："界面也没必要显示摘要变了，后台变就行"）。少一个字段就
+    少一条"两边不一致"的路。
+    """
+
+    prose: str
+
+
 def _get_session(request: Request, sid: str):
     session = request.app.state.sessions.get(sid)
     if session is None:
@@ -152,6 +163,23 @@ async def adopt_candidate(request: Request, sid: str, candidate_id: str):
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"ok": True}
+
+
+@router.put("/{sid}/candidates/{candidate_id}")
+async def edit_candidate(request: Request, sid: str, candidate_id: str, body: EditBody):
+    """候选就地手改（2026-09-24）：正文改写回候选，摘要由后端对齐。
+
+    套 ``_traced_runner``：这笔会触发一次辅助模型调用（摘要核对），漏套就查不到。
+    """
+    session = _get_session(request, sid)
+    runner, _ = _traced_runner(request, session)
+    try:
+        candidate = await runner.edit_candidate(candidate_id, prose=body.prose)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return candidate.model_dump()
 
 
 @router.post("/{sid}/turns/{turn_id}/reroll")

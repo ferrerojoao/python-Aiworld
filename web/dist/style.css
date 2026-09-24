@@ -229,6 +229,29 @@ body {
   background: var(--danger);
 }
 
+/* 采纳 / 保存修改：都是"这一稿就这么定了"的确定动作，同色（2026-09-24）。 */
+.message-controls button.save {
+  background: var(--success);
+}
+
+/* 手改稿的输入框（2026-09-24）。只给尺寸与配色，**不写 display** ——
+   它是整块插入/摘除的（编辑态才存在），不靠 `hidden` 属性藏着；这里一旦写了
+   display，将来要改回 `hidden` 就得再补一条 `[hidden]` 覆盖（大图浮层踩过这坑）。 */
+.message-edit {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 140px;
+  padding: 8px;
+  margin-bottom: 6px;
+  font: inherit;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  resize: vertical;
+}
+
 /* ---------- 输入框 ---------- */
 .pipeline-status {
   min-height: 22px;
