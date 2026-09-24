@@ -24,7 +24,7 @@
    ```
 
    💡 包里默认已经配好 DeepSeek（`AIWORLD_LLM_BASE_URL=https://api.deepseek.com`）。**用的不是这家**，就顺手把 base_url、`AIWORLD_MODEL_MAIN`、`AIWORLD_MODEL_CHEAP` 一起改成你家的（见第二节）。
-4. 再双击 `run.bat`。看到 `URL : http://127.0.0.1:8765/` 就成了。
+4. 再双击 `run.bat`。看到 `URL : http://127.0.0.1:8765/` 就成了 —— 那几行里还有两行是用来**认领自己**的：**`Build`**（这个包是什么时候、从哪个提交打的）和 **`Folder`**（你启动的到底是哪个目录）。手里同时有几份包时，靠它们就不会搞混。
 5. 在浏览器里打开 **<http://127.0.0.1:8765/>**（服务不会自己弹浏览器）。
 6. 玩完了：在那个黑窗口里按 `Ctrl+C`，或直接关掉窗口。
 
@@ -245,6 +245,7 @@ AIWORLD_MODEL_CHEAP=qwen2.5:7b
 |---|---|
 | 双击 `run.bat` 窗口一闪而过 | 缺运行环境。方式 A 的包不该出现；方式 B 说明 `.venv` 没建好，按第一节重做 |
 | 停在那儿说 `API key : MISSING` | 正常提示。按它说的填 `.env` 里的 `AIWORLD_LLM_API_KEY`，保存再跑 |
+| 换了新包，看到的还是旧版本 | 分两步认：① 看窗口里的 **`Build` / `Folder`** 两行 —— 确认你启动的是哪一份、在哪个目录；② 看页面上世界工作台标题旁的 **`前端 v…`**（新旧代码的号不一样）。然后按这两种原因查：**旧的那份服务还占着 8765**（新包会直接告诉你 `Port … ALREADY TAKEN`，并说明你看的页面是那一份），或**你双击的快捷方式指向旧文件夹** |
 | 报 `No module named '…'`（最常见是 `uvicorn`） | 启动器现在会自己说清属于哪种：提示 `not the bundled interpreter` = 用的不是包内运行环境（改成双击 `run.bat`）；提示 `bundled runtime looks incomplete` 或 `package looks damaged` = 包没拷全，重新拷一遍 |
 | 报 `Missing credentials` / `401` | key 没填、填错、或者 base_url 和 key 不是同一家的 |
 | 世界列表是空的 | 还没有世界。去第四节新建 / 导入 / 拷贝一个 |

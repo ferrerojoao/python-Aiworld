@@ -12,7 +12,9 @@
 
 from __future__ import annotations
 
+import datetime
 import shutil
+import subprocess
 from pathlib import Path
 
 SRC = Path(r"C:/AI/python-aiworld")
@@ -142,6 +144,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import socket
 import subprocess
 import sys
 
@@ -153,6 +156,53 @@ os.chdir(ROOT)
 KEY = "AIWORLD_LLM_API_KEY"
 LINE = "=" * 58
 BUNDLED_PY = (ROOT / "runtime" / "python" / "python.exe").resolve()
+BUILD_FILE = ROOT / "BUILD.txt"
+
+
+def build_stamp() -> str:
+    """这个包是**什么时候、从哪个提交**打出来的。
+
+    2026-09-24 教训：用户换上新包后报"那台电脑上运行的还是早期版本"，而当时两个
+    文件夹在界面上**完全无法分辨**（新旧 banner 一字不差、包里也没有版本标记），
+    只能靠猜。这一行就是那个缺失的标记 —— 判据很简单：**打开窗口先看 Build 和
+    Folder，就知道自己刚启动的是哪一份、在哪个目录**。
+    """
+    try:
+        return BUILD_FILE.read_text(encoding="utf-8").strip() or "unknown"
+    except OSError:
+        return "unknown (BUILD.txt missing - not a freshly built package)"
+
+
+def refuse_busy_port(host: str, port: int) -> None:
+    """"换了新包却看到旧版本"几乎都是这个原因，必须在起服务前说清。
+
+    早期那一份服务还挂在同一个端口上，新这份要么还没填 key、要么根本绑不上端口，
+    而浏览器打开的地址回答的**是旧那一份**。不说清的话，用户会一直以为自己跑的
+    是新版（2026-09-24 用户报障）。
+
+    用裸 socket connect_ex 探，不用 HTTP 客户端 —— 免得被 HTTP_PROXY 之类带偏
+    （本机实测过：走代理探 127.0.0.1 会拿到代理吐的 502，看着像有人在）。
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(1.0)
+        if sock.connect_ex((host, port)) != 0:
+            return
+    print(LINE)
+    print("  AIWorld cannot start")
+    print(LINE)
+    print("  Port " + str(port) + " on " + host + " is ALREADY TAKEN.")
+    print()
+    print("  Something else is answering there - most likely an OLDER copy of")
+    print("  AIWorld that is still running. Closing its window is not always")
+    print("  enough; look for leftover python.exe in Task Manager.")
+    print()
+    print("  The page at http://" + host + ":" + str(port) + "/ right now is")
+    print("  THAT copy, NOT this one.")
+    print()
+    print("  -> End every python.exe, then run run.bat again.")
+    print("  -> Or pick a free port in .env (AIWORLD_PORT=8766) and open that.")
+    print(LINE)
+    raise SystemExit(1)
 
 
 def reexec_with_bundled() -> None:
@@ -260,6 +310,8 @@ def main() -> None:
     print("  AIWorld")
     print(LINE)
     print("  URL       : http://" + host + ":" + str(settings.port) + "/")
+    print("  Build     : " + build_stamp())
+    print("  Folder    : " + str(ROOT))
     print("  API key   : " + key)
     if key != "set":
         # openai>=3 在 api_key 为空时构造客户端就抛 OpenAIError，uvicorn 起来后
@@ -269,6 +321,9 @@ def main() -> None:
         print()
         print("[STOPPED] no API key - nothing was started.")
         raise SystemExit(1)
+    # 放在 key 闸门之后：key 为空时本来就什么都没启动，不存在"看到的是旧版本"
+    # 这种误解；而 key 填好之后还看到旧版，就是这个端口被别人占着。
+    refuse_busy_port(host, settings.port)
     print("  Stop      : Ctrl+C")
     print(LINE)
     print()
@@ -305,6 +360,32 @@ pause
 endlocal
 """
 (PKG / "run.bat").write_bytes(run_bat.replace("\n", "\r\n").encode("ascii"))
+
+# ---- 8.5 BUILD.txt：让"我跑的是哪一份"可分辨 --------------------------------
+#    2026-09-24 用户报"换新包后那台电脑上运行的还是早期版本"——而当时新旧两份的
+#    banner 一字不差、文件夹里也没有任何版本标记，两边只能靠猜。这一行就是那个
+#    缺失的标记（和前端 ?v= 是同一个道理：**"刷新了没 / 换了没"必须可见**）。
+def _git(*args: str) -> str:
+    """取 git 信息；没装 git / 不在仓库里都返回空串，绝不因此让打包失败。"""
+    try:
+        done = subprocess.run(
+            ["git", *args],
+            cwd=str(SRC),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return ""
+    return done.stdout.strip() if done.returncode == 0 else ""
+
+
+_stamp = _git("rev-parse", "--short", "HEAD") or "unknown"
+if _git("status", "--porcelain"):
+    _stamp += "+dirty"
+_stamp = datetime.datetime.now().astimezone().replace(microsecond=0).isoformat() + "  git:" + _stamp
+(PKG / "BUILD.txt").write_text(_stamp + "\n", encoding="utf-8", newline="\n")
 
 print("built ->", PKG)
 for p in sorted(PKG.iterdir()):
