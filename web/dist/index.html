@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AIWorld</title>
-  <link rel="stylesheet" href="style.css?v=0874d740" />
+  <link rel="stylesheet" href="style.css?v=fd927101" />
 </head>
 <body>
   <div id="app">
@@ -187,6 +187,11 @@
           <p>总计 Token：<span id="usage-total">0</span></p>
         </div>
         <button id="refresh-usage">刷新统计</button>
+
+        <!-- 项目地址（2026-09-24 用户要求放两处之一）：设置页最底部。
+             另一处在世界工作台「概览」页底部，见 app.js 的 renderEditOverview。
+             守这条的测试：web/tests/smoke.test.mjs 的「项目地址放两处」。 -->
+        <p class="repo-foot">项目地址：<a href="https://github.com/ferrerojoao/python-Aiworld" target="_blank" rel="noopener noreferrer">github.com/ferrerojoao/python-Aiworld</a></p>
       </div>
     </div>
 
@@ -259,6 +264,6 @@
     <div id="lightbox-cap" class="lightbox-cap"></div>
   </div>
 
-  <script src="app.js?v=2fabd0f6"></script>
+  <script src="app.js?v=0960c379"></script>
 </body>
 </html>

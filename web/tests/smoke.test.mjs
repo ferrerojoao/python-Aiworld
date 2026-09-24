@@ -1070,3 +1070,30 @@ test("编辑框不跟着串到别的候选（否则「保存」会把 A 的正�
   assert.equal(result.textHidden, false);
   assert.equal(result.labels, DEFAULT_LABELS);
 });
+
+test("项目地址放两处，且都在最底部：抽屉「设置」页 + 世界工作台「概览」页", async () => {
+  // 用户要求（2026-09-24）：仓库地址放两个地方。
+  // 断言特意钉的是"**最底部那一条**"，不是"文件里出现过" —— 位置本身是需求的一半
+  // （概览页那处是"管理面才有、玩家一般不点进来"的隐蔽位）。
+  const REPO = "https://github.com/ferrerojoao/python-Aiworld";
+  const { result } = await bootApp({
+    routes: [settingsOnly, ["/api/worlds", () => ({ worlds: [] })]],
+    probe: `
+      // 概览页是 app.js 里的模板串：必须真渲染一次才看得见（同一次 eval，能直接调它）
+      renderEditOverview({ overview: {} });
+      const last = (sel) => {
+        const el = document.querySelector(sel).lastElementChild;
+        return el ? { cls: el.className, html: el.innerHTML } : null;
+      };
+      return { settingsLast: last("#tab-settings"), overviewLast: last("#world-tab-overview") };`,
+  });
+
+  for (const [where, node] of [
+    ["设置页", result.settingsLast],
+    ["概览页", result.overviewLast],
+  ]) {
+    assert.ok(node, `${where}应当有内容`);
+    assert.match(node.cls, /repo-foot/, `${where}最底部那一条应当是项目地址`);
+    assert.ok(node.html.includes(REPO), `${where}里要有完整的仓库地址（含 href，地址写错也要红）`);
+  }
+});

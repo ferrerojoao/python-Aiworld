@@ -422,6 +422,25 @@ button:hover {
   margin: 6px 0 0;
 }
 
+/* 项目地址（2026-09-24）：全仓**只出现两处** —— 抽屉「设置」页最底部、
+   世界工作台「概览」页最底部。故意做成和说明文字一个颜色，别变成显眼入口。 */
+.repo-foot {
+  margin: 14px 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.repo-foot a {
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.repo-foot a:hover {
+  color: var(--accent);
+}
+
 .debug-output {
   background: var(--panel-4);
   border: 1px solid var(--border);

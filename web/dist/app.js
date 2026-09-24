@@ -2390,6 +2390,11 @@ function renderEditOverview(data) {
         </div>
       </div>
     </div>
+
+    <!-- 项目地址（2026-09-24 用户要求放两处之一）：概览页最底部 —— 管理面，玩家一般不点进来。
+         另一处在抽屉「设置」页最底部（index.html 里的 .repo-foot）。守这条的测试见
+         web/tests/smoke.test.mjs 的「项目地址放两处」。 -->
+    <p class="repo-foot">项目地址：<a href="https://github.com/ferrerojoao/python-Aiworld" target="_blank" rel="noopener noreferrer">github.com/ferrerojoao/python-Aiworld</a></p>
   `;
 }
 
