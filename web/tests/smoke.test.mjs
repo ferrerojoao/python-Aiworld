@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { bootApp, clickJs, worldRoutes } from "./harness.mjs";
+import { bootApp, clickJs, readDist, worldRoutes } from "./harness.mjs";
 
 const settingsOnly = ["/api/settings", () => ({ llm_base_url: "", model_main: "m", model_cheap: "c" })];
 
@@ -492,4 +492,248 @@ test("在场人物：主角不在场但别人在 → 只列别人，不出现主
   assert.equal(result.count, 1);
   assert.equal(result.labels, "朱明");
   assert.equal(result.tags, "");
+});
+
+/* ---------- 附图（2026-09-24）----------
+   图在服务端是相对路径串（assets/scenes/鱼市-3f9a1c72.png），前端统一走
+   带令牌的 fetch → objectURL。这几条各自钉一个"真出过或一定会出"的坑：
+   · `<img src>` 带不了 Authorization 头 ⇒ 非本机必 401 ⇒ 缺图静默消失
+   · 缺图的人**不能**从「在场」消失（一格一人）
+   · 卡片只回答"此刻"（哪里 + 谁在）⇒ 不放「最近去过」
+   · 全量重写 ⇒ 附图路径不回传就等于保存一次把图抹掉 */
+
+const sceneState = {
+  scene_id: "鱼市",
+  scene_perceivable: "青石板路两侧是铺面，门口晾着鱼干。",
+  scene_image: "assets/scenes/鱼市-3f9a1c72.png",
+  present_view: [
+    { name: "刘星", portrait: "", is_player: true },
+    { name: "朱明", portrait: "assets/npcs/朱明-8b21de04.png", is_player: false },
+    { name: "老掌柜", portrait: "", is_player: false },
+  ],
+  recent_scenes: ["主街", "码头"],
+};
+
+test("场景卡：一格一人 —— 没图的人照样占一格，且不画占位剪影", async () => {
+  const { result } = await bootApp({
+    routes: worldRoutes({ state: sceneState }),
+    probe: `
+      const card = document.querySelector("#scene-card");
+      return {
+        people: card.querySelectorAll(".scene-person").length,
+        noPic: card.querySelectorAll(".scene-person.no-pic").length,
+        names: Array.from(card.querySelectorAll(".scene-person-name")).map((n) => n.textContent),
+        pics: card.querySelectorAll(".scene-person-pic").length,
+        hasStar: !!card.querySelector(".scene-chip-star"),
+        // 「最近去过」与"图下那行 perceivable 描述"都撤了（2026-09-24 用户要求）。
+        // 夹具里**故意**塞着 recent_scenes 与 scene_perceivable ⇒
+        // "字段在"不等于"卡片要读它"，这几样都不许出现。
+        recentChips: card.querySelectorAll(".scene-chip").length,
+        hasRecentLabel: card.textContent.includes("最近去过"),
+        hasDesc: !!card.querySelector(".scene-card-desc"),
+        cardText: card.textContent,
+      };`,
+  });
+
+  assert.equal(result.people, 3, "三个人就要有三格（含没图的老掌柜）");
+  assert.equal(result.noPic, 2, "没图的两个人只出名字格");
+  assert.equal(result.pics, 1, "只有朱明有头像");
+  assert.equal(result.names.join("|"), "刘星主角|朱明|老掌柜");
+  assert.equal(result.hasStar, true, "主角挂「主角」标");
+  assert.equal(result.hasDesc, false, "图下那行 perceivable 描述不该再渲染");
+  assert.doesNotMatch(result.cardText, /鱼干/, "描述里的字一个都不该出现");
+  assert.equal(result.recentChips, 0, "「最近去过」的 chip 不该再出现");
+  assert.equal(result.hasRecentLabel, false, "连那个小标题也不许留");
+});
+
+test("点场景卡里的图 → 看大图浮层（点浮层 / Esc 关掉，都不该顺手关卡片）", async () => {
+  const { result } = await bootApp({
+    routes: [
+      ...worldRoutes({ state: sceneState }),
+      // 图走取图端点：给一个能当 blob 读的响应（`jsonResponse` 上没有 blob()）。
+      [
+        "/api/sessions/s1/assets/",
+        () => ({ __raw: true, res: { ok: true, status: 200, blob: async () => new Blob(["fake"]) } }),
+      ],
+    ],
+    // ⚠️ jsdom 没有 `URL.createObjectURL`，而 `hydrateImages` 在 init 阶段就要用它
+    // 把 src 填上 ⇒ 只能在 app.js **之前**补（probe 在之后，来不及）。
+    pre: 'URL.createObjectURL = () => "blob:stub";',
+    probe: `
+      const card = document.querySelector("#scene-card");
+      const box = document.querySelector("#img-lightbox");
+      const big = document.querySelector("#lightbox-img");
+      const cap = document.querySelector("#lightbox-cap");
+      const closedAtStart = box.hidden;
+      const picSrc = card.querySelector(".scene-card-img").getAttribute("src");
+
+      ${clickJs("#scene")}
+      await new Promise((r) => setTimeout(r, 20));
+
+      ${clickJs("#scene-card .scene-card-img")}
+      await new Promise((r) => setTimeout(r, 20));
+      const opened = {
+        open: !box.hidden,
+        sameSrc: big.getAttribute("src") === picSrc,
+        cap: cap.textContent,
+        cardStillOpen: !card.hidden,
+      };
+
+      ${clickJs("#img-lightbox")}
+      await new Promise((r) => setTimeout(r, 20));
+      const closedByClick = { box: box.hidden, card: card.hidden };
+
+      ${clickJs("#scene-card .scene-person-pic")}
+      await new Promise((r) => setTimeout(r, 20));
+      const avatarOpen = !box.hidden;
+      const avatarCap = cap.textContent;
+
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      const esc1 = { box: box.hidden, card: card.hidden };
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      return {
+        closedAtStart, picSrc, ...opened, ...closedByClick,
+        avatarOpen, avatarCap, esc1, cardAfterEsc2: card.hidden,
+        // 关掉大图之后，卡片上那张图必须**原样还在**（closeLightbox 只清浮层那张，
+        // blob URL 归 _imgCache 所有 —— 这里顺手 revoke 就会把卡片一起弄坏）。
+        cardPicAfterClose: card.querySelector(".scene-card-img").getAttribute("src"),
+      };
+    `,
+  });
+
+  assert.equal(result.closedAtStart, true, "浮层初始不该显示");
+  assert.ok(result.picSrc, "夹具该把场景图的 src 填上，否则这条什么都测不到");
+  assert.equal(result.open, true, "点场景图该打开大图");
+  assert.equal(result.sameSrc, true, "大图复用卡片那张的 blob URL：不重新请求、不新建 objectURL");
+  assert.equal(result.cap, "鱼市", "浮层下方显示场景名");
+  assert.equal(result.cardStillOpen, true, "点图不该把卡片一起关掉");
+  // ⚠️ 探针里 `closedByClick` 是 `...closedByClick` 展开的 ⇒ 落在 result 顶层（`box` / `card`），
+  //    不是 `result.closedByClick.box`。`esc1` 才是原样嵌套的。
+  assert.equal(result.box, true, "点浮层本身关闭");
+  assert.equal(result.card, false, "关大图也不该顺手关卡片");
+  assert.equal(result.avatarOpen, true, "在场头像同样可点");
+  assert.equal(result.avatarCap, "朱明", "头像浮层的名字跟着那个人");
+  assert.equal(result.esc1.box, true, "Esc 关大图");
+  assert.equal(result.esc1.card, false, "第一次 Esc 不该把卡片一起关掉");
+  assert.equal(result.cardAfterEsc2, true, "大图关掉之后，第二次 Esc 才轮到卡片");
+  assert.equal(result.cardPicAfterClose, result.picSrc, "关大图不该动卡片那张图（blob 归 _imgCache，别在这里 revoke）");
+});
+
+test("浮层自己带 display ⇒ 必须配一条 [hidden] 覆盖（jsdom 看不见这个 bug，只能查源码）", () => {
+  // 🔴 为什么不用 jsdom 验：`getComputedStyle` 对带 `hidden` 属性的元素是**硬编码**成
+  //    `display: none` 的 —— 实测（2026-09-24）即使**一条覆盖规则都没有**、只留
+  //    `.lightbox { display: flex }`，它照样算 `none`。也就是说这个 bug（浮层永远挂在
+  //    屏幕上，因为类的 display 盖掉了 UA 的 `[hidden]`）**在 jsdom 里永远看不见**，
+  //    写成断言就是恒真的假守卫（变异检验：删掉覆盖规则，绿灯照旧）。
+  //    所以这里退一步只查**源码里那对规则还在不在** —— 它不能证明渲染对，
+  //    但能在有人"清理 CSS"时把这对规则拆开。
+  const css = readDist("style.css");
+  const body = (sel) => {
+    const i = css.indexOf(sel + " {");
+    return i < 0 ? null : css.slice(i + sel.length, css.indexOf("}", i));
+  };
+
+  assert.match(String(body(".lightbox")), /display:\s*flex/, "浮层该铺满视口（display:flex）");
+  assert.match(
+    String(body(".lightbox[hidden]")),
+    /display:\s*none/,
+    "少了这条，`.lightbox` 的 display:flex 会把 [hidden] 盖掉 ⇒ 浮层一直挂着"
+  );
+});
+
+test("场景卡：点顶栏「场景」开合，点空白处 / Esc 关掉", async () => {
+  const { result } = await bootApp({
+    routes: worldRoutes({ state: sceneState }),
+    probe: `
+      const card = document.querySelector("#scene-card");
+      const trigger = document.querySelector("#scene");
+      const before = card.hidden;
+      ${clickJs("#scene")}
+      const afterClick = card.hidden;
+      ${clickJs("#scene")}
+      const afterSecond = card.hidden;
+      ${clickJs("#scene")}
+      document.body.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      const afterOutside = card.hidden;
+      ${clickJs("#scene")}
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      const afterEsc = card.hidden;
+      return { before, afterClick, afterSecond, afterOutside, afterEsc, triggerTag: trigger.tagName };`,
+  });
+
+  assert.equal(result.before, true, "默认不展开");
+  assert.equal(result.afterClick, false, "点一下展开");
+  assert.equal(result.afterSecond, true, "再点一下收起");
+  assert.equal(result.afterOutside, true, "点卡片外面收起");
+  assert.equal(result.afterEsc, true, "Esc 收起");
+  assert.equal(result.triggerTag, "BUTTON");
+});
+
+test("取图必带 Authorization 头（<img src> 带不了头，所以走 fetch）", async () => {
+  const { calls, result } = await bootApp({
+    url: "http://localhost:8765/?token=s3cret",
+    // ⚠️ 故意用一个**不带图**的 /state：否则 init 阶段就已经为场景卡取过图，
+    //    请求计数会被"初始化那一轮"污染（这条要数的是缓存命中，不是总次数）。
+    routes: [
+      ...worldRoutes({ state: { scene_id: "鱼市", present_view: [] } }),
+      [
+        "/api/sessions/s1/assets/",
+        () => ({ __raw: true, res: { ok: true, status: 200, blob: async () => ({ size: 3 }) } }),
+      ],
+    ],
+    probe: `
+      URL.createObjectURL = () => "blob:stub";
+      URL.revokeObjectURL = () => {};
+      const url = await imageUrl("assets/scenes/鱼市-3f9a1c72.png");
+      const again = await imageUrl("assets/scenes/鱼市-3f9a1c72.png");
+      const none = await imageUrl("");
+      return { url, again, none };`,
+  });
+
+  const imgCalls = calls.filter((c) => c.url.includes("/assets/"));
+  assert.equal(imgCalls.length, 1, `同一张图只取一次（缓存），实际 ${imgCalls.length} 次`);
+  assert.equal(imgCalls[0].headers.Authorization, "Bearer s3cret", "必须带令牌，否则非本机 401");
+  assert.equal(result.url, "blob:stub");
+  assert.equal(result.again, "blob:stub", "第二次走缓存，不再发请求");
+  assert.equal(result.none, "", "空路径不发请求，直接当缺图");
+});
+
+test("取图失败（401/404）→ 静默当缺图，不抛错", async () => {
+  const { result } = await bootApp({
+    routes: worldRoutes({ state: sceneState }),
+    probe: `
+      const url = await imageUrl("assets/scenes/不存在-00000000.png");
+      return { url };`,
+  });
+
+  assert.equal(result.url, "", "取不到就是缺图，界面不画那一块");
+});
+
+test("工作台附图槽：路径必须随全量回传 —— 漏了就等于保存一次把图抹掉", async () => {
+  const { result } = await bootApp({
+    routes: worldRoutes({ state: sceneState }),
+    probe: `
+      document.querySelector("#world-tab-npcs").innerHTML =
+        '<div class="edit-list" id="edit-npc-list">' +
+        npcCard("朱明", { portrait: "assets/npcs/朱明-8b21de04.png" }) +
+        npcCard("刘星", { is_player: true }) +
+        "</div>";
+      document.querySelector("#world-tab-scenes").innerHTML =
+        '<div class="edit-list" id="edit-scene-list">' +
+        sceneCard({ id: "鱼市", image: "assets/scenes/鱼市-3f9a1c72.png" }, 0) +
+        "</div>";
+      const npcs = readNpcs();
+      const scenes = readScenes();
+      return {
+        portraits: Object.values(npcs).map((c) => c.portrait),
+        images: scenes.map((s) => s.image),
+        hasInput: !!document.querySelector('#edit-npc-list [data-field="portrait"]'),
+      };`,
+  });
+
+  assert.equal(result.hasInput, true, "肖像槽要有一个 hidden input 让回读拿得到");
+  // ⚠️ 用 join 而不是 deepEqual：探针的返回值来自 jsdom 那一侧的 realm，
+  //    它的 Array.prototype 和 Node 的不是同一个，deepStrictEqual 会比原型而误判。
+  assert.equal(result.portraits.join("|"), "assets/npcs/朱明-8b21de04.png|", "有图的带路径，没图的空串");
+  assert.equal(result.images.join("|"), "assets/scenes/鱼市-3f9a1c72.png");
 });

@@ -46,6 +46,13 @@ class Scene(BaseModel):
     aliases: list[str] = Field(default_factory=list)  # 变体名（"码头鱼市"），给移动解析与 id 纠偏
     perceivable: str = ""
     region: str = ""  # 消息域：该场景事件归属的地域（跨区域知识边界用）；空 = 全域公共区
+    # 场景附图（2026-09-24）：世界目录下的**相对路径串**，如 "assets/scenes/鱼市-3f9a1c72.png"；
+    # 空 = 没有图（界面不画那一块，引擎也不生成占位形象）。
+    # 🔴 存路径串而不是 URL/base64 是有意的：路径串跟着 scenes.json 的**全量重写**
+    # 一起落盘，于是复用既有资产写路径，不需要第二条改世界的路。
+    # 🔴 图片**永不进提示词**：模型读的永远是 perceivable 文本，图纯 UI。
+    # 校验与归一化见 app/world/images.py，端点见 routes_sessions 的 /assets。
+    image: str = ""
 
 
 class NpcCard(BaseModel):
@@ -64,6 +71,9 @@ class NpcCard(BaseModel):
     is_player: bool = False  # 主角标记：全表有且仅有一张
     region: list[str] = Field(default_factory=list)  # 消息域（听域/来属地，可多个）；空 = 按亲历事件推导
     attributes: dict[str, int] = Field(default_factory=dict)  # 二期预留
+    # 人物附图（2026-09-24）：与 Scene.image 同一条纪律——世界目录下的相对路径串，
+    # 空 = 没有图；图片永不进提示词（模型读的是 appearance 文本）。主角用同一个字段。
+    portrait: str = ""
 
 
 class NarrativePreset(BaseModel):

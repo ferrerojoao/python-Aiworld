@@ -83,6 +83,196 @@ async function api(path, options = {}) {
   return res.text();
 }
 
+/* ---------- 附图（2026-09-24）：场景图 / 人物图的取用 ----------
+   服务端存的是一条**世界目录下的相对路径串**（assets/scenes/主街-3f9a1c72.png）。
+
+   🔴 **不能用 `<img src="/api/...">` 直连**：`<img>` 带不了 Authorization 头，
+   非本机访问（手机 / 局域网）必然 401 —— 而底座是"缺图不显示"，于是图会**静默消失**，
+   本机测试永远正常、只有换设备才复现。所以统一走带令牌的 fetch → objectURL。
+   401/404 一律当"缺图"处理，不渲染那一块，不报错。
+
+   内容寻址命名（同名 = 同内容）⇒ 同一 URL 永远对应同一张图，缓存可以长期留着。 */
+const _imgCache = new Map(); // path -> objectURL
+
+async function imageUrl(path) {
+  if (!path) return "";
+  if (_imgCache.has(path)) return _imgCache.get(path);
+  let url = "";
+  try {
+    const res = await fetch(`/api/sessions/${state.sid}/${path}`, { headers: authHeaders() });
+    if (res.ok) {
+      url = URL.createObjectURL(await res.blob());
+      _imgCache.set(path, url);
+    }
+  } catch (err) {
+    url = ""; // 网络不通 / 令牌不对，一律退化成"缺图"
+  }
+  return url;
+}
+
+/** 把 root 下所有 `img[data-path]` 补上 src；空路径或取不到就藏起来。
+ *  重渲染时会重复调用，用 data-loaded 去重（同一张图不反复发请求）。 */
+function hydrateImages(root) {
+  root.querySelectorAll("img[data-path]").forEach(async (img) => {
+    const path = img.dataset.path || "";
+    if (!path) {
+      img.hidden = true;
+      return;
+    }
+    if (img.dataset.loaded === path) {
+      img.hidden = false;
+      return;
+    }
+    const url = await imageUrl(path);
+    if (!url) {
+      img.hidden = true;
+      return;
+    }
+    img.dataset.loaded = path;
+    img.src = url;
+    img.hidden = false;
+  });
+}
+
+/** 放掉所有图对象 URL（换世界时调；见 refreshState 里的 sid 判定）。 */
+function clearImageCache() {
+  _imgCache.forEach((url) => URL.revokeObjectURL(url));
+  _imgCache.clear();
+}
+
+/** 场景卡（顶栏「场景」点开的那张卡）：一张卡回答"此刻这一幕：哪里 + 谁在"。
+ *  数据全部来自 /state：scene_image / present_view。
+ *  ⚠️ 图是**纯 UI**：不进提示词、不参与任何判定（方案 §2 底座 1/3）。
+ *  ⚠️ **刻意不放「最近去过」**（2026-09-24 用户要求撤掉）："去过哪儿"是左栏
+ *     `renderLeftRail` 的活儿，这张卡只负责"此刻"两件事，多一栏就冲淡了它。
+ *     `recent_scenes` 字段后端照旧发（左栏在用）——**看到字段在，不代表要在这里读它**。
+ *  ⚠️ **刻意不放 `scene_perceivable`**（2026-09-24 用户要求撤掉）：那行描述压在图上，
+ *     卡片就退化成一个文字块了。字段后端照旧发（工作台「场景」页仍可看可改）——
+ *     **同理，别因为字段在就加回来**。
+ *  `data-caption` = 点图看大图时，浮层下方显示的名字（读它的只有 `bindLightbox`）。 */
+function renderSceneCard(data) {
+  const card = $("#scene-card");
+  if (!card) return;
+  const people = data.present_view || [];
+  card.innerHTML = `
+    ${data.scene_image ? `<img class="scene-card-img" data-path="${escapeHtml(data.scene_image)}" data-caption="${escapeHtml(data.scene_id || "")}" alt="" />` : ""}
+    <div class="scene-card-name">📍 ${escapeHtml(data.scene_id || "-")}</div>
+    <div class="scene-card-label">在场</div>
+    <div class="scene-card-people">
+      ${people.length ? people.map(scenePerson).join("") : '<div class="scene-card-empty">无人</div>'}
+    </div>`;
+  hydrateImages(card);
+}
+
+/** 一格一人：有图 = 头像 + 名字；**没图 = 只有名字**（不画占位剪影 —— 引擎不代笔）。
+ *  ⚠️ 没图的人也必须占一格、必须出现：加了图之后，人数不能因为"谁有图谁没图"而变，
+ *  否则会看着像有人凭空消失。缺图只吞图，不吞信息。 */
+function scenePerson(person) {
+  const name = escapeHtml(person.name || "");
+  const pic = person.portrait
+    ? `<img class="scene-person-pic" data-path="${escapeHtml(person.portrait)}" data-caption="${name}" alt="" />`
+    : "";
+  const badge = person.is_player ? '<span class="scene-chip-star">主角</span>' : "";
+  return `<div class="scene-person${person.portrait ? "" : " no-pic"}">${pic}<div class="scene-person-name">${name}${badge}</div></div>`;
+}
+
+/** 场景卡浮层：点顶栏「场景」开合，Esc / 点空白处关掉。 */
+function bindSceneCard() {
+  const trigger = $("#scene");
+  const card = $("#scene-card");
+  if (!trigger || !card) return;
+  trigger.addEventListener("click", (e) => {
+    e.stopPropagation();
+    card.hidden = !card.hidden;
+  });
+  document.addEventListener("click", (e) => {
+    if (card.hidden) return;
+    if (card.contains(e.target) || trigger.contains(e.target)) return;
+    card.hidden = true;
+  });
+  document.addEventListener("keydown", (e) => {
+    // 大图开着时，Esc 归大图 —— 否则一次 Esc 会把卡片一起关掉（两个监听都在
+    // document 上，谁先注册谁先跑，靠注册顺序分先后太脆；这里显式让位）。
+    if (e.key === "Escape" && !lightboxOpen()) card.hidden = true;
+  });
+}
+
+/** 看大图浮层是否开着。给 `bindSceneCard` 的 Esc 让位用。 */
+function lightboxOpen() {
+  const box = $("#img-lightbox");
+  return !!box && !box.hidden;
+}
+
+function closeLightbox() {
+  const box = $("#img-lightbox");
+  const img = $("#lightbox-img");
+  if (!box) return;
+  box.hidden = true;
+  // 只清 src、**不 revoke**：那个 blob 归 `_imgCache` 所有（换世界时由
+  // clearImageCache 统一放掉），在这里 revoke 会把卡片上那张图一起弄坏。
+  if (img) img.removeAttribute("src");
+}
+
+/** 点场景卡里的图 → 看大图（2026-09-24 用户要求）。
+ *
+ *  🔴 **大图直接用被点那张 <img> 的 `src`**，不重新 fetch、也不新建 objectURL：
+ *  它本来就是「带令牌 fetch → blob」的产物，直接复用同一个 blob URL 最省事，
+ *  也不会因为再查一次缓存而出现"卡片有图、大图却打不开"的不同步。
+ *  取不到 src（= 缺图，`hydrateImages` 已经把它藏了）就什么都不做——
+ *  与底座「缺图 = 不画图」一致，不弹一个空浮层。
+ */
+function bindLightbox() {
+  const box = $("#img-lightbox");
+  const img = $("#lightbox-img");
+  const cap = $("#lightbox-cap");
+  if (!box || !img) return;
+
+  const card = $("#scene-card");
+  if (card) {
+    card.addEventListener("click", (e) => {
+      const hit = e.target.closest("img[data-path]");
+      if (!hit || hit.hidden || !hit.getAttribute("src")) return;
+      // ⚠️ 这里**不需要** stopPropagation：唯一的 document 级 click 监听就是
+      //    bindSceneCard 那个「点空白处关卡片」，它开头就有 `card.contains(e.target)` 早退，
+      //    点到卡片里的图根本走不到关闭那一句。2026-09-24 变异检验证实：删掉它全套测试
+      //    照样全绿 ⇒ 那是死重量。**别再加回来**，也别照着旧注释以为它在防什么。
+      //    （浮层那个 stopPropagation 是真的：浮层在卡片**外面**，不挡就会关掉卡片。）
+      img.src = hit.getAttribute("src");
+      if (cap) cap.textContent = hit.dataset.caption || "";
+      box.hidden = false;
+    });
+  }
+
+  box.addEventListener("click", (e) => {
+    e.stopPropagation(); // 同理：关大图不该顺手把卡片也关了
+    closeLightbox();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !box.hidden) closeLightbox();
+  });
+}
+
+/** 工作台附图槽（场景 / 人物共用）。kind 与字段名写在 data-* 上，
+ *  于是上传与回读只有一段代码，不必两侧各写一遍。
+ *  ⚠️ 路径落在**一个 hidden input** 上（`data-field` 与普通字段同形），所以
+ *  readScenes / readNpcs 的"全量回传"天然带上它 —— 不回传 = 保存时被**全量重写抹掉**。 */
+function imageSlot(kind, field, path) {
+  const p = path || "";
+  const hint = kind === "scenes" ? "推荐 1280×720（16:9）" : "推荐 512×512（1:1）";
+  return `
+    <div class="img-slot" data-img-kind="${kind}" data-img-field="${field}">
+      <img class="img-preview" data-path="${escapeHtml(p)}" alt="" hidden />
+      <div class="img-slot-actions">
+        <button type="button" class="img-pick">${p ? "换图" : "选择图片"}</button>
+        <button type="button" class="img-clear" ${p ? "" : "hidden"}>移除</button>
+        <span class="img-hint">${hint}</span>
+      </div>
+      <input class="img-input" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+      <input type="hidden" class="edit-field" data-field="${field}" value="${escapeHtml(p)}" />
+    </div>`;
+}
+
 function $(sel) {
   return document.querySelector(sel);
 }
@@ -303,7 +493,14 @@ async function refreshState() {
   const tip = settlementTooltip(data.last_settlement);
   if (tip) $("#clock").title = tip;
   else $("#clock").removeAttribute("title");
-  $("#scene").textContent = data.scene_id || data.scene || "-";
+  $("#scene").textContent = `${data.scene_id || data.scene || "-"} ▾`;
+  // 换世界就换 sid（world_id:save_name）⇒ 把上一个世界的图对象 URL 全放掉
+  // （objectURL 有生命周期，留着就是内存泄漏）。⚠️ 重置**不换** sid，而重置只清
+  // 账本、不动资产，图照旧有效，所以这里不需要为重置额外清一次。
+  if (state.imgSid !== state.sid) {
+    clearImageCache();
+    state.imgSid = state.sid;
+  }
   if (data.preset) {
     const p = data.preset;
     $("#writer-guidelines-input").value = p.writer_guidelines || "";
@@ -311,6 +508,7 @@ async function refreshState() {
     $("#banned-words-input").value = (p.banned_words || []).join(", ");
   }
   renderLeftRail(data);
+  renderSceneCard(data);
   renderStateChange(data);
   renderStatePanel(data);
   renderStateBadge(data);
@@ -2272,6 +2470,10 @@ function sceneCard(item, i) {
         </div>
       </div>
       <div class="field full">
+        <label>场景图（可选；上传后记得点「保存」）</label>
+        ${imageSlot("scenes", "image", item.image)}
+      </div>
+      <div class="field full">
         <label>可感知描述</label>
         <textarea class="edit-field" data-field="perceivable" rows="2">${escapeHtml(item.perceivable || "")}</textarea>
       </div>
@@ -2354,6 +2556,10 @@ function npcCard(id, card) {
         </div>
       </div>
       <div class="field full">
+        <label>肖像（可选；上传后记得点「保存」）</label>
+        ${imageSlot("npcs", "portrait", c.portrait)}
+      </div>
+      <div class="field full">
         <label>外貌</label>
         <textarea class="edit-field" data-field="appearance" rows="2">${escapeHtml(c.appearance || "")}</textarea>
       </div>
@@ -2432,6 +2638,8 @@ function mdRebuild(listId) {
   // 选中校验：原选中项已删则回落到第一条
   const valid = sel && list.querySelector(`.edit-card[data-mdkey="${sel}"]`);
   mdShow(listId, valid ? sel : list.querySelector(".edit-card")?.dataset.mdkey || "");
+  // 附图槽的预览（2026-09-24）：每个列表渲染完都补一次，有图才发请求、取不到就当缺图。
+  hydrateImages(list);
 }
 
 function mdShow(listId, key) {
@@ -2445,9 +2653,84 @@ function mdShow(listId, key) {
   pane.querySelectorAll(".md-item").forEach((r) => r.classList.toggle("active", r.dataset.key === key));
 }
 
+/* ---------- 附图槽的上传 / 移除（2026-09-24）----------
+   上传**只写文件、不改资产**：字段靠工作台「保存」一起落盘（"保存才落盘"是这个
+   工作台既有的事务边界，不为图片破它）。于是"换图 / 移除 / 传了不保存"都会留下
+   没人引用的文件，由保存那一刻的孤儿清理（后端 prune_orphan_assets）统一带走。 */
+
+/** 上传一张图。走**原始字节**（不是 multipart）——后端没装 python-multipart。 */
+async function uploadCardImage(slot, input) {
+  const file = input.files && input.files[0];
+  input.value = ""; // 立刻清掉：同一个文件连选两次也要能再触发 change
+  if (!file) return;
+  const hint = slot.querySelector(".img-hint");
+  const name = slot.closest(".edit-card")?.querySelector('[data-field="id"]')?.value?.trim() || "";
+  if (!name) {
+    hint.textContent = "先填名字，再传图";
+    return;
+  }
+  hint.textContent = "上传中…";
+  try {
+    const res = await fetch(
+      `/api/sessions/${state.sid}/assets?kind=${encodeURIComponent(
+        slot.dataset.imgKind
+      )}&subject=${encodeURIComponent(name)}`,
+      {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": file.type || "application/octet-stream" }),
+        body: file,
+      }
+    );
+    if (!res.ok) throw new Error((await res.text()).slice(0, 200));
+    const data = await res.json();
+    applySlotPath(slot, data.path);
+    hint.textContent = "已上传 —— 记得点「保存」";
+    refreshDirty(); // 纯 JS 改的值不触发 input/change，脏检查得手动叫一次
+  } catch (err) {
+    hint.textContent = `上传失败：${err.message}`;
+  }
+}
+
+/** 移除：只把字段清空（文件由保存时的孤儿清理删掉）。 */
+function clearCardImage(slot) {
+  applySlotPath(slot, "");
+  slot.querySelector(".img-hint").textContent = "已移除 —— 记得点「保存」";
+  refreshDirty();
+}
+
+/** 把路径写进槽位：hidden input + 预览 + 两个按钮的可见性一起改。 */
+function applySlotPath(slot, path) {
+  const value = path || "";
+  const holder = slot.querySelector(`[data-field="${slot.dataset.imgField}"]`);
+  if (holder) holder.value = value;
+  const img = slot.querySelector(".img-preview");
+  if (img) {
+    img.dataset.path = value;
+    delete img.dataset.loaded;
+    img.hidden = !value;
+    img.removeAttribute("src");
+  }
+  const clear = slot.querySelector(".img-clear");
+  if (clear) clear.hidden = !value;
+  const pick = slot.querySelector(".img-pick");
+  if (pick) pick.textContent = value ? "换图" : "选择图片";
+  if (value) hydrateImages(slot);
+}
+
 function bindEditEvents() {
   document.querySelectorAll(".edit-list").forEach((list) => {
     list.onclick = (e) => {
+      // 附图槽：选择 / 移除（在 .remove-item 之前判，两条路互不干扰）
+      const pick = e.target.closest(".img-pick");
+      if (pick) {
+        pick.closest(".img-slot").querySelector(".img-input").click();
+        return;
+      }
+      const clearBtn = e.target.closest(".img-clear");
+      if (clearBtn) {
+        clearCardImage(clearBtn.closest(".img-slot"));
+        return;
+      }
       const btn = e.target.closest(".remove-item");
       if (!btn) return;
       btn.closest(".edit-card").remove();
@@ -2462,6 +2745,12 @@ function bindEditEvents() {
     // 重渲染人物列表让"删除"按钮随之出现/消失——数据从当前 DOM 读回，编辑不丢。
     // 用 on* 赋值而非 addEventListener：bindEditEvents 会被重复调用，避免监听器堆积。
     list.onchange = (e) => {
+      // 附图槽：选了文件就传（change 事件会从 <input type=file> 冒泡上来）
+      const imgInput = e.target.closest?.(".img-input");
+      if (imgInput) {
+        uploadCardImage(imgInput.closest(".img-slot"), imgInput);
+        return;
+      }
       const box = e.target.closest?.('[data-field="is_player"]');
       if (box && box.checked && list.id === "edit-npc-list") {
         const pane = list.closest(".md-pane");
@@ -2577,6 +2866,9 @@ function readScenes() {
     aliases: splitList(card.querySelector('[data-field="aliases"]')?.value),
     perceivable: card.querySelector('[data-field="perceivable"]')?.value ?? "",
     region: card.querySelector('[data-field="region"]')?.value.trim() ?? "",
+    // 附图（2026-09-24）：相对路径串，藏在附图槽的 hidden input 上。
+    // 🔴 **必须回传**：PUT /world 是**全量重写**，漏掉这一栏 = 保存一次就把图抹掉。
+    image: card.querySelector('[data-field="image"]')?.value ?? "",
   }));
 }
 
@@ -2594,6 +2886,7 @@ function readNpcs() {
       has_actor: !!card.querySelector('[data-field="has_actor"]')?.checked,
       is_player: !!card.querySelector('[data-field="is_player"]')?.checked,
       region: splitList(card.querySelector('[data-field="region"]')?.value),
+      portrait: card.querySelector('[data-field="portrait"]')?.value ?? "", // 同 readScenes.image
     };
   });
   return result;
@@ -2834,6 +3127,9 @@ async function init() {
   $("#close-world").addEventListener("click", closeWorldModal);
   $("#wb-switch-world").addEventListener("click", toggleWorldPanel);
   $("#wb-refresh").addEventListener("click", refreshWorldModal);
+  // 顶栏「场景」= 场景卡开合（图 + 描述 + 在场）
+  bindSceneCard();
+  bindLightbox();
   showFrontendVersion();
   $("#wb-save").addEventListener("click", saveWorldEdit);
   $("#wb-discard").addEventListener("click", discardWorldEdits);

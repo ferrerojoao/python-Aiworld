@@ -1706,3 +1706,266 @@ body.light .rail-item.current {
     border-radius: 0;
   }
 }
+
+/* ---------- 附图：场景卡 + 工作台附图槽（2026-09-24） ----------
+   显示尺寸与推导见 docs/方案-场景与人物附图-AIWorld.md §4.6：
+   场景大图 = 336px 宽 × 16:9；在场头像 = 64×64（DPR2 需 128px ⇒ 上传推荐 512×512）。 */
+
+/* 场景卡触发器：把顶栏那枚纯文本 #scene 变成按钮，但**保持原来的 muted 观感**
+   —— 通用 button 规则是 accent 实心，必须在这里压回去。 */
+.scene-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+#topbar #scene {
+  padding: 2px 6px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+#topbar #scene:hover {
+  background: var(--panel-4);
+  color: var(--text);
+}
+
+/* 场景卡浮层：**电脑上要看得清**（2026-09-24 用户反馈"太小了，看不清楚"）
+   ⇒ 宽 640px、内边距 16px ⇒ 大图 608×342（原 360px / 336×189）。
+   ⚠️ 这个宽度**仍落在已定的上传规格里**：608 CSS px × 2(DPR) = 1216 ≤ 1280 ⇒
+      **不需要改 1280×720 那条**（方案 §4.5）。想再往上加，得先动那个规格。
+   `min(…, 100vw - 24px)` 保证窄屏不溢出；手机上的字号 / 头像在下面的断点里回退。
+   z-index 90 = 压在抽屉（100）之下，免得卡片浮在抽屉上面。 */
+.scene-card {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 90;
+  width: min(640px, calc(100vw - 24px));
+  max-height: 78vh;
+  overflow-y: auto;
+  padding: 16px;
+  background: var(--panel-3);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: -8px 8px 24px rgba(0, 0, 0, 0.35);
+  text-align: left;
+}
+
+.scene-card[hidden] {
+  display: none;
+}
+
+.scene-card-img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 10px;
+  background: var(--panel-4);
+}
+
+.scene-card-name {
+  margin: 12px 0 6px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* `.scene-card-desc`（图下那行 perceivable 描述）已删 —— 2026-09-24 用户要求撤掉，
+   别再留死样式、也别照旧稿加回来。`scene_perceivable` 字段后端照旧发。 */
+
+.scene-card-label {
+  margin: 14px 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+/* 「在场」一格一人：大卡一行 5 格（格宽约 104px），超出换行。 */
+.scene-card-people {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 8px;
+}
+
+.scene-person {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.scene-person-pic {
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--panel-4);
+}
+
+/* 缺图的人：**不画占位剪影**，只把名字做成一个格子 —— 缺图只吞图，不吞信息，
+   所以"没图"绝不能让人从名单里消失或变成一个假头像。 */
+.scene-person.no-pic {
+  justify-content: center;
+  min-height: 64px;
+  padding: 6px 2px;
+  background: var(--panel-4);
+  border-radius: 8px;
+}
+
+.scene-person-name {
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: center;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.scene-chip-star {
+  display: inline-block;
+  margin-left: 2px;
+  padding: 0 3px;
+  border-radius: 4px;
+  font-size: 10px;
+  background: var(--accent);
+  color: #fff;
+}
+
+.scene-card-empty {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 「最近去过」那一栏连同它的样式（`.scene-card-recent` / `.scene-chip`）已删
+   —— 2026-09-24 用户要求撤掉，别再留死样式、也别照旧稿加回来。 */
+
+/* 手机：上面的 640px / 88px 是给电脑屏看的，这里回退到"够用就好"。
+   ⚠️ 这条**必须**排在 `.scene-card*` 基础规则**之后** —— CSS 同特异性下后者胜，
+   若塞进上面那个 720px 断点里会**被基础规则盖掉**（那个断点在本节之前）。 */
+@media (max-width: 720px) {
+  .scene-card {
+    width: calc(100vw - 24px);
+    max-height: 72vh;
+    padding: 12px;
+  }
+
+  .scene-card-name {
+    font-size: 15px;
+  }
+
+  .scene-card-people {
+    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+    gap: 6px;
+  }
+
+  .scene-person-pic {
+    width: 64px;
+    height: 64px;
+  }
+
+  .scene-person.no-pic {
+    min-height: 40px;
+  }
+
+  .scene-person-name {
+    font-size: 11px;
+  }
+}
+
+/* 卡片里的图都能点开看大图（场景大图 + 在场头像 —— 就是 `#scene-card` 里的图）。
+   `cursor: zoom-in` 是唯一的"可点"提示。⚠️ 只挂在 `#scene-card` 下，**不要**扩散到
+   工作台的附图槽（那里的图是"要换的"不是"要看的"，点了不该弹浮层）。 */
+#scene-card img[data-path] {
+  cursor: zoom-in;
+}
+
+/* 看大图浮层（2026-09-24 用户要求）：铺满视口，压在一切之上
+   （场景卡 90 / 抽屉 100 ⇒ 这里 200）。点浮层任意处 / Esc 关闭。 */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.82);
+  cursor: zoom-out;
+}
+
+/* ⚠️ 必须显式写这一条：上面的 `display: flex` 会把 `[hidden]` 默认的
+   `display: none` 盖掉 —— 少了它，浮层会一直挂在那儿。 */
+.lightbox[hidden] {
+  display: none;
+}
+
+.lightbox img {
+  max-width: 100%;
+  max-height: calc(100vh - 96px);
+  object-fit: contain;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.lightbox-cap {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+/* ---------- 工作台附图槽（场景 / 人物页共用） ---------- */
+.img-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--panel-4);
+}
+
+/* 按原比例显示，不裁：场景出 240×135，人物出 160×160。 */
+.img-preview {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 240px;
+  max-height: 160px;
+  border-radius: 8px;
+}
+
+.img-preview[hidden] {
+  display: none;
+}
+
+.img-slot-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.img-slot-actions button {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.img-clear {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.img-clear[hidden] {
+  display: none;
+}
+
+.img-hint {
+  font-size: 11px;
+  color: var(--muted);
+}

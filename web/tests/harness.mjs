@@ -45,12 +45,16 @@ export function jsonResponse(data, status = 200) {
  *          `(url, opts)`，返回对象即当 JSON 回；返回 `{__raw:true, res}` 可自定义响应。
  *   probe： 在 app.js 之后、同一次 eval 里执行的代码，**必须 return** 一个可在
  *          Node 侧断言的普通值（字符串/数字/数组/对象）。可以是异步的。
+ *   pre：   在 app.js **之前**、同一次 eval 里执行的代码。用来补 jsdom 缺的东西
+ *          （如 `URL.createObjectURL`）—— `probe` 在 app.js 之后才跑，
+ *          补不了"启动期就要用"的桩。
  *   waitMs：等 `init()` 那一串异步请求落地的时间（桩都是立即 resolve，80ms 足够）。
  *   url：   载入 jsdom 的地址。要用 `?token=` 触发令牌吸收时改这里。
  */
 export async function bootApp({
   routes = [],
   probe = "return null",
+  pre = "",
   waitMs = 80,
   url = "http://localhost:8765/",
 } = {}) {
@@ -77,6 +81,7 @@ export async function bootApp({
 
   const source = `
     (async () => {
+      ${pre}
 ${readDist("app.js")}
       await new Promise((r) => setTimeout(r, ${waitMs}));
       ${probe}

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AIWorld</title>
-  <link rel="stylesheet" href="style.css?v=87bc2e73" />
+  <link rel="stylesheet" href="style.css?v=0bdb8eeb" />
 </head>
 <body>
   <div id="app">
@@ -32,7 +32,16 @@
       <header id="topbar">
         <span id="world-name">-</span>
         <span id="clock">-</span>
-        <span id="scene">-</span>
+        <!-- 场景卡（2026-09-24）：点开 = 一张卡回答「此刻这一幕：哪里 + 谁在」——
+             场景大图 + perceivable + 「在场」一格一人 + 最近去过。
+             触发按钮保留原来那组 muted 配色，别做成显眼的实心按钮。
+             数据来自 GET /state 的 scene_image / scene_perceivable / present_view /
+             recent_scenes；图走带令牌的 fetch → blob（见 app.js 的 imageUrl），
+             **不能用 <img src> 直连**（带不了 Authorization 头，非本机必 401）。 -->
+        <div class="scene-anchor">
+          <button id="scene" type="button" title="场景卡：场景图 / 在场（点图看大图）">-</button>
+          <div id="scene-card" class="scene-card" hidden></div>
+        </div>
         <button id="state-badge" class="state-badge" title="当前角色状态（编剧这一轮读到的条数）——点击查看与撤销">状态 0</button>
         <div class="topbar-actions">
           <button id="open-world">世界工作台</button>
@@ -241,6 +250,15 @@
     </div>
   </div>
 
-  <script src="app.js?v=c6c57769"></script>
+  <!-- 看大图浮层（2026-09-24）：点场景卡里的图打开，点浮层自身 / Esc 关闭。
+       ⚠️ `src` 由 JS 从**已加载的那张 img** 上取（同一个 blob URL，见 app.js 的
+       `openLightbox`）—— 绝不能写成 `<img src="/api/...">` 直连：那样带不了
+       Authorization 头，非本机（手机 / 局域网）必然 401，图会静默消失。 -->
+  <div id="img-lightbox" class="lightbox" hidden>
+    <img id="lightbox-img" alt="" />
+    <div id="lightbox-cap" class="lightbox-cap"></div>
+  </div>
+
+  <script src="app.js?v=6d0e8f76"></script>
 </body>
 </html>

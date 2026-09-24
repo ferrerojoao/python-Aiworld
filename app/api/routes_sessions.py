@@ -9,7 +9,7 @@ import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.core.presets import save_global_preset
@@ -20,6 +20,14 @@ from app.runtime.trace import TraceRecorder
 from app.workers.drafter import run_world_draft
 from app.workers.landing import draft_npc_card, draft_scene
 from app.world.draft import blank_world_assets, check_assets, validate_assets
+from app.world.images import (
+    EXT_TO_MEDIA,
+    MAX_UPLOAD_BYTES,
+    ImageRejected,
+    prune_orphan_assets,
+    resolve_asset,
+    write_asset,
+)
 from app.world.loader import check_world, save_world_assets
 from app.world.models import PLAYER_PLACEHOLDER, SCENE_PLACEHOLDER, NpcCard, Scene
 
@@ -338,8 +346,80 @@ async def update_session_world(request: Request, sid: str, body: WorldAssetData)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     save_world_assets(session.world_dir, payload)
+    # 附图孤儿清理（2026-09-24）：上传只写文件、字段靠这次保存落盘，所以"换图 /
+    # 移除 / 传了但放弃改动"都会留下没人引用的图，在这里统一带走。
+    # ⚠️ 只有本端点能调用它——payload 是**完整**资产形状；半份资产会误删。
+    prune_orphan_assets(session.world_dir, payload)
     session.reload_world()
     return {"ok": True, "problems": problems}
+
+
+# ---------------------------------------------------------------------------
+# 附图（2026-09-24）：场景图 / 人物图的上传与取用
+#
+# 规格（尺寸 / 比例 / 体积）与推导见 docs/方案-场景与人物附图-AIWorld.md §4.5，
+# 归一化口径见 §4.4，代码在 app/world/images.py。
+# ---------------------------------------------------------------------------
+
+
+@router.post("/sessions/{sid}/assets")
+async def upload_asset(request: Request, sid: str, kind: str, subject: str = ""):
+    """上传一张附图。**收原始字节，不是 multipart。**
+
+    ⚠️ 收原始字节是因为 ``python-multipart`` 没装（用 ``UploadFile`` 会直接报
+    ``Form data requires "python-multipart" to be installed.``）。这里零新依赖：
+    客户端 ``fetch(url, {method: "POST", body: file})`` 即可；``kind`` / ``subject``
+    走查询参数，``Content-Type`` 只当声明（真类型由 magic bytes + Pillow 解码判定）。
+
+    🔴 **本端点只写文件，不改世界资产。** 字段（``Scene.image`` / ``NpcCard.portrait``）
+    由工作台的「保存」一起落盘——"保存才落盘"是工作台既有的事务边界，不为图片破它。
+    因此换图 / 移除 / 传了不保存都会留下没人引用的文件，由保存那一刻的孤儿清理带走
+    （见 ``PUT /sessions/{sid}/world`` 与 ``prune_orphan_assets``）。
+
+    ⚠️ **不做主体名白名单**（与方案初稿不同）：工作台里"新加的人物 / 场景"在保存前
+    还不存在于资产里，白名单会把这一路直接堵死。改名与目录穿越的风险由"**文件名完全
+    由服务端生成**"消掉——主体名先安全化，再拼一段内容哈希，客户端给不出路径。
+    """
+    session = _get_session(request, sid)
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"图片太大（上限 {MAX_UPLOAD_BYTES // 1024 // 1024} MB）",
+        )
+    raw = await request.body()
+    try:
+        rel = write_asset(session.world_dir, kind, subject, raw)
+    except ImageRejected as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return {"ok": True, "path": rel, "kind": kind}
+
+
+@router.get("/sessions/{sid}/assets/{kind}/{name}")
+async def get_asset(request: Request, sid: str, kind: str, name: str):
+    """取一张附图的字节。
+
+    ⚠️ **必须在 ``/api`` 下**：静态挂载 ``app.mount("/", StaticFiles(web/dist))`` 在
+    ``include_router`` **之后**注册，所以只有 ``/api/*`` 受令牌保护（``security.py``
+    的 ``PROTECTED_PREFIX``）。挪到 ``/api`` 之外 = 图片在局域网里裸奔，
+    而文件名还含人名 / 场景名。
+
+    ⚠️ 前端**不能用 ``<img src>`` 直连**：``<img>`` 带不了 ``Authorization`` 头，
+    非本机访问必然 401，而底座是"缺图不显示"——于是图会**静默消失**，本机测永远正常。
+    前端走带令牌的 fetch → blob（见 ``web/dist/app.js`` 的 ``imageUrl``）。
+
+    ``immutable`` 能这么用，靠的是**内容寻址命名**：同一 URL 永远对应同一张图。
+    """
+    session = _get_session(request, sid)
+    path = resolve_asset(session.world_dir, kind, name)
+    if path is None:
+        raise HTTPException(status_code=404, detail="没有这张图")
+    media = EXT_TO_MEDIA.get(path.suffix.lower(), "application/octet-stream")
+    return FileResponse(
+        path,
+        media_type=media,
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -697,6 +777,32 @@ async def get_state(request: Request, sid: str):
     # 里兜底），所以落过账之后恒为 True；只有"连一条带位置的流水都没有"（世界没写
     # 开场白）才为 False——那时引擎确实没有证据说他站在这里。
     player_present = player_name in in_scene
+    # 场景卡（2026-09-24）：一张卡回答"此刻这一幕：哪里 + 谁在"。
+    # 图**永不进提示词**——这里只是把引擎已有的东西也给玩家看。
+    # ⚠️ 取的是 `perceivable` 原文，不是 `session.scene_description()`：后者已经
+    # 把「在场：…」拼进去了，卡片另有在场一格，用它会重复。
+    scenes_by_id = {s.id: s for s in session.world.scenes}
+    scene = scenes_by_id.get(player_scene)
+    scene_image = scene.image if scene is not None else ""
+    scene_perceivable = scene.perceivable if scene is not None else ""
+
+    def _portrait_of(nid: str) -> str:
+        """肖像路径；没有卡（未落卡人物）自然没有图。"""
+        card = session.world.npcs.get(nid)
+        return card.portrait if card is not None else ""
+
+    # 「在场」一格一人：**主角排第一 + 挂「主角」标**（与左栏一致）。
+    # ⚠️ 这是 **UI 层**的一致，和"场景底稿正文剔主角"（提示词层）不是一回事，别合并。
+    # ⚠️ 一个人**有图没图都占一格**（没图就只显示名字）：否则一上头像，"谁有图谁没图"
+    # 会让人数忽多忽少，看着像有人凭空消失。缺图只吞图，不吞信息。
+    present_view: list[dict] = []
+    if player_present:
+        present_view.append(
+            {"name": player_name, "portrait": _portrait_of(player_name), "is_player": True}
+        )
+    present_view += [
+        {"name": pid, "portrait": _portrait_of(pid), "is_player": False} for pid in present_ids
+    ]
     # 目标是两级树（大目标=章节 / 小目标=节拍，2026-09-12）：状态栏需要
     # 「active 目标 + 挂在 active 大目标下的子目标（含已完成）」才能显示章节
     # 进度 x/y；其余历史目标（已闭合的主线、已完成/废弃的孤儿支线）不进状态栏。
@@ -732,6 +838,11 @@ async def get_state(request: Request, sid: str):
         "recent_scenes": recent,
         "present": present_ids,
         "present_names": present_ids,
+        # 场景卡（2026-09-24）：场景图相对路径 + `perceivable` 原文 + 「在场」一格一人。
+        # 图是**纯 UI**：不进注入、不参与任何判定（方案 §2 底座 1/3）。
+        "scene_image": scene_image,
+        "scene_perceivable": scene_perceivable,
+        "present_view": present_view,
         # 镜头场景里有主角吗（2026-09-21）：左栏「在场人物」要把他列出来并打「主角」
         # 标，而 `present_ids` 是"还有谁在"（不含他）。见上面的判据说明。
         "player_present": player_present,
