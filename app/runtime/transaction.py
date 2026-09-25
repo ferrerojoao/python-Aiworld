@@ -138,7 +138,15 @@ class CandidateStore:
                     result.append(cand)
             except Exception:  # noqa: BLE001 - 候选文件损坏/半写就跳过，别让一个坏文件卡住整轮
                 continue
-        return sorted(result, key=lambda c: c.created_at)
+        # 次序必须**完全确定**，不能由文件系统给：底层 _iter_paths 走的是 glob()，
+        # 它只保证"这些文件在"，不保证次序（NTFS 碰巧近似字典序，ext4 是哈希序）。
+        # 2026-09-25 实测：同一条用例本机绿、Linux CI 红——ext4 把后写的候选排在
+        # 了前面，[版本一,版本二,版本三] 读成 [版本三,版本二,版本一]。
+        # 而次序是有代价的：reroll 取 [-1] 当"最新一稿"（turn.py 里那句 latest），
+        # 排错就等于拿旧稿作基准。二级键 candidate_id 只兜"同秒撞键"这一种情况
+        # （created_at 只到秒，一秒内连抽两稿键就相同）——那种情况下谁新谁旧本来就
+        # 没有事实可用，但顺序**必须稳定且与机器无关**。
+        return sorted(result, key=lambda c: (c.created_at, c.candidate_id))
 
     def list_for_turn(self, turn_id: str) -> list[Candidate]:
         return [c for c in self.list_pending() if c.turn_id == turn_id]

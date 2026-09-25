@@ -346,7 +346,10 @@ class TurnRunner:
         summary = summary_hint or (prose or "")[:40]
         turn_id = new_id("turn")
         candidate_id = new_id("cand")
-        now = dt.datetime.now().isoformat(timespec="seconds")
+        # 精确到微秒（原为秒）：候选次序按 created_at 排，而 reroll 取最后一稿作基准——
+        # 同一秒内连抽两稿时秒级时间戳会撞键，"谁更新"就没有事实可用了。
+        # 排序契约见 CandidateStore.list_pending 上面那段注释。
+        now = dt.datetime.now().isoformat(timespec="microseconds")
         candidate = Candidate(
             candidate_id=candidate_id,
             turn_id=turn_id,
@@ -435,7 +438,7 @@ class TurnRunner:
         if side_effects.narrative is not None:
             side_effects.narrative["summary"] = summary_hint or (prose or "")[:40]
 
-        now = dt.datetime.now().isoformat(timespec="seconds")
+        now = dt.datetime.now().isoformat(timespec="microseconds")
         candidate = Candidate(
             candidate_id=new_id("cand"),
             turn_id=turn_id,
@@ -508,7 +511,7 @@ class TurnRunner:
         candidate.side_effects.narrative = narrative
         # 摘要三档：核对员给的 → 旧摘要 → 正文前 40 字（与落候选那一处同口径）。
         narrative["summary"] = new_summary or old_summary or text[:40]
-        candidate.updated_at = dt.datetime.now().isoformat(timespec="seconds")
+        candidate.updated_at = dt.datetime.now().isoformat(timespec="microseconds")
         self.session.candidates.save(candidate)
         return candidate
 
