@@ -30,8 +30,24 @@ jobs:
       # 测试全部用 FakeLLM 离线跑，不需要任何 API key。
       # addopts 已在 pyproject.toml 里设好（-p no:cacheprovider --basetemp=bt_all）。
       # 覆盖率闸门（fail_under = 90）也写在 pyproject.toml 的 [tool.coverage.report]。
+      #
+      # 为什么把输出落成文件再转 annotation：Actions 的私有日志要 admin 才能下载
+      # （/actions/jobs/{id}/logs → 403），而 check-run 的 annotations 公开可读。
+      # 2026-09-17~09-25 这 23 次 run 里 test job 一直红，但外部能看到的只有
+      # "Process completed with exit code 1."，等于没有信息 ⇒ 本地复现不出来就只能猜。
+      # 现在失败时会把「失败用例 + 首个 traceback + 本次装到的依赖版本」打进
+      # annotation，CI 自己就能解释自己为什么红。
       - name: Run tests
-        run: python -m pytest -q --cov=app --cov-report=term-missing
+        run: |
+          set +e
+          python -m pip freeze --exclude-editable > pip-freeze.txt
+          python -m pytest -q --cov=app --cov-report=term-missing > pytest.log 2>&1
+          code=$?
+          cat pytest.log
+          if [ "$code" -ne 0 ]; then
+            python .github/scripts/annotate_pytest.py pytest.log --env pip-freeze.txt
+          fi
+          exit "$code"
 
   frontend:
     runs-on: ubuntu-latest

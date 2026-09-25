@@ -27,3 +27,7 @@ data/presets.json
 htmlcov/
 backup_content_*.tar.gz
 backup_content_*.zip
+# CI 排障产物：Run tests 那步把它们落盘，再交给
+# .github/scripts/annotate_pytest.py 转成可公开读取的 annotation。
+# （pytest.log 已被上面的 *.log 覆盖，这里只补另一个。）
+pip-freeze.txt
