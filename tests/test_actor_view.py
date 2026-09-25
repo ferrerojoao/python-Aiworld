@@ -217,6 +217,20 @@ def test_style_sample_injected_with_adjacent_ban(session):
     assert "文风示范" not in empty
 
 
+def test_style_sample_is_injected_in_full(session):
+    """范文**整段进提示词，不许截断**（2026-09-25 用户要求去掉字数限制）。
+
+    上一版说明写着「100~200 字」，容易让人以为引擎只取一小段；实际上 `writer_style_block`
+    是原样拼进去的，这一级又不在可裁块里（裁的只有世界书命中）。这条把"贴多长就进多长"
+    钉死——将来谁加了切片或长度上限，这里必红。
+    """
+    sample = "".join(f"第{i}句白描，雪落在肩上。" for i in range(120))  # 约 1700 字
+    session.world.presets.style_sample = sample
+
+    order = build_work_order("writer", session.world, session.ledger, "网吧")
+    assert f"「{sample}」" in order, "范文必须原样整段进三级块，不能被截断"
+
+
 def test_writer_roster_clause_follows_presence_and_tickets(session):
     """本轮可上缴名单 = 在场 ∩ 配 Actor，必须显式下发（2026-09-11）：
     编剧不再从各人名后的括号自行推断谁不能上缴——推错一格就会上缴无票角色，

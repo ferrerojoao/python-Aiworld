@@ -467,6 +467,27 @@ def test_global_preset_is_separate_from_world(tmp_path):
         assert "presets" not in world
 
 
+def test_style_sample_length_is_not_capped(tmp_path):
+    """文风示范**不许有字数上限**（2026-09-25 用户要求：说明里的「100~200 字」已删）。
+
+    守的是"没有任何一层偷偷把范文截短"：Pydantic 模型加没加 `max_length`、presets.json 是不是
+    原样落盘、回读是不是全文。以前**从没测过长度**——说明写着 100~200 字，谁顺手加个切片
+    也没人会红。注意这里只验"存得下、取得回"，不验提示词里怎么放（那是 test_actor_view 的事）。
+    """
+    sample = "他把伞收了，雪就落满了肩。" * 400  # 6000 字，是旧说明上限的 30 倍
+    with _make_client(tmp_path) as client:
+        r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
+        sid = r.json()["sid"]
+
+        put = client.put("/api/presets", json={"style_sample": sample})
+        assert put.status_code == 200, put.text
+        assert client.get("/api/presets").json()["style_sample"] == sample
+        assert client.get(f"/api/sessions/{sid}/state").json()["preset"]["style_sample"] == sample
+        # 落盘同样是全文——重启服务后还得读得回来。
+        saved = json.loads((tmp_path / "data" / "presets.json").read_text(encoding="utf-8"))
+        assert saved["style_sample"] == sample
+
+
 def test_world_export_and_import(tmp_path):
     with _make_client(tmp_path) as client:
         r = client.post("/api/sessions", json={"world_id": "qinghsi", "save_name": "main"})
