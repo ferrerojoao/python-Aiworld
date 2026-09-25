@@ -31,6 +31,10 @@ const state = {
   // 输入框置灰。**只是礼貌**（后端 PUT /world 会 409）；由 GET /world 的
   // player_locked 喂进来，判据在 ledger 一侧只有一份。
   playerLocked: false,
+  // SillyTavern 卡导入（2026-09-25）：{file, info}——表单还开着的时候用。
+  // 存 `info` 而不只是 file：提交时要拿 `candidates.length` 判断要不要传 npcs_from_entries
+  // （不传 = 后端按"全部候选"处理，传空数组 = 一个都不转，语义不同）。
+  cardImport: null,
 };
 
 // 访问令牌：非本机访问 /api/* 时后端要求 Authorization: Bearer <token>。
@@ -2063,10 +2067,11 @@ async function loadWorldList() {
       <span class="muted">点「打开」接着玩（当前世界标着「当前」；一个世界就是一份存档）</span>
       <span class="wb-panel-actions">
         <button id="wb-new-world-toggle">新建世界</button>
-        <label class="import-label">导入为新世界<input id="import-world" type="file" accept=".zip" hidden /></label>
+        <label class="import-label">导入为新世界<input id="import-world" type="file" accept=".zip,.png,.json" hidden /></label>
       </span>
     </div>
     <div id="wb-new-world-body" hidden>${renderNewWorldForm()}</div>
+    <div id="wb-card-import-body" hidden></div>
     <div id="world-list-items"></div>
   `;
 
@@ -2075,7 +2080,11 @@ async function loadWorldList() {
     body.hidden = !body.hidden;
     $("#wb-new-world-toggle").textContent = body.hidden ? "新建世界" : "收起表单";
   };
-  $("#import-world").onchange = (e) => importWorld(e.target.files[0]);
+  $("#import-world").onchange = (e) => {
+    const file = e.target.files[0];
+    e.target.value = ""; // 清掉才能再选同一个文件
+    importWorld(file);
+  };
   bindNewWorldEvents();
 
   const box = $("#world-list-items");
@@ -3134,6 +3143,11 @@ function exportSave() {
 
 async function importWorld(file) {
   if (!file) return;
+  // `.zip` = AIWorld 自己的世界包（老路）；其余（.png / .json）按 SillyTavern 卡走。
+  if (!/\.zip$/i.test(file.name || "")) {
+    await importSillyTavernCard(file);
+    return;
+  }
   const content = await readFileAsBase64(file);
   const res = await fetch(`/api/sessions/${state.sid}/world/import`, {
     method: "POST",
@@ -3150,6 +3164,231 @@ async function importWorld(file) {
   if (confirm(`已导入为新世界：${data.world_id}。现在切换过去？`)) {
     await switchToWorld(data.world_id);
   }
+}
+
+/* ---------- SillyTavern 卡导入（2026-09-25） ----------
+   卡 → 新世界，分两步：先 `POST /api/worlds/inspect-card` **纯嗅探**（一个字节都不写），
+   把结果铺成表单让玩家拍板；再 `POST /api/worlds/import-card` 落盘。
+
+   🔴 **类型不预选**：角色卡与场景卡的字段实测完全一样（`system_prompt`/`scenario`
+   都可能全空），只有「顶层有 entries ⇒ 独立世界书」在结构上无歧义。判错类型的代价是
+   **把人名当地名**，整局正文全错——这个锅不能由启发式来背。
+
+   🔴 三条与后端对齐的约定：① 条目转成人物卡后**从世界书里摘掉**（否则同一段设定注入两遍）；
+   ② 开场白默认跳到第一条备选（`first_mes` 实测常是「请右滑开局」的说明页）；
+   ③ 类型选「场景卡」时才把卡名填进「开局场景」（其余情况卡名是标题、不是地名）。 */
+
+const CARD_KINDS = [
+  ["character", "角色卡", "卡主是**一个人**（description 就是他本人的设定）"],
+  ["scene", "场景卡", "卡主是描述者/旁观者：写的是一个场所 + 一群 NPC"],
+  ["worldbook", "世界书 / 世界卡", "只有设定条目，没有卡主"],
+];
+
+async function importSillyTavernCard(file) {
+  const box = $("#wb-card-import-body");
+  if (!box) return;
+  box.hidden = false;
+  box.innerHTML = '<div class="new-world"><span class="muted">正在读卡…</span></div>';
+  let info;
+  try {
+    const content = await readFileAsBase64(file);
+    info = await api(`/api/worlds/inspect-card`, {
+      method: "POST",
+      body: JSON.stringify({ filename: file.name, content }),
+    });
+  } catch (e) {
+    box.innerHTML = `<div class="new-world"><div class="warn-text">读不了这张卡：${escapeHtml(e.message)}</div></div>`;
+    return;
+  }
+  state.cardImport = { file, info };
+  box.innerHTML = renderCardImportForm(info);
+  bindCardImportEvents();
+}
+
+function renderCardImportForm(info) {
+  const ev = info.evidence || {};
+  const meta = !!ev.first_mes_looks_like_meta;
+  const greetings = info.greetings || [];
+  // first_mes 是说明页时跳到第一条备选（实测场景卡：真正的开场白都在 alternate_greetings 里）
+  const greetingDefault = meta && greetings.length > 1 ? 1 : 0;
+
+  const kindRows = CARD_KINDS.map(([value, label, hint]) => {
+    const checked = info.kind_hint === value ? " checked" : "";
+    return `<label class="ci-kind"><input type="radio" name="ci-kind" value="${value}"${checked} />
+      <span><b>${label}</b><span class="muted">${hint}</span></span></label>`;
+  }).join("");
+
+  const greetingOptions = greetings
+    .map((g) => {
+      const flag = meta && g.index === 0 ? "（疑似说明页）" : "";
+      const sel = g.index === greetingDefault ? " selected" : "";
+      const text = `${g.source}${flag} · ${g.chars} 字 · ${g.preview}`;
+      return `<option value="${g.index}"${sel}>${escapeHtml(text)}</option>`;
+    })
+    .join("");
+  const greetingBox = greetingOptions
+    ? `<select id="ci-opening">${greetingOptions}</select>`
+    : '<span class="muted">这张卡没有 first_mes / alternate_greetings，开局白留空。</span>';
+
+  const cands = info.candidates || [];
+  const candBox = cands.length
+    ? `<label>这些条目像一个个「人」（默认全勾 ⇒ 转成人物卡，名字可以直接改）
+         <span class="muted">不勾的留在世界书里——命中关键词才注入，且**不会**被当成在场人物</span>
+         <div class="ci-cands">${cands
+           .map(
+             (c) => `<div class="ci-cand">
+             <input type="checkbox" class="ci-cand-on" data-index="${c.index}" checked />
+             <input class="ci-cand-name" data-index="${c.index}" value="${escapeHtml(c.name)}" />
+             <span class="muted">${c.persona_chars} 字 · ${escapeHtml((c.keywords || []).join(" / "))}</span>
+           </div>`,
+           )
+           .join("")}</div>
+       </label>`
+    : "";
+
+  return `
+    <div class="new-world">
+      <div class="draft-head">
+        <strong>导入 SillyTavern 卡</strong>
+        <span class="muted">${escapeHtml(info.name || "（卡里没有 name 字段）")} · ${escapeHtml(info.format)} / ${escapeHtml(info.spec)}</span>
+      </div>
+      <div class="ci-evidence">
+        <span class="chip">本人设定 ${ev.description_chars} 字</span>
+        <span class="chip">世界书条目 ${ev.lore_kept}/${ev.lore_total}</span>
+        <span class="chip">常驻 ${ev.always_on} 条 · ${ev.always_on_chars} 字</span>
+        <span class="chip">像人物 ${ev.candidate_npcs}</span>
+        ${ev.use_regex_entries ? `<span class="chip">正则关键词 ${ev.use_regex_entries} 条</span>` : ""}
+        ${ev.secondary_keys_entries ? `<span class="chip">次要关键词 ${ev.secondary_keys_entries} 条</span>` : ""}
+      </div>
+      <label>这张卡是
+        <div class="ci-kinds">${kindRows}</div>
+      </label>
+      <div class="nw-row">
+        <label>世界 ID<input id="ci-world-id" value="${escapeHtml(info.suggested_world_id)}" /></label>
+        <label>世界名<input id="ci-world-name" value="${escapeHtml(info.name)}" /></label>
+      </div>
+      <div class="nw-row">
+        <label>主角名<input id="ci-player" value="旅人" /></label>
+        <label>开局场景<input id="ci-scene" placeholder="留空则用「起点」" /></label>
+      </div>
+      <label>开局取哪一段${greetingBox}</label>
+      ${meta ? '<div class="warn-text">第一条开场白看着像「说明页」而不是正文（实测场景卡都这样），已经替你跳到下一条——不对就自己换。</div>' : ""}
+      ${candBox}
+      <div class="nw-actions">
+        <button id="ci-do" class="primary">导入为新世界</button>
+        <button id="ci-cancel">取消</button>
+      </div>
+    </div>
+  `;
+}
+
+function bindCardImportEvents() {
+  const cancel = $("#ci-cancel");
+  if (cancel) {
+    cancel.onclick = () => {
+      state.cardImport = null;
+      const box = $("#wb-card-import-body");
+      if (box) {
+        box.hidden = true;
+        box.innerHTML = "";
+      }
+    };
+  }
+  const doBtn = $("#ci-do");
+  if (doBtn) doBtn.onclick = submitCardImport;
+  document.querySelectorAll('input[name="ci-kind"]').forEach((el) => {
+    el.onchange = () => {
+      // 只有「场景卡」的卡名可能是地名；其余情况卡名是标题，塞进去比留空更坑。
+      const scene = $("#ci-scene");
+      const info = state.cardImport ? state.cardImport.info : null;
+      if (scene && info && el.value === "scene" && !scene.value.trim()) {
+        scene.value = info.name || "";
+      }
+    };
+  });
+}
+
+async function submitCardImport() {
+  const current = state.cardImport;
+  if (!current) return;
+  const kindEl = document.querySelector('input[name="ci-kind"]:checked');
+  if (!kindEl) {
+    alert("先选这张卡是哪种类型——选错会把人物名当成地名，整局正文都会错。");
+    return;
+  }
+  const worldId = ($("#ci-world-id") || {}).value || "";
+  if (!worldId.trim()) {
+    alert("先填世界 ID（英文/数字/下划线）。");
+    return;
+  }
+  const rows = Array.from(document.querySelectorAll("#wb-card-import-body .ci-cand"));
+  const picked = [];
+  for (const row of rows) {
+    const on = row.querySelector(".ci-cand-on");
+    const nameEl = row.querySelector(".ci-cand-name");
+    if (!on || !on.checked) continue;
+    picked.push({ index: Number(on.dataset.index), name: nameEl ? nameEl.value : "" });
+  }
+  const hasCandidates = (current.info.candidates || []).length > 0;
+  const openingEl = $("#ci-opening");
+  const btn = $("#ci-do");
+  if (btn) btn.disabled = true;
+  try {
+    const content = await readFileAsBase64(current.file);
+    const res = await api(`/api/worlds/import-card`, {
+      method: "POST",
+      body: JSON.stringify({
+        filename: current.file.name,
+        content,
+        kind: kindEl.value,
+        world_id: worldId.trim(),
+        world_name: ($("#ci-world-name") || {}).value || "",
+        player_name: ($("#ci-player") || {}).value || "",
+        scene_name: ($("#ci-scene") || {}).value || "",
+        opening_index: openingEl ? Number(openingEl.value) || 0 : 0,
+        npcs_from_entries: hasCandidates ? picked : null,
+      }),
+    });
+    state.cardImport = null;
+    const box = $("#wb-card-import-body");
+    if (box) {
+      box.hidden = true;
+      box.innerHTML = "";
+    }
+    await loadWorldList();
+    alert(formatImportReport(res.report || {}, res.problems || []));
+    if (confirm(`已导入为新世界：${res.world_id}。现在切换过去？`)) {
+      await switchToWorld(res.world_id);
+    }
+  } catch (e) {
+    alert(`导入失败：${e.message}`);
+  }
+}
+
+/** 导入报告 → 一段人话（alert 不认 markdown，所以把 `**` 剥掉）。 */
+function formatImportReport(report, problems) {
+  const lore = report.lore || {};
+  const opening = report.opening || {};
+  const npcs = report.npcs || {};
+  const lines = [
+    `已导入为新世界：${report.world_id}`,
+    "",
+    `来源：${report.source_name}（${report.format} / ${report.spec}）`,
+    `主角：${report.player_name} · 开局场景：${report.scene_name}`,
+    `开场白：取自 ${opening.source}，${opening.chars} 字`,
+    `世界书：${lore.in_lorebook} 条进新世界（其中常驻 ${lore.always_on} 条 · ${lore.always_on_chars} 字）`,
+  ];
+  const turned = npcs.turned_from_entries || [];
+  if (turned.length) lines.push(`人物：${turned.length} 条条目转成了人物卡——${turned.join("、")}`);
+  const skipped = npcs.skipped_duplicate_names || [];
+  if (skipped.length) lines.push(`⚠️ 重名跳过：${skipped.join("、")}`);
+  const macros = opening.macros_left || [];
+  if (macros.length) lines.push(`⚠️ 开场白里还有没替换的宏（引擎不认识，原样留着）：${macros.join(" ")}`);
+  const notes = report.notes || [];
+  if (notes.length) lines.push("", "提示：", ...notes.map((n) => `· ${String(n).replace(/\*\*/g, "")}`));
+  if (problems.length) lines.push("", `引擎校验有 ${problems.length} 处待修：`, ...problems.map((p) => `· ${p}`));
+  else lines.push("", "引擎校验通过。");
+  return lines.join("\n");
 }
 
 async function importSave(file) {

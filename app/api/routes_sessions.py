@@ -30,6 +30,9 @@ from app.world.images import (
 )
 from app.world.loader import check_world, save_world_assets
 from app.world.models import PLAYER_PLACEHOLDER, SCENE_PLACEHOLDER, NpcCard, Scene
+from app.world.sillytavern import CardParseError
+from app.world.sillytavern import build_assets as build_card_assets
+from app.world.sillytavern import inspect as inspect_card
 
 router = APIRouter(prefix="/api")
 
@@ -83,6 +86,33 @@ class WorldDraftBody(BaseModel):
     world_id: str = ""
     name: str = ""
     player_name: str = ""
+
+
+class InspectCardBody(BaseModel):
+    """看一眼 SillyTavern 卡（纯读，不写盘）。"""
+
+    filename: str = "card.png"
+    content: str  # base64
+
+
+class ImportCardBody(BaseModel):
+    """SillyTavern 卡 → 新世界。
+
+    ``kind`` / ``world_id`` / ``player_name`` / ``scene_name`` / ``opening_index`` /
+    ``npcs_from_entries`` 全是**玩家在导入表单里定的**——引擎不替玩家判类型
+    （见 ``app/world/sillytavern.py`` 的模块说明：三类卡的字段完全一样）。
+    """
+
+    filename: str = "card.png"
+    content: str  # base64
+    kind: str = "character"  # character | scene | worldbook
+    world_id: str
+    world_name: str = ""
+    player_name: str = ""
+    scene_name: str = ""
+    opening_index: int = 0
+    # [{"index": 条目序号, "name": 人名}]；None = 全部候选条目都转成人物卡。
+    npcs_from_entries: list[dict] | None = None
 
 
 def _world_root(request: Request, world_id: str) -> Path:
@@ -1112,6 +1142,79 @@ async def import_world(request: Request, sid: str, body: ImportWorldBody):
             target.write_bytes(zf.read(member))
 
     return {"ok": True, "world_id": dest.name}
+
+
+def _decode_card_upload(content: str) -> bytes:
+    """base64 → bytes。空上传 / 解不开一律 400，别丢给下面的解析器。"""
+    if not content:
+        raise HTTPException(status_code=400, detail="空的文件内容")
+    try:
+        data = base64.b64decode(content)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"base64 解不开：{exc}") from exc
+    if not data:
+        raise HTTPException(status_code=400, detail="空的文件内容")
+    return data
+
+
+@router.post("/worlds/inspect-card")
+async def inspect_world_card(body: InspectCardBody):
+    """看一眼这张 SillyTavern 卡是什么——**纯读，一个字节都不写**。
+
+    导入表单靠它填默认值。🔴 **类型不预选**：只有"顶层有 entries ⇒ 独立世界书"这种
+    结构上无歧义的情况才给 ``kind_hint``；角色卡与场景卡的字段完全一样，
+    判错代价是"把人名当地名"、整局正文全错，所以交给玩家选。
+    """
+    data = _decode_card_upload(body.content)
+    try:
+        return {"ok": True, **inspect_card(data)}
+    except CardParseError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/worlds/import-card")
+async def import_world_card(request: Request, body: ImportCardBody):
+    """SillyTavern 卡 → 一个新世界。
+
+    走 ``build_assets``（纯映射）→ ``check_assets``（临时目录试写 + 语义体检）→
+    ``save_world_assets``（**唯一写路径**）。所以它和「新建世界」「导入 zip」写出来的
+    是同一种东西——没有"导入专用"的运行时概念，导入完就是一个普通世界。
+    """
+    data = _decode_card_upload(body.content)
+    try:
+        assets, report = build_card_assets(
+            data,
+            kind=body.kind,
+            world_id=body.world_id.strip(),
+            world_name=body.world_name,
+            player_name=body.player_name,
+            scene_name=body.scene_name,
+            opening_index=body.opening_index,
+            npcs_from_entries=body.npcs_from_entries,
+        )
+    except CardParseError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    content_root = Path(request.app.state.settings.content_root)
+    world_id = assets["overview"]["id"]
+    dest = content_root / world_id
+    if dest.exists():
+        # 与 zip 导入同一策略：不覆盖已有世界，改名落一个新世界。
+        import datetime as _dt
+
+        world_id = f"{world_id}_{_dt.datetime.now().strftime('%Y%m%d%H%M%S')}"
+        dest = content_root / world_id
+        assets["overview"]["id"] = world_id
+
+    try:
+        problems = check_assets(assets)
+        save_world_assets(dest, assets)
+    except ValueError as exc:
+        # 不变量级（人物表必须恰好一张主角卡…）：存进去引擎就崩，硬拦。
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    report["world_id"] = world_id
+    return {"ok": True, "world_id": world_id, "report": report, "problems": problems}
 
 
 @router.post("/sessions/{sid}/states/{state_id}/revoke")

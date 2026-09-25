@@ -1107,3 +1107,137 @@ test("项目地址放两处，且都在最底部：抽屉「设置」页 + 世�
     "概览页的模板必须还在真实流程里被调用（只有函数定义不算）"
   );
 });
+
+/* ---------- SillyTavern 卡导入（2026-09-25） ----------
+   真会出错的只有两处，都是"静默写错"那一类：
+     ① 类型被启发式预选 → 玩家不看就点导入 → 人物名被当地名，整局正文全错；
+     ② 候选改名没跟**条目 index** 绑 → 改第二条的名字写进第一条。 */
+
+/** 读卡接口的最小形状（字段与 app/world/sillytavern.py::inspect 对齐）。 */
+const CARD_INFO = {
+  ok: true,
+  format: "png-ccv3",
+  spec: "chara_card_v3",
+  name: "高岭爱花",
+  suggested_world_id: "st-abcd1234",
+  kind_hint: "",
+  evidence: {
+    description_chars: 120,
+    has_type_header: false,
+    has_character_book: true,
+    lore_total: 3,
+    lore_kept: 3,
+    always_on: 1,
+    always_on_chars: 200,
+    lore_chars: 600,
+    candidate_npcs: 2,
+    first_mes_looks_like_meta: true,
+    use_regex_entries: 0,
+    secondary_keys_entries: 0,
+    dropped_entry_fields: [],
+  },
+  greetings: [
+    { index: 0, source: "first_mes", chars: 30, preview: "此处仅作为说明，实际开场白请右滑开局" },
+    { index: 1, source: "alternate_greetings[0]", chars: 90, preview: "雪落下来" },
+  ],
+  candidates: [
+    { index: 0, name: "夏晴天", keywords: ["夏晴天"], persona_chars: 100, preview: "活泼" },
+    { index: 1, name: "慕容清寒", keywords: ["慕容清寒"], persona_chars: 120, preview: "冰山" },
+  ],
+};
+
+const cardStub = ["/api/worlds/inspect-card", () => CARD_INFO];
+
+test("导入卡：非 .zip 走读卡流程，表单铺出来且类型不预选", async () => {
+  const { calls, result } = await bootApp({
+    // ⚠️ `["/api/worlds", …]` 是**前缀**匹配，会把 /api/worlds/inspect-card 一起吃掉
+    //    ⇒ 专用桩必须排在它前面。
+    routes: [settingsOnly, cardStub, ["/api/worlds", () => ({ worlds: [] })]],
+    probe: `
+      ${clickJs("#open-world")}
+      await new Promise((r) => setTimeout(r, 60));
+      window.alert = () => {};
+      await importWorld(new File([new Uint8Array([1, 2, 3])], "高岭爱花.png"));
+      const box = document.querySelector("#wb-card-import-body");
+      return {
+        shown: !!box && !box.hidden,
+        kinds: [...document.querySelectorAll('input[name="ci-kind"]')].map((e) => e.checked),
+        candidates: [...box.querySelectorAll(".ci-cand")].map((row) => ({
+          index: row.querySelector(".ci-cand-on").dataset.index,
+          name: row.querySelector(".ci-cand-name").value,
+          checked: row.querySelector(".ci-cand-on").checked,
+        })),
+        worldId: document.querySelector("#ci-world-id").value,
+        opening: document.querySelector("#ci-opening").value,
+        scene: document.querySelector("#ci-scene").value,
+      };`,
+  });
+
+  assert.equal(result.shown, true, "读卡完要把表单摊开");
+  // ⚠️ 从 jsdom 里带回来的数组，原型是 jsdom 的 Array.prototype ⇒ `assert/strict`
+  //    的 deepEqual（会比原型）会误判成"不等"。一律先 `[...]` 转成 Node 的数组。
+  assert.deepEqual(
+    [...result.kinds],
+    [false, false, false],
+    "类型一个都不能预选——角色卡与场景卡的字段一样，猜错就是把人物名当地名"
+  );
+  assert.deepEqual(
+    [...result.candidates.map((c) => `${c.index}:${c.name}`)],
+    ["0:夏晴天", "1:慕容清寒"],
+    "候选名字要挂在**条目 index** 上（不是行号）"
+  );
+  assert.deepEqual([...result.candidates.map((c) => c.checked)], [true, true], "候选默认全勾");
+  assert.equal(result.worldId, "st-abcd1234");
+  assert.equal(result.opening, "1", "first_mes 是说明页 ⇒ 默认跳到第一条备选");
+  assert.equal(result.scene, "", "非场景卡不要乱填场景名");
+  assert.equal(
+    calls.some((c) => c.url.includes("/world/import")),
+    false,
+    "非 .zip 不该走 zip 那条老路"
+  );
+  assert.equal(calls.some((c) => c.url === "/api/worlds/inspect-card"), true, "应该去读卡");
+});
+
+test("导入卡：提交只收勾选的条目，改名跟着条目 index 走", async () => {
+  const { calls, result } = await bootApp({
+    routes: [
+      settingsOnly,
+      cardStub,
+      ["/api/worlds/import-card", () => ({ ok: true, world_id: "st-abcd1234", report: {}, problems: [] })],
+      ["/api/worlds", () => ({ worlds: [] })],
+    ],
+    probe: `
+      ${clickJs("#open-world")}
+      await new Promise((r) => setTimeout(r, 60));
+      window.alert = () => {};
+      window.confirm = () => false;
+      await importWorld(new File([new Uint8Array([1])], "高岭爱花.png"));
+      const rows = [...document.querySelectorAll("#wb-card-import-body .ci-cand")];
+      rows[0].querySelector(".ci-cand-on").checked = false;
+      rows[1].querySelector(".ci-cand-name").value = "我改的慕容";
+      document.querySelector('input[name="ci-kind"][value="worldbook"]').checked = true;
+      ${clickJs("#ci-do")}
+      await new Promise((r) => setTimeout(r, 60));
+      return { closed: document.querySelector("#wb-card-import-body").hidden };`,
+  });
+
+  const call = calls.find((c) => c.url === "/api/worlds/import-card");
+  assert.ok(call, "点「导入为新世界」要打 import-card");
+  const body = JSON.parse(call.body);
+  assert.equal(body.kind, "worldbook");
+  assert.equal(body.world_id, "st-abcd1234");
+  assert.deepEqual(
+    body.npcs_from_entries,
+    [{ index: 1, name: "我改的慕容" }],
+    "只收勾选的条目，且 index 跟着条目走（改第二条不能写到第一条上）"
+  );
+  assert.equal(result.closed, true, "提交后表单要收起来");
+});
+
+test("导入入口接受 .png / .json（否则玩家在文件对话框里根本选不中卡）", () => {
+  assert.match(
+    readDist("app.js"),
+    /id="import-world"[^>]*accept="[^"]*\.png[^"]*"/,
+    "文件框的 accept 必须含 .png"
+  );
+});

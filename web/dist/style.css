@@ -1459,6 +1459,82 @@ button:hover {
   background: var(--panel-4);
 }
 
+/* ---------- SillyTavern 卡导入（2026-09-25） ---------- */
+
+.ci-evidence {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.ci-kinds {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ci-kind {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.ci-kind > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ci-kind b {
+  font-weight: 600;
+}
+
+.ci-kind .muted {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: normal;
+}
+
+/* 26 个学生那种卡：候选列表自带滚动，别把面板顶到屏幕外 */
+.ci-cands {
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 4px 6px;
+  margin-top: 4px;
+}
+
+.ci-cand {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+/* `.new-world input` 的 width:100% 是给整行输入框的，这里撤回 */
+.ci-cand .ci-cand-on {
+  width: auto;
+}
+
+.ci-cand .ci-cand-name {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.ci-cand .muted {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.new-world select {
+  width: 100%;
+  box-sizing: border-box;
+}
+
 .warn-tag {
   display: inline-block;
   margin-left: 6px;

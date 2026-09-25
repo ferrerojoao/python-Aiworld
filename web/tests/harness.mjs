@@ -68,7 +68,13 @@ export async function bootApp({
   dom.window.fetch = async (url, opts = {}) => {
     const u = String(url);
     // headers 也记下来：令牌注入这种"看不见的行为"只能从请求侧验证。
-    calls.push({ url: u, method: (opts && opts.method) || "GET", headers: (opts && opts.headers) || {} });
+    // body 同理——「玩家勾了什么、改成什么名字」只在请求体里看得见。
+    calls.push({
+      url: u,
+      method: (opts && opts.method) || "GET",
+      headers: (opts && opts.headers) || {},
+      body: (opts && opts.body) || null,
+    });
     for (const [pattern, handler] of routes) {
       const hit = typeof pattern === "string" ? u.startsWith(pattern) : pattern.test(u);
       if (!hit) continue;
