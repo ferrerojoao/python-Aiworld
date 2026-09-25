@@ -369,6 +369,9 @@ test("场景段：展开拉草稿、写明**落卡不改听域**、确定 POST �
   assert.match(result.warn, /不传播/, "落卡不改听域：默认不传播要说出来");
   assert.match(result.warn, /世界工作台/, "还要说清去哪改（不然玩家只被告知了一个坏消息）");
   assert.ok(!/所有人/.test(result.warn), "旧的『进所有人风闻范围』不能再出现");
+  // 这句是 textContent（不是 innerHTML），markdown 一律不解析 ⇒ 写 `**听域一个字不变**`
+  // 到玩家眼里就是星号。要强调就得靠措辞，不能靠 markdown。
+  assert.ok(!/\*\*/.test(result.warn), "警告文案里漏出了 markdown 的 ** —— 玩家看到的是星号");
   assert.ok(posted, "场景落卡也要真的发请求");
   assert.match(posted.url, /\/locations\/[^/]+\/file$/);
   assert.equal(posted.body.perceivable, "齐腰的苇子围着浅塘。");
@@ -1232,6 +1235,46 @@ test("导入卡：提交只收勾选的条目，改名跟着条目 index 走", a
     "只收勾选的条目，且 index 跟着条目走（改第二条不能写到第一条上）"
   );
   assert.equal(result.closed, true, "提交后表单要收起来");
+});
+
+test("导入卡表单（排版）：单选框 / 复选框不能被 `.new-world input{width:100%}` 拉满整行", async () => {
+  // 🔴 这条 bug 是「看不见的」：字段全在、值全对，只是三个类型单选各占一整行。
+  //    jsdom 的 getComputedStyle **会算级联后的 width**（能区分 100% 与 auto），
+  //    所以排版这一层可以配真守卫 —— 前提是把 style.css 注入进去（载具默认不加载
+  //    外部 CSS，不注入的话 getComputedStyle 只会给默认值，断言等于没写）。
+  const { result } = await bootApp({
+    routes: [settingsOnly, cardStub, ["/api/worlds", () => ({ worlds: [] })]],
+    pre: `
+      window.alert = () => {};
+      const __style = document.createElement("style");
+      __style.textContent = ${JSON.stringify(readDist("style.css"))};
+      document.head.appendChild(__style);
+    `,
+    probe: `
+      ${clickJs("#open-world")}
+      await new Promise((r) => setTimeout(r, 60));
+      await importWorld(new File([new Uint8Array([1])], "高岭爱花.png"));
+      const box = document.querySelector("#wb-card-import-body");
+      const w = (el) => getComputedStyle(el).width;
+      return {
+        radio: [...box.querySelectorAll('input[name="ci-kind"]')].map(w),
+        checkbox: w(box.querySelector(".ci-cand-on")),
+        name: w(box.querySelector(".ci-cand-name")),
+        text: box.textContent,
+      };`,
+  });
+
+  assert.deepEqual(
+    [...result.radio],
+    ["auto", "auto", "auto"],
+    "单选框是「点一下」的控件：width 必须是 auto，拉成 100% 就是一列大圆点"
+  );
+  assert.equal(result.checkbox, "auto", "复选框同理（以前靠 .ci-cand-on 单独补的例外，现已按类型整组撤回）");
+  assert.equal(result.name, "100%", "名字输入框仍要占满中间那一列");
+  // 强调只能用 `<b>`，不能写 markdown 的 `**`：这两个串进的是 innerHTML / textContent，
+  // markdown 根本不会被解析 ⇒ 玩家看到的就是星号（2026-09-25 实测这里漏出 4 处）。
+  assert.match(result.text, /卡主是一个人/, "类型说明要真的渲染出来 —— 否则下一条断言查的是空字符串");
+  assert.ok(!/\*\*/.test(result.text), "可见文案里漏出了 markdown 的 ** —— 玩家看到的是星号");
 });
 
 test("导入入口接受 .png / .json（否则玩家在文件对话框里根本选不中卡）", () => {

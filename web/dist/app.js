@@ -1183,7 +1183,7 @@ function landingBody(body, item, kind) {
     const warn = document.createElement("div");
     warn.className = "st-note land-warn";
     warn.textContent =
-      "转正只是把它变成正式场景（有名字、有描述、能被别名命中）——**听域一个字不变**：region 留空就是不传播，这里的事件谁都不风闻。要让它传出去，转正后到世界工作台填 region（地域名，或「全域」= 人人可闻）。";
+      "转正只是把它变成正式场景（有名字、有描述、能被别名命中）——听域一个字不变：region 留空就是不传播，这里的事件谁都不风闻。要让它传出去，转正后到世界工作台填 region（地域名，或「全域」= 人人可闻）。";
     body.appendChild(warn);
   }
 
@@ -3179,7 +3179,7 @@ async function importWorld(file) {
    ③ 类型选「场景卡」时才把卡名填进「开局场景」（其余情况卡名是标题、不是地名）。 */
 
 const CARD_KINDS = [
-  ["character", "角色卡", "卡主是**一个人**（description 就是他本人的设定）"],
+  ["character", "角色卡", "卡主是<b>一个人</b>（description 就是他本人的设定）"],
   ["scene", "场景卡", "卡主是描述者/旁观者：写的是一个场所 + 一群 NPC"],
   ["worldbook", "世界书 / 世界卡", "只有设定条目，没有卡主"],
 ];
@@ -3233,7 +3233,7 @@ function renderCardImportForm(info) {
   const cands = info.candidates || [];
   const candBox = cands.length
     ? `<label>这些条目像一个个「人」（默认全勾 ⇒ 转成人物卡，名字可以直接改）
-         <span class="muted">不勾的留在世界书里——命中关键词才注入，且**不会**被当成在场人物</span>
+         <span class="muted">不勾的留在世界书里——命中关键词才注入，且<b>不会</b>被当成在场人物</span>
          <div class="ci-cands">${cands
            .map(
              (c) => `<div class="ci-cand">

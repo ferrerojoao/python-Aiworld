@@ -1402,7 +1402,10 @@ button:hover {
   font-size: 13px;
 }
 
-.new-world input,
+/* width:100% 只给「整行填写」的输入框。单选框 / 复选框是「点一下」的控件，拉满整行就
+   变成一列大圆点（2026-09-25 实测：ST 卡导入表单里三个类型单选各占一整行，排版全散）。
+   ⚠️ 按类型排除，别再逐处补 `width:auto` 的例外——漏一个就是同一个 bug 再犯一次。 */
+.new-world input:not([type="radio"]):not([type="checkbox"]),
 .new-world textarea {
   width: 100%;
   box-sizing: border-box;
@@ -1508,15 +1511,12 @@ button:hover {
 
 .ci-cand {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  /* 第三列是「字数 · 关键词」，`minmax(0, auto)` 让它可收缩：关键词长起来不收缩
+     会把整个网格顶出面板（窄窗 / 手机尤其明显）。 */
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, auto);
   align-items: center;
   gap: 6px;
   padding: 2px 0;
-}
-
-/* `.new-world input` 的 width:100% 是给整行输入框的，这里撤回 */
-.ci-cand .ci-cand-on {
-  width: auto;
 }
 
 .ci-cand .ci-cand-name {
@@ -1527,7 +1527,10 @@ button:hover {
 .ci-cand .muted {
   color: var(--muted);
   font-size: 12px;
+  /* nowrap 免得在词中间断行，但要能截断（否则就是上面那条收缩失效）。 */
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .new-world select {
