@@ -197,24 +197,24 @@ def test_writer_prompt_is_tiered(session):
 
 
 def test_style_sample_injected_with_adjacent_ban(session):
-    """文风示范（2026-09-11）：三级块内紧贴准则注入，只留「文风示范：」
+    """写作示范（2026-09-11）：三级块内紧贴准则注入，只留「写作示范：」
     标记 + 原文（贴身禁令经用户要求已去掉，先试无禁令版）；空 = 不注入。"""
     session.world.presets.writer_guidelines = "文风偏好：白描为主。"
     session.world.presets.style_sample = "他把伞收了，雪就落满了肩。"
 
     order = build_work_order("writer", session.world, session.ledger, "网吧")
-    assert "文风示范：" in order
+    assert "写作示范：" in order
     assert "「他把伞收了，雪就落满了肩。」" in order
     # 禁令已去掉（用户 23:08 要求）。
     assert "不得以任何形式出现在正文里" not in order
     # 示范跟在准则之后（都在三级抬头与一级之间）。
-    assert order.index("文风示范") < order.index("【一级 · 输出格式】")
-    assert order.index("文风偏好：白描为主。") < order.index("文风示范")
+    assert order.index("写作示范") < order.index("【一级 · 输出格式】")
+    assert order.index("文风偏好：白描为主。") < order.index("写作示范")
 
-    # 留空 = 不注入（连"文风示范"字样都不出现）。
+    # 留空 = 不注入（连"写作示范"字样都不出现）。
     session.world.presets.style_sample = ""
     empty = build_work_order("writer", session.world, session.ledger, "网吧")
-    assert "文风示范" not in empty
+    assert "写作示范" not in empty
 
 
 def test_style_sample_is_injected_in_full(session):

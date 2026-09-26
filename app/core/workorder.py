@@ -873,8 +873,8 @@ def writer_style_block(preset: NarrativePreset) -> list[str]:
     戏的张力偏离它——此前它与「绝对不可违背」的规则混在一起，模型只能
     一律照办，结果是越写越保守。抬头只留等级名，不带解释句（同日用户判定）。
 
-    style_sample（文风示范，2026-09-11）：紧贴 guidelines 注入，只留
-    「文风示范：」标记 + 原文——贴身禁令经用户实测后要求去掉（22:47 功能
+    style_sample（写作示范，2026-09-11）：紧贴 guidelines 注入，只留
+    「写作示范：」标记 + 原文——贴身禁令经用户实测后要求去掉（22:47 功能
     上线时带禁令，23:08 用户要求先试无禁令版）。空 = 不注入，零成本。
     """
     lines: list[str] = []
@@ -883,7 +883,7 @@ def writer_style_block(preset: NarrativePreset) -> list[str]:
     if preset.style_sample:
         if not lines:
             lines.append("【三级 · 文风与剧情倾向】")
-        lines += ["文风示范：", f"「{preset.style_sample}」"]
+        lines += ["写作示范：", f"「{preset.style_sample}」"]
     return lines
 
 

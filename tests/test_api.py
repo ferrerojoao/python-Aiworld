@@ -468,7 +468,7 @@ def test_global_preset_is_separate_from_world(tmp_path):
 
 
 def test_style_sample_length_is_not_capped(tmp_path):
-    """文风示范**不许有字数上限**（2026-09-25 用户要求：说明里的「100~200 字」已删）。
+    """写作示范**不许有字数上限**（2026-09-25 用户要求：说明里的「100~200 字」已删）。
 
     守的是"没有任何一层偷偷把范文截短"：Pydantic 模型加没加 `max_length`、presets.json 是不是
     原样落盘、回读是不是全文。以前**从没测过长度**——说明写着 100~200 字，谁顺手加个切片
