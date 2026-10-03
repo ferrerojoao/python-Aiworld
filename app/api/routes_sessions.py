@@ -12,6 +12,13 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
+from app.core.package import (
+    KIND_FULL_BACKUP,
+    KIND_WORLD_ASSETS,
+    build_manifest,
+    is_package_metadata,
+    write_package_files,
+)
 from app.core.presets import save_global_preset
 from app.core.store import write_json_atomic
 from app.core.workorder import state_view
@@ -977,24 +984,58 @@ async def world_browser(request: Request, sid: str):
     }
 
 
+# 导出包该装哪些文件（2026-10-03）。三类要跳过，理由各不相同：
+#   ① `candidates/` —— 未采纳的提案是临时态，两个包都不收；
+#   ② `_SAVE_RUNTIME_NAMES`（仅资产包）—— 运行态不是"资产"；
+#   ③ 包级说明（`is_package_metadata`）—— 那是**上一个 zip** 的说明，复制进来会与
+#      本次新写的那份**同名重复**；导出侧认它，是为了容忍早期导入留下的残留。
+_SKIP_DIRS = {"candidates"}
+_SAVE_RUNTIME_NAMES = ("save.json", "events.jsonl", "presets.json")
+
+
+def _collect_package_files(root: Path, *, skip_names: tuple[str, ...] = ()) -> list[str]:
+    """列一份包里该装的文件（posix 相对路径）。
+
+    🔴 **显式 ``sorted``**：zip 里的条目顺序就是这里的顺序，而文件系统的遍历顺序
+    依平台而变（NTFS 近似字典序 / **ext4 是哈希序**）⇒ 不排序则同一个世界在两台
+    机器上导出会得到不同的包，包内清单的条目顺序也跟着变。
+    """
+    out: list[str] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root)
+        if not rel.parts or rel.parts[0] in _SKIP_DIRS:
+            continue
+        if path.name in skip_names or is_package_metadata(path.name):
+            continue
+        out.append(rel.as_posix())
+    return out
+
+
 @router.get("/sessions/{sid}/world/export")
 async def export_world(request: Request, sid: str):
     """导出资产包 = 世界资产的快照（不含运行态）。用户存到自己电脑上，
-    想回到初始状态时导入它就会得到一个新世界。"""
+    想回到初始状态时导入它就会得到一个新世界。
+
+    包里带两份自描述（2026-10-03）：机读清单 ``AIWORLD-PACKAGE.json`` 与人读
+    ``AIWORLD-README.txt``——别的工具（或人）拿到这个 zip 立刻读得出它是什么。
+    """
     session = _get_session(request, sid)
     world_root = session.world_dir
+    files = _collect_package_files(world_root, skip_names=_SAVE_RUNTIME_NAMES)
+    manifest = build_manifest(
+        kind=KIND_WORLD_ASSETS,
+        files=files,
+        world_id=session.world.meta.id,
+        world_name=session.world.meta.name,
+    )
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in sorted(world_root.rglob("*")):
-            if not path.is_file():
-                continue
-            rel = path.relative_to(world_root)
-            parts = rel.parts
-            if not parts or parts[0] == "candidates":
-                continue
-            if path.name in ("save.json", "events.jsonl", "presets.json"):
-                continue
-            zf.write(path, rel.as_posix())
+        # 说明**先写**：它排在 zip 最前面，浏览/解压时第一眼就是"这是什么"。
+        write_package_files(zf, manifest)
+        for rel in files:
+            zf.write(world_root / rel, rel)
     buffer.seek(0)
     filename = f"{session.world.meta.id}.zip"
     return StreamingResponse(
@@ -1010,19 +1051,27 @@ async def export_save(request: Request, sid: str):
 
     与「导出资产包」不同：这里连事件日志（世界全部历史）一起打包，用于
     备份/换机/复盘。导入落点 = ``content/<world_id>/`` 本身（世界=存档）。
+    包里同样带自描述清单与人读说明（2026-10-03），见 ``app/core/package.py``。
     """
     session = _get_session(request, sid)
     save_dir = session.save_dir
+    files = _collect_package_files(save_dir)
+    manifest = build_manifest(
+        kind=KIND_FULL_BACKUP,
+        files=files,
+        world_id=session.world.meta.id,
+        world_name=session.world.meta.name,
+        save={
+            "name": session.ledger.save.meta.save_name,
+            "clock": session.ledger.save.clock,
+            "events": len(session.ledger.events),
+        },
+    )
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in sorted(save_dir.rglob("*")):
-            if not path.is_file():
-                continue
-            rel = path.relative_to(save_dir)
-            # 候选是临时态（未采纳的提案），不入备份。
-            if rel.parts and rel.parts[0] == "candidates":
-                continue
-            zf.write(path, rel.as_posix())
+        write_package_files(zf, manifest)
+        for rel in files:
+            zf.write(save_dir / rel, rel)
     buffer.seek(0)
     name = f"{session.world.meta.id}_{session.ledger.save.meta.save_name}.zip"
     return StreamingResponse(
@@ -1075,6 +1124,10 @@ async def import_save(request: Request, body: ImportWorldBody):
         if member.endswith("/"):
             continue
         if Path(member).name == "presets.json":
+            continue
+        # 包级说明（清单 / 人读说明）是**那一个 zip 的**，不是世界的内容：落进
+        # 世界目录后会跟着下一次导出被打包，新包里就多出第二份同名说明（正文还是旧的）。
+        if is_package_metadata(member):
             continue
         rel = member
         if rel.startswith("world/"):  # 旧备份布局：资产带 world/ 前缀
@@ -1131,6 +1184,9 @@ async def import_world(request: Request, sid: str, body: ImportWorldBody):
         if member.startswith("saves/") or "/saves/" in member:
             continue
         if Path(member).name == "presets.json":
+            continue
+        # 与 import_save 同一条：包级说明不入世界目录（见上）。
+        if is_package_metadata(member):
             continue
         target = (dest / member).resolve()
         if not target.is_relative_to(dest.resolve()):

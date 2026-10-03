@@ -108,7 +108,9 @@ def create_session(world_root: str | Path, save_name: str = "main") -> GameSessi
         player_scene=world.start_scene_id(),
         narrative_preset=world.presets,
     )
-    write_json_atomic(root / "save.json", save.model_dump())
+    # ``by_alias=True``：与 ``Ledger.persist_save`` 同一理由——自描述头（``_format``
+    # 等）是 alias 字段，不带它落盘会写成 ``package_format``（见 app/ledger/save.py）。
+    write_json_atomic(root / "save.json", save.model_dump(by_alias=True))
     session = GameSession(root)
     write_opening_event(session)
     return session

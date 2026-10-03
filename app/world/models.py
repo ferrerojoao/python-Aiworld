@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.core.package import ABOUT_WORLD, FORMAT_VERSION, FORMAT_WORLD, GENERATOR
 
 # 世界包没写主角卡时由 load_world 合成的占位名（作者在人物编辑里改名即可）。
 PLAYER_PLACEHOLDER = "主角"
@@ -14,12 +16,26 @@ SCENE_PLACEHOLDER = "暂无描述。"
 
 
 class WorldInfo(BaseModel):
+    # 自描述头（2026-10-03）：让 world.json 从包里单独拎出来时也说得清自己是什么。
+    # 盘上的键名带下划线前缀（``_format`` = "这是元数据，不是内容"），但
+    # ⚠️ **pydantic v2 会把下划线开头的字段名当私有属性静默吞掉**（不进
+    # ``model_fields``、不进 ``model_dump``、``model_validate`` 也收不进，且**不报错**），
+    # 所以真字段名不带下划线，靠 alias 保住盘上的外观；``populate_by_name`` 让两种
+    # 写法（``_format`` / ``package_format``）都能读进来。
+    # ⚠️ world.json 由 ``save_world_assets`` 的**显式 dict** 写出（那里是无条件补的），
+    # 本模型只负责「读回来不丢」；save.json 那边不同，见 ``app/ledger/save.py``。
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str
     name: str
     summary: list[str] = Field(default_factory=list)
     opening: str = ""  # opening prose: becomes the first ledger event of a save
     start_time: str = ""  # 世界钟起点（ISO 时间）；空=回退引擎默认 2026-07-14T08:00:00
     start_scene: str = ""  # 开局场景（中文名，须为已注册场景）；空=取第一个注册场景
+    package_format: str = Field(default=FORMAT_WORLD, alias="_format")
+    package_format_version: int = Field(default=FORMAT_VERSION, alias="_format_version")
+    package_generator: str = Field(default=GENERATOR, alias="_generator")
+    package_about: str = Field(default=ABOUT_WORLD, alias="_about")
 
 
 class LoreEntry(BaseModel):

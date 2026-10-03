@@ -970,10 +970,11 @@ POST   /api/sessions/{sid}/locations/{name}/discard  # × 定为临时：status=
 POST   /api/sessions/{sid}/world/save-as    # 复制为新世界（fork：当前世界连演化存成新包，原世界不动）
 POST   /api/sessions/{sid}/director         # 导演窗口（topic=chat 走对话；topic=confirm 执行已确认的幕后事务；主角不可 retire，2026-09-13）
 POST   /api/sessions/{sid}/reset            # 重置剧情：事件/候选/运行态清零、开场重写；世界资产原地保留（工作台的编辑不丢）
-GET    /api/sessions/{sid}/world/export     # 导出资产包 = 纯世界资产快照（不含 save.json/events.jsonl/candidates）——用户存本地，导入即得初始态新世界
-POST   /api/sessions/{sid}/world/import     # **导入为新世界**：zip 带 world.json → 落 content/<id>/（重名自动加时间戳），不改当前世界（2026-09-13）
-GET    /api/sessions/{sid}/export           # 导出完整备份（世界资产 + save.json + events.jsonl，候选除外；换机/复盘）
+GET    /api/sessions/{sid}/world/export     # 导出资产包 = 纯世界资产快照（不含 save.json/events.jsonl/candidates）——用户存本地，导入即得初始态新世界；包内自带 AIWORLD-PACKAGE.json + AIWORLD-README.txt 两份自描述（2026-10-03）
+POST   /api/sessions/{sid}/world/import     # **导入为新世界**：zip 带 world.json → 落 content/<id>/（重名自动加时间戳），不改当前世界（2026-09-13）；包级说明不入世界目录（它不是世界内容）
+GET    /api/sessions/{sid}/export           # 导出完整备份（世界资产 + save.json + events.jsonl，候选除外；换机/复盘）；同样自带两份自描述
 POST   /api/saves/import                    # 导入完整备份 → 落 content/<world_id>/ 本身；该世界已有存档 → 409（绝不覆盖正在玩的世界）；兼容旧包的 world/ 前缀布局（2026-09-13）
+# ↑ world.json / save.json 各自带 _format / _format_version / _generator / _about 自描述头（2026-10-03，常量与清单生成见 app/core/package.py）
 GET/PUT /api/settings                        # 系统设置（主 / 辅两套模型接口 + 注入上限 + 质检开关，2026-09-16；辅侧独立出口 2026-09-20）；PUT 落盘 data/settings.json（gitignore，含 api_key），启动时覆盖 env 值——重启不丢（2026-09-11）。⚠️ PUT 会重建 LLMRouter，用量统计随之清零（与拆出口之前同行为）
 GET/PUT /api/presets                 # 全局预设（编剧准则 + 禁用词）
 ```

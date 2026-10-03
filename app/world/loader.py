@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from app.core.package import ABOUT_WORLD, FORMAT_VERSION, FORMAT_WORLD, GENERATOR
 from app.core.store import write_json_atomic
 from app.rules.lorebook import LORE_SUBJECT_CAP
 
@@ -143,6 +144,14 @@ def save_world_assets(root: str | Path, data: dict) -> None:
         "opening": overview.get("opening", ""),
         "start_time": overview.get("start_time", ""),
         "start_scene": overview.get("start_scene", ""),
+        # 自描述头（2026-10-03）：**无条件写死，不从 overview 取**——格式声明不是
+        # 内容，玩家改不了它；将来升版本号只改 app/core/package.py 一处。
+        # ⚠️ 这里是 world.json 的**唯一写入点**（新建 / 编辑 / 落卡 / 导入 / 起草
+        # 全部汇流于此），漏了它 = 每次保存世界都把声明丢掉。
+        "_format": FORMAT_WORLD,
+        "_format_version": FORMAT_VERSION,
+        "_generator": GENERATOR,
+        "_about": ABOUT_WORLD,
     }
     npcs = data.get("npcs") or {}
     players = [npc_id for npc_id, card in npcs.items() if (card or {}).get("is_player")]

@@ -1,16 +1,30 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.package import ABOUT_SAVE, FORMAT_SAVE, FORMAT_VERSION, GENERATOR
 from app.core.store import new_id
 from app.world.models import NarrativePreset
 
 
 class SaveMeta(BaseModel):
+    # 自描述头（2026-10-03）：与 ``WorldInfo`` 同一套（常量见 app/core/package.py），
+    # 让 save.json 单独被拎出来时也说得清自己是什么。
+    # ⚠️ 与 world_json 那边的关键差别：**save.json 是 ``model_dump()`` 出来的**，
+    # 所以这四个字段必须真在模型里（不能只在某个显式 dict 里补），且**落盘处必须
+    # ``model_dump(by_alias=True)``**——漏了它盘上会写成 ``package_format``，
+    # ``_format`` 反而不见（静默）。两处落盘：``app/ledger/queries.py``（每次结算）
+    # 与 ``app/runtime/session.py``（建档）。
+    model_config = ConfigDict(populate_by_name=True)
+
     world_id: str
     save_name: str
     created_at: str = ""
     next_event_id: int = 1
+    package_format: str = Field(default=FORMAT_SAVE, alias="_format")
+    package_format_version: int = Field(default=FORMAT_VERSION, alias="_format_version")
+    package_generator: str = Field(default=GENERATOR, alias="_generator")
+    package_about: str = Field(default=ABOUT_SAVE, alias="_about")
 
 
 class StateItem(BaseModel):

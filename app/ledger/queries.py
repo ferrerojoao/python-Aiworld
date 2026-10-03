@@ -223,7 +223,10 @@ class Ledger:
             append_event(self.events_path, self._pending_events.pop(0))
 
     def persist_save(self) -> None:
-        write_json_atomic(self.save_path, self.save.model_dump())
+        # ``by_alias=True``：save.json 的 ``meta`` 里那四个自描述头（``_format`` 等）
+        # 是用 alias 声明的（见 app/ledger/save.py），不带它落盘会写成字段名
+        # ``package_format``，盘上反而找不到 ``_format``——静默失效，故钉住。
+        write_json_atomic(self.save_path, self.save.model_dump(by_alias=True))
 
     # ------------------------------------------------------------------
     # Queries
