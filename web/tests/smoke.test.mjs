@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { bootApp, clickJs, readDist, worldRoutes } from "./harness.mjs";
+import { bootApp, clickJs, jsonResponse, readDist, worldRoutes } from "./harness.mjs";
 
 const settingsOnly = ["/api/settings", () => ({ llm_base_url: "", model_main: "m", model_cheap: "c" })];
 
@@ -29,6 +29,46 @@ test("无世界启动：给出提示 + 世界名显示（无世界）+ 不打 se
   assert.match(result.messages, /还没有世界/);
   const nullCalls = calls.filter((c) => c.url.includes("/api/sessions/null"));
   assert.deepEqual(nullCalls, [], `不该拿 null 当 sid 去请求：${JSON.stringify(nullCalls)}`);
+});
+
+test("读不到世界列表 ≠ 没有世界（401 必须说出来）", async () => {
+  // 真出过的 bug（2026-10-03 用户报「主机运行、局域网手机访问，世界消失了」）：
+  // 静态页能开（静态面不过鉴权），但 `/api/worlds` 401，而 pickWorld 把它 catch→null，
+  // 于是 init 走"没有世界"那一支 ⇒ 手机上看起来世界全没了，还被劝去"新建一个"。
+  const { result } = await bootApp({
+    routes: [
+      settingsOnly,
+      [
+        /^\/api\//,
+        () => ({ __raw: true, res: jsonResponse({ detail: "缺少访问令牌" }, 401) }),
+      ],
+    ],
+    probe: `return {
+      worldName: document.querySelector("#world-name").textContent,
+      messages: document.querySelector("#messages").textContent,
+    };`,
+  });
+
+  assert.equal(result.worldName, "（读取失败）", "读失败不能报成「无世界」");
+  assert.doesNotMatch(result.messages, /还没有世界/, "别把 401 说成「世界不存在」");
+  assert.match(result.messages, /读不到世界列表/, "要把真实原因摊开");
+  assert.match(result.messages, /token/, "401 必须给令牌提示——那是手机上唯一的自救线索");
+});
+
+test("世界面板：读失败也要画出来（否则面板停在空帧 = 又一次「世界消失了」）", async () => {
+  const { result } = await bootApp({
+    routes: [
+      settingsOnly,
+      [/^\/api\//, () => ({ __raw: true, res: jsonResponse({ detail: "缺少访问令牌" }, 401) })],
+    ],
+    probe: `
+      ${clickJs("#open-world")}
+      await new Promise((r) => setTimeout(r, 60));
+      return { items: document.querySelector("#world-list-items").textContent };`,
+  });
+
+  assert.match(result.items, /读不到世界列表/, "面板不能只留一片空白");
+  assert.match(result.items, /token/);
 });
 
 test("无世界时点「世界工作台」：打开弹窗 + 只拉世界列表，不打 sessions/null", async () => {
@@ -931,6 +971,54 @@ test("编辑框高度跟着内容量（和正文档一样大：同列折行 + �
   // 512 + (offsetHeight - clientHeight) = 514 ⇒ 高度与正文对齐，不会比正文矮 2px。
   assert.equal(result.onOpen, "514px", "一进编辑态就按内容高度撑开（含边框补偿）");
   assert.equal(result.onInput, "902px", "继续写要跟着长，否则又变成在小框里滚");
+});
+
+test("编辑框撑高不许把滚动位置带走（带走 = 每敲一个字页面跳一次、光标找不着）", async () => {
+  // 真出过的 bug（2026-10-03 用户报「编辑待采纳稿件时页面上下乱跳，找不到光标」）：
+  // fitEditorHeight 是**两段式**改高（height:auto → 实测高度）。中间那一瞬浏览器真会
+  // 跑一次布局：编辑框塌回 rows 的高度 ⇒ 祖先滚动容器 `#chat` 的滚动区间缩小 ⇒
+  // scrollTop 被夹回去，随后再撑开也不还原。oninput 每敲一个字都跑一次 ⇒ 一直跳。
+  //
+  // ⚠️ jsdom **不排版**，复现不了那次夹取（scrollHeight 恒 0、没有布局）。所以这条
+  //    只能退一步钉**行为**：撑高前后必须有人把滚动位置写回去，且写回的是原来那个值
+  //    （不是 0、不是底部）。少了这一笔，真浏览器里就是每敲一个字跳一次。
+  const { result } = await bootApp({
+    routes: [...candidateRoutes(), ...worldRoutes()],
+    probe: `
+      ${BTN_HELPERS}
+      const stub = (name, get) =>
+        Object.defineProperty(HTMLTextAreaElement.prototype, name, { configurable: true, get });
+      stub("scrollHeight", () => 900);
+      stub("clientHeight", () => 900);
+      stub("offsetHeight", () => 902);
+      click(btn("编辑"));
+      const box = document.querySelector(".message-edit");
+      const chat = document.querySelector("#chat");
+      // 装一个"看得见写入"的 scrollTop：jsdom 里它只是个普通属性，不会自己变。
+      const writes = [];
+      let value = 120;
+      Object.defineProperty(chat, "scrollTop", {
+        configurable: true,
+        get: () => value,
+        set: (v) => { writes.push(v); value = v; },
+      });
+      // 视角在**中段**（没贴底）⇒ 应还原原位置。
+      Object.defineProperty(chat, "clientHeight", { configurable: true, get: () => 100 });
+      Object.defineProperty(chat, "scrollHeight", { configurable: true, get: () => 1000 });
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+      const mid = { writes: [...writes], value };
+
+      // 视角**贴着底** ⇒ 撑高后必须继续贴底（不然编辑到最后一行的字会被推到视野外）。
+      writes.length = 0;
+      value = 900;   // 900 + 100 >= 1000 - 2 ⇒ 贴底
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+      return { mid, bottom: { writes: [...writes], value } };
+    `,
+  });
+
+  // ⚠️ 探针里的数组属于 jsdom realm，`deepStrictEqual` 会因原型不同而红 ⇒ 在 Node 侧展开。
+  assert.deepEqual([...result.mid.writes], [120], "中段改稿：写回原来的滚动位置（少这一笔就会跳）");
+  assert.deepEqual([...result.bottom.writes], [1000], "贴底改稿：撑高后继续贴底（scrollHeight）");
 });
 
 test("编辑框宽度必须与正文一致（宽度真排版才量得出 ⇒ 查源码里两处读同一个变量）", () => {

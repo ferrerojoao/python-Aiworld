@@ -91,6 +91,20 @@ async function api(path, options = {}) {
   return res.text();
 }
 
+/** 401 的排障提示（2026-10-03）。
+ *
+ *  `api()` 把失败包成 `"401: {json}"`，内容对玩家没意义；而 401 在这个项目里
+ *  只有一个成因：**这台设备手上没有令牌**（手机上 localStorage 被清 / 换了设备或
+ *  IP / 无痕模式）。启动读世界列表失败与世界面板两处**共用这一句**——同一个病
+ *  不能有两种说法。
+ */
+function authHint(message) {
+  return String(message || "").startsWith("401")
+    ? "（非本机访问需要令牌：在手机浏览器里用带 ?token=<令牌> 的地址重新打开一次即可；" +
+        "令牌见电脑端 .env 的 AIWORLD_AUTH_TOKEN）"
+    : "";
+}
+
 /* ---------- 附图（2026-09-24）：场景图 / 人物图的取用 ----------
    服务端存的是一条**世界目录下的相对路径串**（assets/scenes/主街-3f9a1c72.png）。
 
@@ -293,7 +307,12 @@ function addMessage(role, text) {
   textEl.textContent = text;
   box.appendChild(textEl);
   $("#messages").appendChild(box);
-  $("#messages").scrollTop = $("#messages").scrollHeight;
+  // ⚠️ 真正的滚动容器是 `#chat`（`overflow-y: auto`）；`#messages` 只是它里面一层
+  //    没有 overflow 的 flex 列 ⇒ 往 `#messages` 写 scrollTop 是**空操作**，新消息
+  //    从来没被滚进视野（2026-10-03 顺手修：编辑框那条"找不到光标"与它同源——新
+  //    气泡在视野外，玩家得自己往下找）。
+  const chat = $("#chat");
+  if (chat) chat.scrollTop = chat.scrollHeight;
   return box;
 }
 
@@ -440,8 +459,22 @@ function renderCandidateMessage() {
  */
 function fitEditorHeight(el) {
   if (!el) return;
+  // ⚠️ 两段式改高（auto → 实测高度）**中间那一瞬会真的跑一次布局**：编辑框塌回
+  //    `rows` 的高度 ⇒ 祖先滚动容器 `#chat` 的滚动区间缩小 ⇒ 浏览器把 scrollTop
+  //    夹回去（夹到 0），随后再撑开也不会还原。表现就是"每敲一个字页面往上跳一次、
+  //    光标找不到了"（2026-10-03 用户报）。改高前后把滚动位置钉住。
+  // **贴底时才继续贴底**：本来贴着底就是在看结尾，撑高后要跟着走；否则视角会被
+  //    拽回底部，在中段改稿同样找不着光标。
+  const chat = $("#chat");
+  let top = 0;
+  let atBottom = false;
+  if (chat) {
+    top = chat.scrollTop;
+    atBottom = top + chat.clientHeight >= chat.scrollHeight - 2;
+  }
   el.style.height = "auto";
   el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`;
+  if (chat) chat.scrollTop = atBottom ? chat.scrollHeight : top;
 }
 
 function enterEditMode() {
@@ -2057,8 +2090,16 @@ async function checkWorldAssets(worldId) {
 }
 
 async function loadWorldList() {
-  const data = await api(`/api/worlds`);
-  const worlds = data.worlds || [];
+  // 读失败要**画在面板里**（2026-10-03）：抛出去只会变成一条未捕获的 rejection
+  //（好几个调用点都没接），面板停在上一帧（通常是全空），看上去就是"世界消失了"。
+  let worlds = [];
+  let error = "";
+  try {
+    const data = await api(`/api/worlds`);
+    worlds = data.worlds || [];
+  } catch (e) {
+    error = (e && e.message) || String(e);
+  }
 
   const panel = $("#wb-world-panel");
   panel.innerHTML = `
@@ -2088,7 +2129,14 @@ async function loadWorldList() {
   bindNewWorldEvents();
 
   const box = $("#world-list-items");
-  if (!worlds.length) {
+  if (error) {
+    // 读失败 ≠ 没有世界（同 init 那条）。面板整个是空的时候手机上无从下手：
+    // 连"新建/导入"都以为没得用（其实它们在头上照样能点）。
+    const tip = document.createElement("div");
+    tip.className = "empty";
+    tip.textContent = `⚠ 读不到世界列表：${error}${authHint(error)}`;
+    box.appendChild(tip);
+  } else if (!worlds.length) {
     box.innerHTML =
       '<div class="empty">暂无世界：展开「新建世界」填一句世界生成提示让 AI 起草，或直接创建一个空白世界。</div>';
   }
@@ -3454,13 +3502,12 @@ async function resetWorld() {
 
 async function pickWorld() {
   // 启动选世界：localStorage 记忆优先，但必须仍存在；否则取列表第一个。
-  let worlds = [];
-  try {
-    const data = await api(`/api/worlds`);
-    worlds = data.worlds || [];
-  } catch (e) {
-    return null;
-  }
+  // **读失败要抛给调用方**（2026-10-03）：401（手机没带令牌）与"真的一个世界都
+  // 没有"是两件事，此前在这里 catch→null 混成一件，玩家看到的是"还没有世界，
+  // 去新建一个"——那正是"主机运行、局域网手机访问，世界消失了"的真身：页面是
+  // 静态的能打开，`/api/*` 401 被吞掉，于是手机上看起来世界全没了。
+  const data = await api(`/api/worlds`);
+  const worlds = data.worlds || [];
   if (!worlds.length) return null;
   const remembered = localStorage.getItem("aiworld_world_id");
   const rememberedValid = worlds.some((w) => w.id === remembered);
@@ -3479,10 +3526,11 @@ async function init() {
   }
 
   let picked = null;
+  let listError = "";
   try {
     picked = await pickWorld();
   } catch (e) {
-    picked = null;
+    listError = (e && e.message) || String(e);
   }
   if (picked) {
     try {
@@ -3497,6 +3545,10 @@ async function init() {
     } catch (e) {
       addMessage("npc", `初始化失败：${e.message}`);
     }
+  } else if (listError) {
+    // **读不到 ≠ 没有**（2026-10-03）：把真实原因摊开，别把 401 说成"世界不存在"。
+    addMessage("npc", `⚠ 读不到世界列表：${listError}${authHint(listError)}`);
+    $("#world-name").textContent = "（读取失败）";
   } else {
     addMessage("npc", "还没有世界：点右上角「世界工作台」→「切换世界」→ 新建一个。");
     $("#world-name").textContent = "（无世界）";
