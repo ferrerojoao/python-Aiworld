@@ -30,7 +30,7 @@
 🔴 **场景卡/世界卡里的 NPC 本来就是结构化条目**（实测圣花学园 28 条里 26 条是一个学生
 一条）。判据 = ``constant == False`` 且 ``keys`` 非空，零模型调用。见 ``candidate_npcs``。
 
-方案与实测数据：``docs/方案-SillyTavern卡导入-AIWorld.md``。
+方案与实测数据：``docs/方案-SillyTavern卡导入-AIWorld.md``（2026-10-08 删除，见 git 历史）。
 """
 
 from __future__ import annotations
