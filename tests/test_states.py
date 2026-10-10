@@ -354,6 +354,18 @@ def test_state_view_flags_retired(session) -> None:
     assert entry["present"] is False
 
 
+def test_state_view_shows_retired_name_even_without_states(session) -> None:
+    """已退场者无条件出现（2026-10-10）：哪怕一条状态都没有。空组落在别人身上是
+    噪音，落在退场者身上正是"他不在了"这个事实——面板是玩家唯一能看见它的地方。"""
+    npc = _an_npc(session)
+    session.ledger.save.entities[npc] = EntityRuntime(lifecycle="retired")
+    entry = next(v for v in _view(session) if v["name"] == npc)
+    assert entry["retired"] is True
+    assert entry["visible"] == []
+    assert entry["hidden"] == []
+    assert entry["expired"] == []
+
+
 def test_state_view_carries_the_fields_needed_to_revoke(session) -> None:
     """面板要能就地撤销 → 每条必须带 id（前端靠它调撤销接口）。"""
     _seed(session, session.world.player_name(), "沐浴龙血")

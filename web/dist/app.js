@@ -1001,9 +1001,10 @@ function renderStatePanel(data) {
       // 还在存档里、还带撤销入口**——旧语义是到点直接删掉，玩家连撤的对象都没有。
       ...(entry.expired || []).map((it) => ({ it, grey: true, tag: "已到期" })),
     ];
-    if (!items.length) {
+    if (!items.length && !entry.retired) {
       // 一条都没有的人不显示（后端已过滤，这里是兜底）：面板是"此刻谁是什么"的
-      // 查询视图，列一堆空组只是噪音。
+      // 查询视图，列一堆空组只是噪音。**已退场者除外**（后端同样放行）——那一行
+      // 空组承载的就是"他不在了"，是退场这个不可逆终态唯一能看见的地方。
       continue;
     }
     for (const { it, grey, tag } of items) {

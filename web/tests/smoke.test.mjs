@@ -1372,3 +1372,23 @@ test("导入入口接受 .png / .json（否则玩家在文件对话框里根本�
     "文件框的 accept 必须含 .png"
   );
 });
+
+test("状态面板：已退场者哪怕一条状态都没有也要出现（2026-10-10）", async () => {
+  // 真出过的盲点：state_view 的 `if not items and not dead` 把"无状态 + 已退场"的人
+  // 整个滤掉 —— 玩家在世界里再也找不到他退场的痕迹。退场不可逆，面板是唯一能看见
+  // 它的地方，所以那一行空组必须留下。后端已放行，前端这道兜底同样要放行。
+  const { result } = await bootApp({
+    routes: worldRoutes(),
+    probe: `
+      renderStatePanel({ state_view: [
+        { name: "朱明", is_player: false, present: false, retired: true, visible: [], hidden: [], expired: [] },
+      ] });
+      const box = document.querySelector("#states-panel");
+      return { groups: box.querySelectorAll(".st-group").length, text: box.textContent };
+    `,
+  });
+
+  assert.equal(result.groups, 1, "退场者必须成组出现，哪怕一条状态都没有");
+  assert.match(result.text, /朱明/, "名字要画出来");
+  assert.match(result.text, /已退场/, "必须带上「已退场」标记——那是玩家唯一能看见的退场事实");
+});
