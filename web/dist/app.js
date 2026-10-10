@@ -1515,6 +1515,88 @@ function switchDrawerTab(tabName) {
     loadDebugTrace();
   } else if (tabName === "settings") {
     loadSettings();
+  } else if (tabName === "digest") {
+    loadDigest();
+  }
+}
+
+/* ---------- 大总结 ---------- */
+
+// 两步走：草稿（不落盘）→ 确定落地。与「转正」同一条纪律——引擎只给候选，玩家拍板。
+// 压缩是不可逆的（原始事件会被归档移走），所以必须由玩家看过、改过再落地；服务端
+// 另有两道闸门兜底（有未采纳候选 → 409、没有新事件 → 400）。
+async function loadDigest() {
+  const status = $("#digest-status");
+  if (!state.sid) {
+    status.textContent = "还没有打开世界。";
+    return;
+  }
+  try {
+    renderDigestStatus(await api(`/api/sessions/${state.sid}/digest`));
+  } catch (e) {
+    status.textContent = `读不到大总结状态：${e.message}`;
+  }
+}
+
+function renderDigestStatus(data) {
+  const status = $("#digest-status");
+  const lines = [`当前事件日志 ${data.event_count} 条，其中待浓缩 ${data.pending_count} 条。`];
+  if (data.previous) {
+    lines.push(
+      `上一条编年史（第 ${data.previous.revision} 次，覆盖至 ${data.previous.at || "—"}）：${data.previous.summary}`
+    );
+  } else {
+    lines.push("还没有编年史。");
+  }
+  status.textContent = lines.join(" ");
+}
+
+async function previewDigest() {
+  const btn = $("#digest-preview");
+  const status = $("#digest-status");
+  btn.disabled = true;
+  status.textContent = "正在把此前的事浓缩成编年史…";
+  try {
+    const data = await api(`/api/sessions/${state.sid}/digest/preview`, { method: "POST" });
+    $("#digest-text").value = data.text || "";
+    $("#digest-summary").value = data.summary || "";
+    const extra = data.previous ? "（已接着上一条编年史写）" : "";
+    status.textContent = `草稿已生成${extra}，覆盖 ${data.event_count} 条事件。核对、改过之后再落地。`;
+  } catch (e) {
+    status.textContent = `生成失败：${e.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function commitDigest() {
+  const btn = $("#digest-commit");
+  const status = $("#digest-status");
+  const text = $("#digest-text").value.trim();
+  if (!text) {
+    status.textContent = "编年史正文不能为空。";
+    return;
+  }
+  btn.disabled = true;
+  status.textContent = "正在归档旧事件流并压缩…";
+  try {
+    const data = await api(`/api/sessions/${state.sid}/digest`, {
+      method: "POST",
+      body: JSON.stringify({ text, summary: $("#digest-summary").value.trim() }),
+    });
+    addMessage(
+      "npc",
+      `✓ 已大总结（第 ${data.revision} 次）：事件日志压缩为 ${data.event_count} 条，` +
+        `其中 ${data.location_events} 条是位置重建。原始事件已归档为 ${data.archived}。`
+    );
+    $("#digest-text").value = "";
+    $("#digest-summary").value = "";
+    await refreshState();
+    await loadDigest();
+  } catch (e) {
+    status.textContent = `落地失败：${e.message}`;
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -2263,12 +2345,33 @@ function renderEventsTab(data) {
     events.innerHTML += '<div class="empty">还没有事件。</div>';
   }
   list.forEach((ev, index) => {
+    if (ev.source === "digest") {
+      events.appendChild(digestCard(ev, index + 1));
+      return;
+    }
     const div = document.createElement("div");
     div.className = "item";
     const inputLine = ev.player_input ? `\n玩家：${ev.player_input}` : "";
     div.textContent = `#${index + 1} ${formatEventSummary(ev, data.scenes || [], data.npcs || {})}${inputLine}`;
     events.appendChild(div);
   });
+}
+
+// 大总结卡（2026-10-10）：它一条顶掉此前的全部历史——按普通事件行渲染，玩家会把它
+// 当成"又发生了一件小事"。所以正文整段摊开，并把"覆盖到哪一刻"写在抬头。
+function digestCard(ev, ordinal) {
+  const div = document.createElement("div");
+  div.className = "item digest-card";
+  const head = document.createElement("div");
+  head.className = "digest-card-head";
+  const revision = ev.digest_revision ? `第 ${ev.digest_revision} 次` : "";
+  head.textContent = `#${ordinal} 【大总结】${revision ? `（${revision}）` : ""} 覆盖至 ${ev.at || "—"}`;
+  div.appendChild(head);
+  const body = document.createElement("div");
+  body.className = "digest-card-body";
+  body.textContent = ev.body || ev.summary || "";
+  div.appendChild(body);
+  return div;
 }
 
 function formatEventSummary(ev, scenes, npcs) {
@@ -3597,6 +3700,8 @@ async function init() {
     $("#save-settings").addEventListener("click", saveSettings);
   $("#refresh-usage").addEventListener("click", loadUsage);
   $("#refresh-debug").addEventListener("click", loadDebugTrace);
+  $("#digest-preview").addEventListener("click", previewDigest);
+  $("#digest-commit").addEventListener("click", commitDigest);
 
   $("#close-world").addEventListener("click", closeWorldModal);
   $("#wb-switch-world").addEventListener("click", toggleWorldPanel);

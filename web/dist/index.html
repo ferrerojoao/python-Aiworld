@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AIWorld</title>
-  <link rel="stylesheet" href="style.css?v=88ebc098" />
+  <link rel="stylesheet" href="style.css?v=2984166a" />
 </head>
 <body>
   <div id="app">
@@ -77,6 +77,7 @@
         <button class="tab active" data-tab="director">导演</button>
         <button class="tab" data-tab="states">状态</button>
         <button class="tab" data-tab="unfiled">转正</button>
+        <button class="tab" data-tab="digest">大总结</button>
         <button class="tab" data-tab="preset">预设</button>
         <!-- 调试入口已下线（2026-09-22 用户要求）：面板保留、按钮撤掉。
              要恢复：把 <button class="tab" data-tab="debug">调试</button> 加回这一行。 -->
@@ -101,6 +102,22 @@
       <div id="tab-unfiled" class="tab-panel">
         <h3>转正</h3>
         <div id="unfiled-panel"></div>
+      </div>
+
+      <div id="tab-digest" class="tab-panel">
+        <h3>大总结</h3>
+        <p class="setting-note">
+          把此前发生过的所有事浓缩成一条编年史，清空事件日志，轻装上阵继续后面的剧情。
+          世界钟、角色状态、目标、退场标记一律不动；原始事件会先归档到
+          <code>archive/</code>（不进导出包）。
+        </p>
+        <div id="digest-status" class="st-note"></div>
+        <button id="digest-preview" type="button">生成草稿</button>
+        <label>编年史正文（可以改）</label>
+        <textarea id="digest-text" rows="12" placeholder="点「生成草稿」让辅助模型写一份，或自己填。"></textarea>
+        <label>一句话摘要（进事件日志用；留空则取正文前 40 字）</label>
+        <input id="digest-summary" type="text" placeholder="例如：主角在青石镇度过的这个夏天" autocomplete="off" />
+        <button id="digest-commit" type="button">确定落地（不可逆）</button>
       </div>
 
       <div id="tab-preset" class="tab-panel">
@@ -136,7 +153,7 @@
         <label>模型名</label>
         <input id="setting-model-main" type="text" placeholder="qwen2.5:7b" />
 
-        <h4>辅助模型接口（质检 / 审计 / 分类 / 转正草稿）</h4>
+        <h4>辅助模型接口（质检 / 审计 / 分类 / 转正草稿 / 大总结）</h4>
         <label>API Base URL</label>
         <input id="setting-cheap-url" type="text" placeholder="留空 = 跟随主模型接口" />
         <label>API Key</label>
@@ -264,6 +281,6 @@
     <div id="lightbox-cap" class="lightbox-cap"></div>
   </div>
 
-  <script src="app.js?v=8f9b2d91"></script>
+  <script src="app.js?v=82bac783"></script>
 </body>
 </html>

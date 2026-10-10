@@ -1392,3 +1392,113 @@ test("状态面板：已退场者哪怕一条状态都没有也要出现（2026-
   assert.match(result.text, /朱明/, "名字要画出来");
   assert.match(result.text, /已退场/, "必须带上「已退场」标记——那是玩家唯一能看见的退场事实");
 });
+
+/* ---------- 大总结（2026-10-10） ---------- */
+
+const DIGEST_STATUS = { clock: "2026-07-20T20:00:00", event_count: 42, pending_count: 42, previous: null };
+// ⚠️ `/digest/preview` 必须排在 `/digest` 之前：路由是**前缀匹配**，
+// 反过来注册的话 preview 会被 `/digest` 那条吃掉（拿到一个不是草稿的响应）。
+const digestRoutes = (extra = {}) => [
+  ["/api/sessions/s1/digest/preview", () => ({ summary: "一句话", text: "编年史正文", chunks: 1, event_count: 7, previous: "" })],
+  [
+    "/api/sessions/s1/digest",
+    (u, opts) =>
+      opts && opts.method === "POST"
+        ? { ok: true, revision: 2, event_count: 3, location_events: 2, archived: "events-20261010-120000.jsonl", at: "x", summary: "y" }
+        : { ...DIGEST_STATUS, ...extra },
+  ],
+];
+
+test("大总结入口：抽屉里有「大总结」页签", async () => {
+  const { result } = await bootApp({
+    routes: worldRoutes(),
+    probe: `return {
+      tab: !!document.querySelector('.drawer-tabs .tab[data-tab="digest"]'),
+      panel: !!document.querySelector("#tab-digest"),
+      commit: !!document.querySelector("#digest-commit"),
+    };`,
+  });
+  assert.equal(result.tab, true, "入口页签没了，玩家就够不到大总结");
+  assert.equal(result.panel, true);
+  assert.equal(result.commit, true);
+});
+
+test("大总结：抽屉页展示现状（事件条数 + 上一条编年史）", async () => {
+  const { result } = await bootApp({
+    routes: [
+      ...worldRoutes(),
+      ...digestRoutes({
+        previous: { revision: 1, at: "2026-07-14T08:00:00", summary: "往事", text: "旧编年史" },
+      }),
+    ],
+    probe: `
+      switchDrawerTab("digest");
+      await new Promise((r) => setTimeout(r, 30));
+      return document.querySelector("#digest-status").textContent;
+    `,
+  });
+  assert.match(result, /42 条/, "要说清现在有多少条事件");
+  assert.match(result, /第 1 次/, "要让玩家知道这是接着哪一条编年史写的");
+  assert.match(result, /往事/);
+});
+
+test("大总结：生成草稿只调 preview、把正文填进输入框（不落盘）", async () => {
+  const { calls, result } = await bootApp({
+    routes: [...worldRoutes(), ...digestRoutes()],
+    probe: `
+      switchDrawerTab("digest");
+      await new Promise((r) => setTimeout(r, 30));
+      document.querySelector("#digest-preview").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 30));
+      return {
+        text: document.querySelector("#digest-text").value,
+        summary: document.querySelector("#digest-summary").value,
+        status: document.querySelector("#digest-status").textContent,
+      };
+    `,
+  });
+  assert.equal(result.text, "编年史正文");
+  assert.equal(result.summary, "一句话");
+  assert.match(result.status, /覆盖 7 条事件/, "要如实说出草稿覆盖了多少条");
+  const commits = calls.filter((c) => c.method === "POST" && c.url.includes("/digest") && !c.url.includes("/preview"));
+  assert.deepEqual(commits, [], "预览阶段绝不能落盘");
+});
+
+test("大总结：确定落地把正文与摘要 POST 上去并刷新", async () => {
+  const { calls, result } = await bootApp({
+    routes: [...worldRoutes(), ...digestRoutes()],
+    probe: `
+      switchDrawerTab("digest");
+      await new Promise((r) => setTimeout(r, 30));
+      document.querySelector("#digest-text").value = "我改过的编年史";
+      document.querySelector("#digest-summary").value = "一句话";
+      document.querySelector("#digest-commit").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 40));
+      return { messages: document.querySelector("#messages").textContent };
+    `,
+  });
+  const post = calls.find((c) => c.method === "POST" && c.url.endsWith("/digest"));
+  assert.ok(post, "确定落地必须打 POST /digest");
+  assert.deepEqual(JSON.parse(post.body), { text: "我改过的编年史", summary: "一句话" });
+  assert.match(result.messages, /已大总结/);
+  assert.match(result.messages, /events-20261010-120000\.jsonl/, "要给出去哪找归档的线索");
+});
+
+test("大总结卡：编年史整段摊开 + 标出覆盖到哪（别被当成又一件小事）", async () => {
+  const { result } = await bootApp({
+    routes: worldRoutes(),
+    probe: `
+      const el = digestCard({ source: "digest", at: "2026-07-20T20:00:00", digest_revision: 2, body: "青石镇编年史正文" }, 3);
+      return {
+        head: el.querySelector(".digest-card-head").textContent,
+        body: el.querySelector(".digest-card-body").textContent,
+        cls: el.className,
+      };
+    `,
+  });
+  assert.match(result.head, /大总结/);
+  assert.match(result.head, /第 2 次/);
+  assert.match(result.head, /2026-07-20/, "要说清这条总结覆盖到哪一刻");
+  assert.equal(result.body, "青石镇编年史正文", "编年史正文必须整段可见");
+  assert.match(result.cls, /digest-card/);
+});

@@ -22,8 +22,10 @@ from app.core.package import (
 from app.core.presets import save_global_preset
 from app.core.store import write_json_atomic
 from app.core.workorder import state_view
+from app.ledger.digest import apply_digest, digest_overview, digest_source
 from app.runtime.session import create_session, open_session
 from app.runtime.trace import TraceRecorder
+from app.workers.digest import run_digest
 from app.workers.drafter import run_world_draft
 from app.workers.landing import draft_npc_card, draft_scene
 from app.world.draft import blank_world_assets, check_assets, validate_assets
@@ -984,12 +986,14 @@ async def world_browser(request: Request, sid: str):
     }
 
 
-# 导出包该装哪些文件（2026-10-03）。三类要跳过，理由各不相同：
+# 导出包该装哪些文件（2026-10-03）。四类要跳过，理由各不相同：
 #   ① `candidates/` —— 未采纳的提案是临时态，两个包都不收；
 #   ② `_SAVE_RUNTIME_NAMES`（仅资产包）—— 运行态不是"资产"；
 #   ③ 包级说明（`is_package_metadata`）—— 那是**上一个 zip** 的说明，复制进来会与
-#      本次新写的那份**同名重复**；导出侧认它，是为了容忍早期导入留下的残留。
-_SKIP_DIRS = {"candidates"}
+#      本次新写的那份**同名重复**；导出侧认它，是为了容忍早期导入留下的残留；
+#   ④ `archive/` —— 大总结归档的**旧事件流**（2026-10-10）。它是本机的考古副本，
+#      不是存档本体；打进去等于让每个包都背着压缩前的全部历史（"轻装上阵"白做）。
+_SKIP_DIRS = {"candidates", "archive"}
 _SAVE_RUNTIME_NAMES = ("save.json", "events.jsonl", "presets.json")
 
 
@@ -1285,6 +1289,69 @@ async def revoke_state(request: Request, sid: str, state_id: str):
     if not runner.transaction.revoke_state(state_id):
         raise HTTPException(status_code=404, detail="状态不存在（可能已被撤销）")
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# 大总结（2026-10-10）
+#
+# 把"之前发生过的所有事"浓缩成一条事件，清空事件流，让玩家轻装上阵。
+# 两条端点走**先草稿、后落地**（与落卡窗口同一条纪律：引擎只给候选，玩家拍板）：
+#   - ``GET  /digest``         现状：多少事件、上一条总结覆盖到哪
+#   - ``POST /digest/preview`` 向辅助模型要一份草稿（**不落盘**）
+#   - ``POST /digest``         玩家确认（可改过草稿）→ 归档 + 压缩 + 重建位置
+# ---------------------------------------------------------------------------
+
+
+class DigestBody(BaseModel):
+    """确认落地时交上来的（可能被玩家改过的）编年史。"""
+
+    text: str
+    summary: str = ""
+
+
+@router.get("/sessions/{sid}/digest")
+async def digest_status(request: Request, sid: str):
+    """大总结现状（面板用）。只读。"""
+    session = _get_session(request, sid)
+    return digest_overview(session.ledger)
+
+
+@router.post("/sessions/{sid}/digest/preview")
+async def digest_preview(request: Request, sid: str):
+    """生成编年史草稿。**不写任何状态**——落不落、怎么改，由玩家决定。"""
+    session = _get_session(request, sid)
+    previous, events = digest_source(session.ledger)
+    if not events:
+        raise HTTPException(status_code=400, detail="没有新事件可总结。")
+    trace = TraceRecorder(request.app.state.llm)
+    session.debug_trace = trace.entries
+    # 大总结是**辅助活**：worker="digest" 属 AUX_WORKERS → 辅助模型 + 辅助出口。
+    draft = await run_digest(trace, previous, events, worker="digest")
+    return {**draft, "previous": previous}
+
+
+@router.post("/sessions/{sid}/digest")
+async def digest_commit(request: Request, sid: str, body: DigestBody):
+    """确认落地：归档旧事件流 → 压缩成「一条总结 + K 条位置重建」。
+
+    闸门两条（都在压缩之前判，压缩是不可逆的）：
+    - **有未采纳的候选** → 409。候选是"针对某几条旧事件写的正文"，旧事件一压，
+      玩家再回去采纳时它引用的上下文已经不在日志里了。
+    - **没有新事件** → 400。空转一次会白写一条 blank 编年史。
+    """
+    session = _get_session(request, sid)
+    pending = session.candidates.list_pending()
+    if pending:
+        raise HTTPException(
+            status_code=409, detail=f"还有 {len(pending)} 条候选未处理，先处理完再大总结。"
+        )
+    if not digest_source(session.ledger)[1]:
+        raise HTTPException(status_code=400, detail="没有新事件可总结。")
+    try:
+        result = apply_digest(session.ledger, text=body.text, summary=body.summary)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, **result}
 
 
 @router.post("/sessions/{sid}/reset")

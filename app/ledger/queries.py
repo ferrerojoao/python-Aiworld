@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.store import append_event, read_events, read_json, write_json_atomic
+from app.ledger.events import is_digest_plumbing
 from app.ledger.save import LocationCandidate, SaveData
 from app.world.models import WorldContent
 
@@ -111,6 +112,17 @@ class Ledger:
         """Update in-memory indexes for one event (append and rebuild both)."""
         self.by_id[event["id"]] = event
         if event["kind"] != "narrative":
+            return
+        # **管线事件**（大总结的位置重建，2026-10-10）：只喂位置小抄，别的索引一律
+        # 不进。它的唯一职能是"事件被压缩后 last_location 还有地基"——进了
+        # narratives / by_location / by_participant / by_knower 只会让提示词与事件
+        # 日志多出玩家看不懂的"某人此刻在某人场景"。判据只写在这一处，所以
+        # access_view / event_log_block / known_set / 前端都天然干净。
+        if is_digest_plumbing(event):
+            loc = event.get("location")
+            if loc:
+                for pid in event.get("participants", []):
+                    self.last_location[pid] = event
             return
         self.narratives.append(event)
         loc = event.get("location")

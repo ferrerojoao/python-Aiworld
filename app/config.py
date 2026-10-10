@@ -73,7 +73,8 @@ DEFAULT_LIMITS = InjectionLimits()
 # ``resolved_model`` 与 ``endpoint_for`` 都读它，别在别处再写一份名单——
 # 两处名单一旦漂了，就会出现"模型名取自辅助、出口却走主"这种半配置。
 # 落卡草稿（landing）也算辅助活：从已采纳正文里抽字段，不需要主模型的笔力。
-AUX_WORKERS = frozenset({"qc", "audit", "classify", "landing"})
+# 大总结（digest）同理：它是**读长文写短文**的压缩活，不是创作。
+AUX_WORKERS = frozenset({"qc", "audit", "classify", "landing", "digest"})
 
 
 @dataclass

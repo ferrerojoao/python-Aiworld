@@ -1682,6 +1682,25 @@ body.light .rail-item.current {
   margin-top: 4px;
 }
 
+/* ---------- 大总结卡（2026-10-10）----------
+   它一条顶掉此前的全部历史——按普通事件行（灰底单行）渲染会被读成"又一件小事"。
+   所以左侧立一条色标、正文整段摊开，与普通事件拉开层级。 */
+.digest-card {
+  border-left: 3px solid var(--warn);
+  padding-left: 8px;
+}
+
+.digest-card-head {
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.digest-card-body {
+  white-space: pre-wrap;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
 /* ---------- 落卡窗口（2026-09-19）：待落卡的人物 + 场景 ----------
    ⚠️ 前台文案叫「转正」（2026-09-22），机制 / 这个文件里的名字保持「落卡」；两边是同一件事。
 
