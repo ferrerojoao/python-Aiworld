@@ -49,6 +49,7 @@ aiworld/
 │   │   ├── queries.py           # where_is / present_at / known_set / experiences / 场景注册
 │   │   ├── access.py            # known_by 改判：名单直给落账 / 改判公开
 │   │   ├── goals.py             # M14 剧情目标（save.json 内）
+│   │   ├── digest.py            # ★ 大总结：账本压缩（归档 + 一条编年史 + K 条位置重建，§3.1）
 │   │   └── save.py              # 存档 schema（SaveData / Goal / EntityRuntime / last_settlement）
 │   ├── rules/                   # 规则段（纯规则、零 LLM，规则优先）
 │   │   ├── route.py             # 规则预结算：只剩移动意图判定（时间已于 2026-09-16 交审计）
@@ -61,6 +62,7 @@ aiworld/
 │   │   ├── qc.py                # 质检员
 │   │   ├── auditor.py           # 世界审计（采纳时提交后结算）
 │   │   ├── drafter.py           # 造世界：草稿 → 内容包
+│   │   ├── digest.py            # 大总结起草：事件流 → 编年史（辅助模型；读长文写短文，§5.2）
 │   │   └── schemas.py           # 全部 worker 的输出 schema
 │   ├── runtime/
 │   │   ├── session.py           # 存档生命周期（开/续/存）+ 世界钟起点
@@ -280,7 +282,8 @@ content/<world>/
 ├── world.json / npcs/ / scenes.json / lorebook.json   # 世界资产（工作台直编）
 ├── save.json          # 引擎运行态 + 元配置玩家覆盖 + 实体运行层（原子写）
 ├── events.jsonl       # 事件流（追加写；正文史实不可变）
-└── candidates/        # 候选事务暂存（非账本，可断线恢复；采纳/放弃后清理，见 §4）
+├── candidates/        # 候选事务暂存（非账本，可断线恢复；采纳/放弃后清理，见 §4）
+└── archive/           # 大总结归档的旧 events.jsonl（考古存证；**不进导出包/备份**，§3.1）
 ```
 
 **事件流记录**（每行一条 JSON，`events.jsonl`）：
@@ -294,12 +297,27 @@ content/<world>/
   "known_by": null,                                // null=公开（人人可引）；数组=私密切名单
   "body": "校门口围了一小圈人……",                 // 史实正文：一经落库永不修改
   "source": "turn" }
+
+// 大总结后的事件流 = 「一条总结」+「K 条位置重建（管线）」——两者都是 kind=narrative，
+// 靠 source 区分；旧事件已整批挪进 archive/（§3.1）。
+{ "id": "ev_00120", "kind": "narrative", "at": "2026-07-20T09:00",
+  "location": null, "participants": [], "known_by": null,
+  "body": "编年史正文……",                        // 玩家可改过的总结全文（不可逆）
+  "summary": "一句话摘要", "source": "digest",
+  "digest_revision": 2 }                        // 第几次大总结（滚动时递增）
+
+{ "id": "ev_00121", "kind": "narrative", "at": "2026-07-19T21:10",
+  "location": "校门口", "participants": ["朱明"], "known_by": [],
+  "body": "", "summary": "朱明此刻在校门口",
+  "source": "digest_location" }                 // 🔴 管线：只喂 last_location，
+                                                //    不进 narratives / 日志 / 记忆（_index 早退，§3.1）
 ```
 
 - **一律记中文名**（2026-09-13）：主角也是人，日志里写"刘星"不写"player"。这是"中途换主角不影响旧日志"的前提——旧日志里的名字就是当时那个人的名字，引擎从不改写历史。
 
 - **known_by 是访问控制状态**：正文（body）不可变；`known_by` 是每记录一个可改字段，改判只重设它、不触碰正文（§7）。
 - **位置/在场没有独立记录**：`where_is` / `present_at` 直接从统一事件流的 `location + participants` 推导，不维护额外位置表。
+- **大总结后的形状**：事件流 = 「一条 `source="digest"` 的编年史」+「K 条 `source="digest_location"` 的位置重建」，旧事件整批挪进 `archive/`（**压缩与重建见 §3.1**）。
 
 **save.json**（引擎运行态 + 元配置 + 实体运行层）：
 
@@ -534,6 +552,25 @@ A 尤其像地雷：`until` 是**审计单方面**给的，玩家没有异议渠
   - `experiences(entity, viewer)` → ② 记忆条目（规则化拼接，§2.2）。
   - `known_set(npc_id, scene_id)` → NPC 已知集（机械知识边界）：亲历（全量 by_participant，不随滑窗）∪ known_by 含己（by_knower，含改判）∪ 听域内公开事件。公开事件按 **NPC 听域**筛选而非当前场景区域：听域 = NPC 卡 `region` 字段（来属地/听域，可多个）；卡上为空时按其亲历事件发生地推导；推导为空 = 保守空集（不听说任何**带地域归属**的公开旧事）。场景表 `region` 字段声明事件发生地归属，经 **`region_scope()` 一个映射点**折算成三态：**留空 = 不传播**（`adhoc` 哨兵 ⇒ 这条公开事件谁的听域里都没有它，谁也闻不到；2026-09-24 **反转**旧口径"空 = 全域公共"）、**`全域` = 全域公共**（引擎侧 `None` ⇒ 这类公开事件人人可闻、不受听域约束）、其余 = 该地域词（须落在 NPC 听域内）。因此听域为空并不等于只知道亲历：亲历、known_by 含己、全域公共事件三路照常，只掐掉地域新闻这一路；**`location` 查不到场景的一次性布景 = 同一个 `adhoc` 哨兵**（宁可不闻，不错闻；在场者走亲历通道不受影响，亲历 ad-hoc 也不会把听域推导出 adhoc）。落卡**不改变**听域语义（落卡后 region 仍是空串 ⇒ 还是不传播），要传出去得去工作台填 `region`。用途：本地人听说本区旧事；**出差外地人**活动场景在本地、但听域仍是家乡，本地打架名声对其不可见。写手已知集块与 QC 参照区共用此函数（单一事实源）；Actor 切片仍走 `experiences(self)`（口径一致）。
 
+### 3.1 大总结 · 账本压缩（`ledger/digest.py`；2026-10-10）
+
+**唯一写入点 = `apply_digest()`**。把事件流压成「一条 `source="digest"` 的编年史 + K 条 `source="digest_location"` 的位置重建」，旧的 `events.jsonl` 先 `shutil.move` 进 `archive/`（同秒加 `-N` 后缀）。顺序是硬的：**先算重建、再丢旧事件**——位置快照只在旧事件上算得出来。
+
+```
+digest_overview(ledger)          → 面板现状 {clock, event_count, pending_count, previous{revision,at,summary,text}}
+digest_source(ledger)            → 起草原料：(上一条总结的正文全文, 除它以外的全部叙事事件)
+previous_digest(ledger)          → 上一条总结事件（若有；事件流里至多一条）
+location_rebuild_events(ledger)  → K 条管线事件（按 (location, at) 分组，显式 sorted）
+apply_digest(ledger, *, text, summary="", clock="") → 落地：归档 + 压缩 + 重建 + 清 access_overrides
+```
+
+- **管线早退只写一处**（`Ledger._index`）：`is_digest_plumbing(event)` 为真 → 只更新 `last_location`、**不入** `narratives` / `by_location` / `by_participant` / `by_knower`。判据集中 ⇒ `access_view` / `event_log_block` / `known_set` / 前端天然干净。
+- **重建跳过退场者与空名字**：`save.entities[名].lifecycle == "retired"` 跳过（引擎已不派他）；空名字跳过（`participants` 是 LLM 给的、`events.py` 的 `append` **不做校验**）。**不判 `location` 是否为空**——`last_location` 的唯一写入点两处都在 `if loc:` 之内（曾有一条 `if not location: continue`，变异测试证明是死重量，已删）。
+- **滚动**：`previous` = 上一条总结的**正文全文**（不喂摘要的摘要）；上一条总结**不进原料**（否则模型把"我总结过一遍"当史实）。`digest_revision` 递增。
+- **事件号不回退**：`allocate_event_id()` 只增；与 `/reset`（归 1）不同，`_calibrate_event_counter` 按事件最大号校准，归 1 会让新旧事件撞号。
+- **`access_overrides` 一并清空**：它以 `event_id` 为键，旧事件没了 → 死键（还让 `save.json` 膨胀）。`StateItem.source_event` 的悬空 id 无害（撤销按 state id 定位，`Transaction._find_state`）。
+- **不碰**：世界钟 / 角色状态 / 目标 / `retired` / `featured_counts` / `unfiled` / `locations`——压缩事件流不该让世界回退。
+
 ---
 
 ## 4. 回合事务（候选区 / 采纳 / 回滚）
@@ -699,8 +736,9 @@ PUT /api/sessions/{sid}/candidates/{candidate_id}   {"prose": "改后的正文"}
 | 质检员 | 辅助模型 | 0.2 | 每回合 1 | 初稿 + 受限参照区（§5.6） | {status, prose, issues, summary} |
 | 世界审计 | 辅助模型 | 0.2 | 采纳时提交后结算 | 本回合落账事件 + 相关历史 | 结构性结果 |
 | 落卡草稿 | 辅助模型 | 0.3 | 点开待落卡条目时 1 | 该主体自己的已采纳正文（最多 8 条） | 外貌/人格 或 场景描述 |
+| 大总结起草 | 辅助模型 | 0.3 | 点「要草稿」时 1（原料超长分段则 2+1） | 待浓缩事件（+ 上一条总结的正文全文） | {summary, text, chunks, event_count} |
 
-> **档位 = 角色（worker）**：档位不只决定模型名，还决定**出口**（敲主还是辅那套 base_url，§9）。角色名单只有一份：`config.AUX_WORKERS = {qc, audit, classify, landing}`。
+> **档位 = 角色（worker）**：档位不只决定模型名，还决定**出口**（敲主还是辅那套 base_url，§9）。角色名单只有一份：`config.AUX_WORKERS = {qc, audit, classify, landing, digest}`。
 
 > **合并决策（2026-09-05 拍板）**：导演与说书人合并为单一"编剧" agent——决策和文字一次调用完成，成本与延迟约减半。全知信息直接接触文字笔，泄漏防线转移到质检参照区（§5.6），Actor 深抉择仍走物理隔离（两段式）。原"动机层纪律"随之简化：编剧的幕后判断是瞬时中间产物，不设独立字段承载。
 >
@@ -878,6 +916,7 @@ scope  = 当前场景可感知 ∪ 在场实体 ∪ 对话对象 ∪ 关键历�
 - **遍历域 = `world.npcs` ∪ `save.unfiled`（2026-09-19）**：域里还要并上**未落卡的确定人物**（有键无卡，§2.4）——他还没有人物卡，但引擎已经认他是「人」，出现在场景里就该被看见。没名字的即兴角色永远不在域里（它们从不进 `participants`，`last_location` 里也就没有它们）。
 - **主角与 NPC 同权（2026-09-13）**：`present_at` 遍历 `world.npcs` 全部键，主角在表里 → 自然出现在在场名单里（开场事件即他的第一条位置事实；否则第一轮工作单的在场名单里没有主角）。需要"别把自己算进别人堆里"的地方各自剔除：`scene_description` 与 `/state.present` 剔主角（那是"还有谁在"）；工作单的在场名单保留他并标注 `（玩家）`。**左栏「在场人物」反向取用**（2026-09-21）：它要"我眼前有谁"，于是用 `/state.player_present` 把主角补回第一行并挂「主角」标——同一份 `present_at` 派生结果，两种提问各取所需，谁都不在前端自己算位置。
 - **空档位置查询三件套**：过期前最后事件 + 人格隐含大框先验 + 时间差 → 引擎合成候选域 → 导演做叙事落点 → 玩家进门时在场结算对导演落点执行（导演落点本身落一条新事件）。
+- **大总结后位置靠重建事件保住（2026-10-10）**：`apply_digest` 按 `(地点, 时刻)` 给每个人的最后位置事实补一条 `source="digest_location"` 的**管线事件**（只喂 `last_location`，`_index` 早退 ⇒ 不进日志/记忆/提示词）。所以"谁此刻在哪"在压缩前后答得一样。这是**硬依赖不是装饰**：位置一塌，`present_at` 就空、`_actor_ticket` 无人可派、场景描述变"四下无人"、"去找某人"的确定性寻路失效（§3.1）。
 
 ### 8.4 M1 NPC 位置推断（rules/movement.py）
 
@@ -920,7 +959,7 @@ class LLMRouter:                      # 按**角色**把调用分到主 / 辅两
 
 - OpenAI 兼容，`base_url/model/key` 按档位可配；`complete_json` 优先走 JSON schema / structured output，Pydantic 校验 + 显式拒空 `{}` + 失败重试 2 次。
 - **两个出口（2026-09-20）**：主模型与辅助模型**各有一套 base_url / api_key**。此前两档共用一个 `AsyncOpenAI`，想"正文用付费 API、辅助用本地 ollama"（或反过来）做不到。
-  - **按角色分，不按模型名分**：主辅两侧默认就是同一个模型名（`qwen2.5:7b`），按名字分不出该敲哪个门——"同名模型 + 两个 endpoint"（官方 vs 本地 vLLM）是完全合理的配法。角色是引擎本来就持有的事实，于是它**同时决定模型名与出口**：一处判定、两个结果，不会各自漂。角色名单只有一份（`config.AUX_WORKERS = {qc, audit, classify, landing}`），`resolved_model` 与 `endpoint_for` 都读它。
+  - **按角色分，不按模型名分**：主辅两侧默认就是同一个模型名（`qwen2.5:7b`），按名字分不出该敲哪个门——"同名模型 + 两个 endpoint"（官方 vs 本地 vLLM）是完全合理的配法。角色是引擎本来就持有的事实，于是它**同时决定模型名与出口**：一处判定、两个结果，不会各自漂。角色名单只有一份（`config.AUX_WORKERS = {qc, audit, classify, landing, digest}`），`resolved_model` 与 `endpoint_for` 都读它。
   - **调用点只报角色**：`worker` 从调用点 → 工位函数（每个工位声明自己的默认角色，如 `run_writer(worker="story")`）→ 网关。`model=` 仍可显式给（测试与个例要钉死模型名时），留空则由角色推。四个实现（`LLMGateway` / `LLMRouter` / `FakeLLM` / `TraceRecorder`）**签名必须一致**——`TraceRecorder` 要原样转发参数，签名不一致就得靠 `hasattr` 嗅探，那种鸭子类型一改就静默失效。
   - **辅侧留空 = 跟随主侧**（`cheap_base_url` 为空即回落，且 base_url 与 api_key **成对**回落）：只填地址不填密钥的用法不存在，分开回落只会造出"新网关 + 旧 key"这种静默生效的半配置。默认态因此仍是单出口，与拆分之前逐字节等价。
   - **网关懒建**：没配辅助出口的部署不会凭空多一个 client / 连接池；两侧填同一套地址则按 `(base_url, api_key)` 去重成**一个**网关，用量只算一遍。
@@ -969,10 +1008,13 @@ POST   /api/sessions/{sid}/locations/{name}/file     # 场景落卡：把地点�
 POST   /api/sessions/{sid}/locations/{name}/discard  # × 定为临时：status=dismissed（不删条目——别名要留给解析域），不再自动入队
 POST   /api/sessions/{sid}/world/save-as    # 复制为新世界（fork：当前世界连演化存成新包，原世界不动）
 POST   /api/sessions/{sid}/director         # 导演窗口（topic=chat 走对话；topic=confirm 执行已确认的幕后事务；主角不可 retire，2026-09-13）
+GET    /api/sessions/{sid}/digest            # 大总结现状：事件数 / 待浓缩数 / 上一条总结覆盖到哪（只读，2026-10-10；§3.1）
+POST   /api/sessions/{sid}/digest/preview    # 大总结草稿：走辅助模型（worker=digest）；**不写任何状态**；无新事件 → 400
+POST   /api/sessions/{sid}/digest            # 大总结落地：归档 → 一条编年史 + K 条位置重建；**有未采纳候选 → 409**、无新事件 → 400、正文空 → 400
 POST   /api/sessions/{sid}/reset            # 重置剧情：事件/候选/运行态清零、开场重写；世界资产原地保留（工作台的编辑不丢）
 GET    /api/sessions/{sid}/world/export     # 导出资产包 = 纯世界资产快照（不含 save.json/events.jsonl/candidates）——用户存本地，导入即得初始态新世界；包内自带 AIWORLD-PACKAGE.json + AIWORLD-README.txt 两份自描述（2026-10-03）
 POST   /api/sessions/{sid}/world/import     # **导入为新世界**：zip 带 world.json → 落 content/<id>/（重名自动加时间戳），不改当前世界（2026-09-13）；包级说明不入世界目录（它不是世界内容）
-GET    /api/sessions/{sid}/export           # 导出完整备份（世界资产 + save.json + events.jsonl，候选除外；换机/复盘）；同样自带两份自描述
+GET    /api/sessions/{sid}/export           # 导出完整备份（世界资产 + save.json + events.jsonl，候选与 archive/ 除外；换机/复盘）；同样自带两份自描述
 POST   /api/saves/import                    # 导入完整备份 → 落 content/<world_id>/ 本身；该世界已有存档 → 409（绝不覆盖正在玩的世界）；兼容旧包的 world/ 前缀布局（2026-09-13）
 # ↑ world.json / save.json 各自带 _format / _format_version / _generator / _about 自描述头（2026-10-03，常量与清单生成见 app/core/package.py）
 GET/PUT /api/settings                        # 系统设置（主 / 辅两套模型接口 + 注入上限 + 质检开关，2026-09-16；辅侧独立出口 2026-09-20）；PUT 落盘 data/settings.json（gitignore，含 api_key），启动时覆盖 env 值——重启不丢（2026-09-11）。⚠️ PUT 会重建 LLMRouter，用量统计随之清零（与拆出口之前同行为）
@@ -1031,7 +1073,8 @@ POST /api/sessions/{sid}/director
 | `SceneCard` | 当前场景 + 在场人物（模板底稿直出；首达/剧情舞台时展示说书人成品）。**名单第一行是主角本人**并挂「主角」标（取自 `/state.player_present`；不在镜头场景时不出现）——标签负责区分，行本身不改色（2026-09-21 用户："有标记了就不用文字变色"）。那是"我眼前有谁"，与底稿正文剔主角不矛盾（§8.3 / §8.6） |
 | `StatePanel` | 时钟 / 在场 / 目标两级树（大目标带 x/y 章节进度、子目标缩进、已完成划线、未挂靠支线单列）；在场名单里给未转正者挂「未转正」标记、其下一行 `待转正 · N` 入口（N = 人物数 + 场景数，N>0 才出现）；candidate 采纳后刷新。⚠️ 「未转正 / 待转正」是**前台文案**，机制内部名仍是 `unfiled`（2026-09-22 更名） |
 | `UnfiledPanel`（抽屉「转正」页） | **人物 / 场景两段并列**的全量名单（人物**含不在场者**）。每条收起态一行（展开三角 + 名称 + 状态标签 + ×）；展开才拉 `draft` 预填（带「AI 草稿 · 请核对」标记）、「确定转正」/「×」；场景条目名称只读并附一行听域后果警告。键/候选与资产分层，落成后从名单消失（§2.4）。2026-09-22：抽屉页文案「落卡」→「转正」；「已写出的事实」入口撤掉（`.land-ev-toggle` / `.unfiled-evidence` / `renderEvidence()` 与 `GET .../evidence` 保留，可随时加回） |
-| `LedgerView` | 事件日志时间线（只读 + 公开/私密/正文分层展示，玩家可点名某条发起改判） |
+| `DigestPanel`（抽屉「大总结」页） | 现状（事件数 / 待浓缩数 / 上一次总结）+「要草稿」→ 预填**可编辑**的编年史文本框 → 「确定大总结」（POST `/digest`，正文 + 摘要）。有未采纳候选时服务端 409、提示先去候选区处理完（2026-10-10；§3.1） |
+| `LedgerView` | 事件日志时间线（只读 + 公开/私密/正文分层展示，玩家可点名某条发起改判）；`source="digest"` 的行渲染成**总结卡**（「#n 【大总结】（第 k 次） 覆盖至 <时刻>」+ 正文），`source="digest_location"` 的管线事件**不出现**（索引层已滤） |
 | `SettingsPanel` | 全局预设（导演准则 + 说书人预设）+ 系统设置（**模型接口（主 / 辅两块，各 base url + key + 模型名）** / 注入上限 / 界面与流程 三段分组；2026-09-16 重排，2026-09-20 拆成两块） |
 
 > **前台文案改名（2026-09-22，用户要求）**：抽屉页「落卡」→「**转正**」，左栏入口「待落卡 · N」→
@@ -1056,7 +1099,7 @@ REQUIRE_AUTH_FOR_NON_LOCAL=true # true=非本机必须带令牌；false=整体�
 LLM_BASE_URL=…  LLM_API_KEY=…   # OpenAI 兼容任意网关（主模型那一套）
 CHEAP_BASE_URL=…  CHEAP_API_KEY=…  # 辅助模型的**独立出口**；不填 = 跟随上面那一套（2026-09-20）
 MODEL_MAIN=…   # 主模型：导演 / Actor / 说书人默认；未配单项时回退到这里
-MODEL_CHEAP=…  # 辅助模型：质检 / 审计 / 分类 / 落卡草稿默认；未配单项时回退到这里
+MODEL_CHEAP=…  # 辅助模型：质检 / 审计 / 分类 / 落卡草稿 / 大总结默认；未配单项时回退到这里
 # 可选单项覆盖：MODEL_DIRECTOR=… MODEL_ACTOR=… MODEL_STORY=… MODEL_QC=… MODEL_AUDIT=… MODEL_CLASSIFY=…
 # （MODEL_CLASSIFY 是“意图分类 L1”档位的遗留配置键，该 worker 从未落地，配了也不生效）
 TEMP_QC=0.2   # …（各档温度）
@@ -1106,12 +1149,13 @@ KNOWN_SET_LIMIT=5       # 每个 NPC 已知集几条（0 = 给全部）
 | 集成（FakeLLM 录制响应，不联网） | **回合事务**：显式采纳指定候选 = 提交 / 放弃 = 回滚无痕（账本文件 hash 不变）；**多候选并存**：重掷/抽卡新增候选且不删旧版，采纳一份后清理该回合全部候选；**唯一候选自动采纳**：下一次输入自动采纳并进入新回合；**候选暂存恢复**：pending 文件重启后按 turn 分组可见、损坏文件跳过且不影响账本；**信息边界**：Actor 工作单不含他人私密、幕后注不进说书人/质检输入；质检拦域外知识 → 脱敏；改判私密后切片自动变化；混合句一次成稿；审计目标完成判定；**审计失败记 audit_last_error（同步模式，无补跑场景）** |
 | SSE 实时性（真 uvicorn） | `tests/test_sse_realtime.py`：真 socket + httpx 逐块读，记录每个事件到达时刻，断言阶段速报确实**先到**（差值 > 0.8s）。TestClient / `ASGITransport` 都会缓冲整条流，这半条不变量只有真服务能守（P1-5） |
 | 冒烟（真 LLM，可选） | `scripts/`：`smoke_turn_real.py`（跑一轮 + 采纳，打印候选正文 / 结算留痕 / 时钟前后）、`smoke_state_real.py`（角色状态增删改）、`smoke_llm.py`（连通性）。手动跑，不入 CI（要真 key、要花钱）。<br>2026-09-17 清理：11 个脚本已删（7 个 `diag_*` + `e2e_check.py` / `verify_sse.py` / `demo.py` / `migrate_chinese_ids.py`）——多数指向早已消失的 `content/qinghsi` 与 `saves/` 旧布局（签名改过之后从未跟上），属"跑不起来的历史残骸"；其中两条有真价值的断言已**提升为 pytest**（`complete_json` 的反馈重试 → `tests/test_llm.py`；SSE 阶段先于结果的顺序 → `tests/test_api.py`），不再依赖手工脚本兜底 |
-| 前端 | `web/tests/`：jsdom 跑真实 `index.html + app.js`（19 条冒烟，各对应一个真出过的 bug 或一条对外行为——"无世界"启动 / 工作台空态 / 「秘」标签判据 `public === false` / 事件日志的改判可见性（接口给有效名单 + `access_rejudged`）/ `?token=` 吸收与注入 / 无令牌时不发空 `Authorization` 头 / 转正页：左栏 `待转正 · N` 计的是人物+场景两数、抽屉两段并列且**默认全收起**、**没展开就一个 `/draft` 都不发**、展开后草稿预填 + 挂「AI 草稿 · 请核对」标记 + POST 正文恰为 `{appearance, persona}`、**「已写出的事实」入口已下线**（没按钮、也不发 `/evidence`）、场景行名称只读 + 听域警告 + POST 打到 `locations` / 主角锁定 2 条：已开局 → **每张卡**的 `is_player` 框都 `disabled` + 主角姓名 `disabled` + 提示写明「重置世界」唯一出口；未开局 → 都可改、提示仍在教怎么换 / 左栏在场人物 3 条：`player_present=true` → 主角排第一并挂「主角」标，`=false` 且无人 → 只剩「无人」（**不许硬塞主角**），`=false` 但有别人 → 只列别人、不出现主角行 / 调试入口下线 1 条：顶栏与抽屉都没有 `data-tab="debug"` 按钮、`#tab-debug` 面板与 `#refresh-debug` 接线仍保留）。CI 的 `frontend` job 跑。⚠️ jsdom **不能**给 `<select>` 类 bug 下结论（不实现 dirty value flag），那类仍靠人工走查。⚠️ 探针**只回标量/字符串**：jsdom 的 Array 原型与 Node 不同，`deepStrictEqual` 会把相等的两个数组判成不等 |
+| 前端 | `web/tests/`：jsdom 跑真实 `index.html + app.js`（51 条冒烟，各对应一个真出过的 bug 或一条对外行为——"无世界"启动 / 工作台空态 / 「秘」标签判据 `public === false` / 事件日志的改判可见性（接口给有效名单 + `access_rejudged`）/ `?token=` 吸收与注入 / 无令牌时不发空 `Authorization` 头 / 转正页：左栏 `待转正 · N` 计的是人物+场景两数、抽屉两段并列且**默认全收起**、**没展开就一个 `/draft` 都不发**、展开后草稿预填 + 挂「AI 草稿 · 请核对」标记 + POST 正文恰为 `{appearance, persona}`、**「已写出的事实」入口已下线**（没按钮、也不发 `/evidence`）、场景行名称只读 + 听域警告 + POST 打到 `locations` / 主角锁定 2 条：已开局 → **每张卡**的 `is_player` 框都 `disabled` + 主角姓名 `disabled` + 提示写明「重置世界」唯一出口；未开局 → 都可改、提示仍在教怎么换 / 左栏在场人物 3 条：`player_present=true` → 主角排第一并挂「主角」标，`=false` 且无人 → 只剩「无人」（**不许硬塞主角**），`=false` 但有别人 → 只列别人、不出现主角行 / 调试入口下线 1 条：顶栏与抽屉都没有 `data-tab="debug"` 按钮、`#tab-debug` 面板与 `#refresh-debug` 接线仍保留 / **状态面板退场者无条件出现** 1 条：一条状态都没有的退场者也要列出（后端与前端各有一份闸门，只改后端不算）/ **大总结 5 条**：抽屉「大总结」入口与现状展示、草稿**不落盘**（不误发 commit）、落地 POST 正文 + 摘要、`source="digest"` 渲染成总结卡）。CI 的 `frontend` job 跑。⚠️ jsdom **不能**给 `<select>` 类 bug 下结论（不实现 dirty value flag），那类仍靠人工走查。⚠️ 探针**只回标量/字符串**：jsdom 的 Array 原型与 Node 不同，`deepStrictEqual` 会把相等的两个数组判成不等 |
 | 鉴权（P1-4，2026-09-17） | `tests/test_auth.py` 两层：**纯函数**层把 `auth_rejection` 的判定矩阵钉死（数据面 vs 静态面 / 本机 vs 非本机 / 有令牌 vs 空令牌 / 开关 on-off，共 11 组），并覆盖"缺令牌的 401 正文必须写明怎么修"与"非 ASCII 令牌不许抛 `TypeError`"；**HTTP** 层用 `TestClient(client=(ip, port))` 冒充网段内机器，验 401 / 200 / `WWW-Authenticate` / 回环豁免 / C 方案（关掉鉴权）不回退，并专门跑一轮**完整 SSE 回合**确认中间件没弄坏流式交付（纯 ASGI 而非 `BaseHTTPMiddleware` 的验收点）。变异验证：拔掉 `add_middleware` → 3 条集成用例变红 |
 | 内容包校验 | `python -m app.world.loader content/<world>`（root 是位置参数，**不是** `--check`）。**裸跑不再猜世界名**：列出 `content_root`（`Settings.content_root`，`CONTENT_ROOT` 可覆盖）下真实存在的世界并退 2——原先默认 `content/qinghsi`（旧名，已不存在），裸跑只会得到一句让人误以为"世界坏了"的报错（2026-09-17 修）。同一条 `check_world` 也已暴露为 `GET /api/worlds/{id}/check`（2026-09-13） |
 | 造世界 | `tests/test_draft.py`：空白种子包过闸 / 草稿转换（表单值优先、主角卡撞名保住、`start_scene` 越界纠回、空草稿退化）/ `validate_assets` 报语义问题 / 起草器一次修正（`calls == 2` 且问题清单回灌）。`tests/test_api.py` 另覆盖四条新 API、"新世界立刻能开一局"、**两级保存闸门**（软警告 200+problems / 硬拦 400 且主角卡无损）与**单一真相**（工作台 PUT 直写世界目录，世界列表体检同步变红；全量备份导出/导入往返） |
 | 落卡（人物 + 地点候选，2026-09-19） | `tests/test_landing_scene.py`（13 条）：审计**永不**写 `scenes.json`（只记候选册）· 审计提示词同时列「待落卡」「已定为临时」两行 · 规则寻路能吃候选册别名（route 1 确定性寻路）· `dismissed` 是**粘滞**的但别名仍可解析（× 之后审计翻不了案）· `/reset` 清候选册**不清**场景表 · `file` 真写资产并清候选册 · 描述留空保留占位句 · 404 面（不存在的地点名）· `discard` 只置 `dismissed` 不删条目 · `evidence_of` 截断到 8 条且只挑有正文的 · **人物草稿只吃他自己的事件**（喂进别人的原文 → 必须不出现在草稿里）· **场景草稿只吃该地点的事件** · 无证据 → **不调 LLM**。`tests/test_turn.py` 两条随教义改判重写（原 `test_audit_registers_reusable_scene` → `test_audit_scene_hint_goes_to_candidate_book`，断言**不在** `world.scenes` 里）。四条守卫均以变异测试验过"有没有牙齿"（拔掉候选册 → 寻路用例变红；`status` 改回 `pending` → × 粘滞用例变红；`evidence_of` 换成全账本 → 草稿越界用例变红） |
 | 主角锁定（2026-09-21） | `tests/test_player_lock.py`（18 条）。**判据层 6 条**：新档只有 opening → 未开始 · 落一条 → 已开始 · **只有 opening 的账本必须回到未开始**（"重置后能换主角"的守点）· 缺 `source` 的旧事件按已开始算（fail-closed）· `director` 事件也算 · 没有开场白的世界连事件都不写 → 未开始。**闸门层 9 条**：换人 / 改名 / **只改卡内 `id`** / 删人 → 各自 409 且响应对得上、磁盘与内存都没被改动 · 删主角卡必须是 **409 而不是 400**（钉死闸门在 `check_assets` **之前**）· 改主角档案与 `has_actor`/听域 → 200 · 改非主角卡 `id` → 200 · 重置后立刻解锁且能换 · `/world` 透出 `player_locked`。**边界 2 条**：只产候选没采纳 → 仍算未开始（锁定看账本，不看"有没有在跑"）· 已开局丢主角卡 → 只报不改、占位卡不落盘。另有 1 条查路由表确认死接口已消失。`web/tests/smoke.test.mjs` 另 2 条守前端置灰（已开局 → 每张卡的框都禁用 + 主角姓名禁用 + 提示写明唯一出口；未开局 → 都可改）。**十处守卫全部以变异测试验过牙齿**：判据退回"账本非空" / 判据恒 True / 拔掉闸门 / 闸门挪到 `check_assets` 之后（只有 409-not-400 那条红）/ 判据改用外层 dict 键（只有"只改 id 字段"那条红）/ 不透出 `player_locked` / 不报 problem；前端三条（框不禁用 / 姓名不禁用 / 文案退回旧话）在 `AIWORLD_WEB_DIST` 副本上验，各 1 红 |
+| 大总结（2026-10-10，§3.1） | `tests/test_digest.py`（23 条）：压缩后只剩「一条总结 + K 条重建」· **位置重建保住在场**（`present_at` 压缩前后一致）· **保真 `at`**（重建抄回真实最后目击时刻，不统一写成"现在的钟"）· 按 `(location, at)` 分组（同地点、不同时刻的两人不被合并）· 跳过退场者 / 空名字参与者 · **管线事件不进日志与记忆**（`narratives` / `event_log_block` / `known_set` / `access_view` 都看不见它）· 旧事件流归档进 `archive/` · `access_overrides` 清空 · 事件号不回退 · 世界钟/状态/目标/候选册不动 · **二次滚动**（上一条总结全文进原料、事件流仍只有一条总结）· 两条闸门（有未采纳候选 → 409 / 无新事件 → 400）· 三个端点（preview 不落盘 / commit 落地并回报）· 三个 `run_digest` 用例（单段直压 / 超长分段 map-reduce / 空事件）。**11 处守卫全部以变异测试验过牙齿**（后端 8 + 前端 3；另验空名字守卫也变红）。⚠️ 仓库无 `pytest-asyncio`，异步 worker 用 `asyncio.run` 驱动 |
 
 ---
 
@@ -1126,8 +1170,8 @@ KNOWN_SET_LIMIT=5       # 每个 NPC 已知集几条（0 = 给全部）
 | 时间线分叉（重掷留痕） | 回合事务：副作用与正文同包回滚，commit 前账本零写入 |
 | 候选区进程崩溃 | 候选未 commit = 未落盘 = 未发生；`candidates/` 持久化，启动后经 `GET candidates/pending` 恢复多份候选列表；正常操作即时清理 |
 | 改判名单不全（已传开者漏收） | 设计口径即接受：改判是补救行为、名单直给，已传开者收不回是玩家明知并接受的逻辑代价；运行期导演可补名单或圆场 |
-| 上下文膨胀 | 分片预算 + 模板底稿省 token + 记忆现拼截断 + M8 上下文收敛（装配收敛到当前场景可感知 + 对话对象 + 关键历史状态） |
-| 事件流膨胀（远期） | 全内存线性扫可撑几万条；二期 = 语义索引 + compact 预研（对内容包与存档结构零侵入） |
+| 上下文膨胀 | 分片预算 + 模板底稿省 token + 记忆现拼截断 + M8 上下文收敛（装配收敛到当前场景可感知 + 对话对象 + 关键历史状态）+ **大总结**（旧史压成一条编年史，§3.1） |
+| 事件流膨胀（远期） | 全内存线性扫可撑几万条；二期 = 语义索引 + compact 预研（对内容包与存档结构零侵入）。**大总结（2026-10-10，§3.1）已把"compact"落成玩家手动的一键**：归档旧流 + 一条编年史 + K 条位置重建；滚动（喂上一条总结全文）防信息逐轮衰减 |
 | 审计产物迟到 | v1 采纳时同步结算，无迟到；若未来改异步，必须加写锁/单写者队列，并保留 run_id 幂等补跑 |
 | SSE 阶段速报迟到（整条流被缓冲） | 前端「正在连接…」的阶段提示全指望它，攒到最后一次性发等于没有。TestClient 结构上验不了，故 `tests/test_sse_realtime.py` 起真 uvicorn + httpx 逐块读，断言"首个 stage 到 candidate 的时间差 > 0.8s"（变异测试证明：缓冲版差值 0.0006s，必红）。中间件一律用**纯 ASGI**、不用 `BaseHTTPMiddleware`——后者会给流式响应包一层，正是这条不变量最怕的东西 |
 | 隐私/安全 | 默认仅绑 `127.0.0.1`。**请求级鉴权已落地**（P1-4，2026-09-17）：`app/api/security.py` 的纯 ASGI 中间件 `TokenAuthMiddleware` 在 `/api/*` 上要求 `Authorization: Bearer <AUTH_TOKEN>`，判定三条 = **只护数据面**（静态面必须裸奔，浏览器取 `<script src>` 带不了头）/ **只护非本机**（回环 + TestClient 放行）/ **失败关闭**（要求鉴权但没配令牌 → 401，不是放行）。用纯 ASGI 而非 `BaseHTTPMiddleware`：后者会给回合 SSE 包一层，有额外缓冲/取消语义风险。启动期 `check_host_security()` 另拦"绑非回环 + 空令牌"。前端用 `?token=` 打开一次即存进 `localStorage`（`authHeaders()` 统一注入，覆盖 `api()` 与 3 处裸 `fetch`）。⚠️ 仍是**明文 HTTP**，只适用于可信局域网；`REQUIRE_AUTH_FOR_NON_LOCAL=false` 可整体关掉（C 方案：绑全网卡 + 防火墙限源网段） |
