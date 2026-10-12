@@ -305,6 +305,36 @@ def test_run_digest_forwards_the_previous_chronicle() -> None:
     assert "很久以前发生过这些事" in llm.messages[0][1]["content"]
 
 
+def test_final_prompt_forces_a_self_contained_merge() -> None:
+    """🔴 回归守卫（2026-10-12 实机事故）。
+
+    原提示词写「在它基础上续写：旧事不再展开，把篇幅让给后来的事」，user 头里又写
+    「旧事不要展开重讲」。模型据此把旧编年史**整段丢掉**——交回来的新编年史以
+    "（承前）"开头、旧内容一条没有，而旧那条随即被替换掉 ⇒ 信息真丢了。
+
+    ⚠️ 原来的 ``test_run_digest_forwards_the_previous_chronicle`` **抓不到**这个 bug：
+    它只验"旧正文在提示词里"，而那正是当时成立的——**传进去 ≠ 要求并进来**。
+
+    本用例钉两件事：① 必须明写"合并重写 / 不许整段消失 / 自包含"；
+    ② 不许再出现"别写旧的"这类反向措辞（它们正是事故成因）。
+    """
+    from app.workers.digest import _final_messages
+
+    messages = _final_messages("很久以前发生过这些事", "（新事）")
+    whole = messages[0]["content"] + "\n" + messages[1]["content"]
+
+    # ① 旧正文必须进提示词——不然模型根本无从合并。
+    assert "很久以前发生过这些事" in messages[1]["content"]
+
+    # ② 必须明写硬要求。
+    for required in ("合并重写", "不许整段消失", "自包含"):
+        assert required in whole, f"提示词缺少硬要求：{required}"
+
+    # ③ 反向措辞一个都不许有。
+    for forbidden in ("旧事不再展开", "旧事不要展开重讲", "把篇幅让给后来的事"):
+        assert forbidden not in whole, f"提示词又出现了叫模型省略旧事的话：{forbidden}"
+
+
 def test_run_digest_chunks_long_material() -> None:
     """超长原料先分段压要点、再合成——否则一次塞不下。"""
     llm = _StubLLM(
