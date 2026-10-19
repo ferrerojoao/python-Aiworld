@@ -27,6 +27,8 @@ python -m venv .venv
 
 必须有一个非空的 `AIWORLD_LLM_API_KEY`，否则服务拒绝启动。本机开发用 `data/settings.json` 里的网关配置。
 
+> **新克隆里没有 `data/` 也没有 `content/`——这是对的，别去补空目录。** 两者都在 `.gitignore` 里（运行数据 / 世界存档），首次启动会自动创建：`data/presets.json` 会写成兜底的极简预设（`presets.DEFAULT_PRESET`），`content/` 在**建第一个世界时**才落地。回归测试是 `tests/test_empty_content.py`（空目录 → 世界列表空数组 → 能建世界 → 能开局）。
+
 ### 闸门（改完必须全绿）
 
 | 检查 | 命令 | 当前基线 |
